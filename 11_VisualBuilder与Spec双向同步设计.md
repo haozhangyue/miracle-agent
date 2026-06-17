@@ -7,10 +7,11 @@ Miracle 必须避免“UI 一套、配置文件一套”的割裂。无限画布
 核心原则：
 
 ```text
-WorkflowSpec / AgentSpec / ComponentSpec 是唯一真相
+WorkflowSpec / AgentSpec / ComponentSpec 是可版本化配置真相
 Visual Builder 是编辑器
 YAML/JSON 文件是编辑器
 CLI/SDK 也是编辑器
+RunSpec / NodeRun / TraceEvent / ArtifactManifest / GateDecision 是运行事实真相
 ```
 
 ## 2. 同步对象
@@ -217,4 +218,3 @@ MVP 必做：
 - 图形化 diff 工具。
 - 云端模板市场。
 - SDK 自动生成。
-

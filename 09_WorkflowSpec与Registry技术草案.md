@@ -6,7 +6,8 @@
 
 设计原则：
 
-- Spec 是唯一真相，UI、CLI、SDK 都只是编辑器。
+- WorkflowSpec 是模板与编排真相；运行事实由 RunSpec、NodeRun、TraceEvent、ArtifactManifest、GateDecision 承载。
+- UI、CLI、SDK 都只是编辑器或视图。
 - 执行依赖只看 `edges`，画布位置不影响执行。
 - 工作流必须可进入 Git、可 diff、可回滚、可注册到 Registry。
 - MVP 先支持本地优先，不依赖云端数据库。
