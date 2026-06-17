@@ -31,6 +31,8 @@ Miracle 必须让用户清晰看到多 Agent 如何协同，而不是只看到�
 | 本轮输出 | 产物、摘要、manifest。 |
 | 工具调用摘要 | 工具名称、状态、耗时、错误。 |
 | 成本耗时 | token、API 成本、运行时长。 |
+| 健康状态 | healthy、slow、stalled、blocked、failed。 |
+| 权限摘要 | 可读、可写、可调用工具、可通信对象。 |
 
 ## 3. Agent 状态
 
@@ -48,6 +50,23 @@ idle / queued / running / waiting / blocked / reviewing / done / failed
 | `reviewing` | 等待审核 | 批准、驳回或评论 |
 | `done` | 完成 | 查看产物 |
 | `failed` | 失败 | 重试、替换组件、进入修复 |
+
+### 3.1 合法状态流转
+
+```text
+idle -> queued -> running -> done
+running -> waiting -> running
+running -> reviewing -> done
+running -> blocked -> queued
+running -> failed -> queued
+reviewing -> rejected -> queued
+```
+
+非法流转必须拒绝并记录审计事件：
+
+- `pending_review` 不能直接进入下游。
+- `blocked` 不能直接标记 `done`。
+- `failed` 不能绕过修复进入 `approved`。
 
 ## 4. 四个核心视图
 
@@ -207,6 +226,19 @@ Agent 卡片必须展示装备情况。
 | 视频 Agent | HyperFrames 视频组件库 |
 | 复盘 Agent | 审计复盘组件库 |
 
+### 6.1 组件装备面板
+
+组件装备面板需要展示：
+
+- 当前装备组件库。
+- 组件库包含的 skill、tool、MCP、prompt、provider。
+- 组件库状态：draft、experimental、stable、deprecated、blocked。
+- 最近成功率和失败原因。
+- 权限风险和凭证需求。
+- 是否允许自动进入下游。
+
+装备变更必须写入审计事件，不能静默改变 Agent 能力边界。
+
 ## 7. 多平台 Agent 展示
 
 同一个 Agent 角色可以由不同 runtime 执行。
@@ -230,6 +262,27 @@ Session: server job
 ```
 
 这样用户能知道“职责是谁”和“实际由哪个平台执行”。
+
+### 7.1 模型热切换
+
+模型热切换入口应放在 Agent 详情面板中，但切换前必须检查：
+
+- 新 provider 是否满足当前节点能力需求。
+- 当前 Agent 是否有权限使用。
+- 凭证是否存在。
+- 成本和质量是否明显变化。
+- 是否需要重新 dry-run。
+
+切换事件必须记录：
+
+```yaml
+event: provider_switched
+agent_id: content-agent
+node_id: B_md_master
+from: gpt-5-codex
+to: claude-sonnet
+reason: 用户要求提高长文质量
+```
 
 ## 8. 错误与阻塞可视化
 
@@ -255,7 +308,51 @@ actions:
   - 跳过 TTS，仅生成无配音视频审看版
 ```
 
-## 9. 与现有 trace 的关系
+### 8.1 审核返工循环
+
+审核门不仅展示 pending 状态，还要展示可执行动作：
+
+```text
+pending_review -> approved -> downstream_allowed
+pending_review -> rejected -> queued
+pending_review -> blocked -> waiting
+pending_review -> comment -> pending_review
+```
+
+驳回必须记录：
+
+- 驳回原因。
+- 返回节点。
+- 修改建议。
+- 是否保留当前草稿。
+
+## 9. Agent Health Dashboard
+
+Agent Health Dashboard 是多 Agent 可视化的默认入口。
+
+推荐布局：
+
+```text
+左侧：Agent 健康列表
+中间：任务流转链 / Agent Map
+右侧：Agent 详情、模型、组件库、权限
+下方：事件流、工具调用、审计日志
+顶部：运行中、等待、阻塞、待审核、失败数量
+```
+
+健康卡展示：
+
+- Agent 名称。
+- 当前状态。
+- 当前节点。
+- runtime adapter。
+- provider。
+- 装备组件库。
+- 最近事件时间。
+- 等待对象。
+- 可恢复动作。
+
+## 10. 与现有 trace 的关系
 
 Miracle 可以继承现有 `task_trace.json` 和 `task_events.jsonl` 思路。
 
@@ -268,4 +365,3 @@ Miracle 可以继承现有 `task_trace.json` 和 `task_events.jsonl` 思路。
 - `provider_calls`：记录模型和 API 调用。
 
 这些数据共同驱动 Agent Map、Timeline、Dependency Graph 和 Artifact Board。
-

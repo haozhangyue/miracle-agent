@@ -23,6 +23,10 @@
 | 7 | [06_智能进化体系设计.md](06_智能进化体系设计.md) | 记忆、复盘、评估、推荐、版本升级 |
 | 8 | [07_后续对接路线图与任务拆解.md](07_后续对接路线图与任务拆解.md) | 架构评审、原型设计、技术设计、功能点拆解 |
 | 9 | [08_Miracle竞品分析与架构借鉴报告.md](08_Miracle竞品分析与架构借鉴报告.md) | GitHub 竞品清单、重点项目深读、Miracle 可吸收设计 |
+| 10 | [09_WorkflowSpec与Registry技术草案.md](09_WorkflowSpec与Registry技术草案.md) | WorkflowSpec YAML v0、Registry、validate、dry-run、estimate |
+| 11 | [10_AgentHealth与多Agent状态机设计.md](10_AgentHealth与多Agent状态机设计.md) | AgentHealth、PermissionMatrix、状态机、健康看板 |
+| 12 | [11_VisualBuilder与Spec双向同步设计.md](11_VisualBuilder与Spec双向同步设计.md) | 无限画布、DAG、YAML/JSON 配置的双向同步 |
+| 13 | [12_MVP原型功能清单与界面草图.md](12_MVP原型功能清单与界面草图.md) | MVP 功能顺序、界面结构、验收标准 |
 
 ## 第一条落地样本
 
