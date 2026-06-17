@@ -57,7 +57,7 @@ running -> waiting -> running
 running -> reviewing -> done
 running -> blocked -> queued
 running -> failed -> queued
-reviewing -> rejected -> queued
+reviewing -> queued
 ```
 
 状态含义：
@@ -72,6 +72,13 @@ reviewing -> rejected -> queued
 | `reviewing` | 等待人工审核。 | 批准、驳回、评论。 |
 | `done` | 本节点完成。 | 查看产物、进入下游。 |
 | `failed` | 执行失败。 | 重试、替换组件、查看日志。 |
+
+状态命名边界：
+
+- `reviewing` 是 Agent 状态，表示 Agent 或用户正在处理审核动作。
+- `pending_review` 是 Gate / Artifact / NodeRun 状态，表示产物等待审核。
+- UI 可以把 `pending_review` 节点显示为“审核中”，但底层状态不要混写。
+- 审核驳回时，`rejected` 写入 Gate / Artifact / NodeRun；被分配返工的 Agent 进入 `queued`。
 
 非法状态跳转必须拒绝并写入审计事件。例如：
 
@@ -220,7 +227,7 @@ Agent 组件装备面板展示：
 
 ## 10. 审核返工循环
 
-审核门状态：
+审核门状态，属于 Gate / Artifact / NodeRun，不属于 AgentHealth：
 
 ```text
 pending_review -> approved -> downstream_allowed
@@ -267,4 +274,3 @@ MVP 必做：
 - 自动进程管理。
 - 复杂 RBAC。
 - 多用户在线协作。
-

@@ -10,7 +10,9 @@ WorkflowSpec -> Importer -> Validate/Dry-run -> Node DAG -> Agent View -> Artifa
 
 本阶段不选具体前端框架，不创建代码工程，只定义功能、界面结构、输入输出和验收标准。
 
-## 2. M001 WorkflowSpec YAML v0
+编号说明：本文件使用 `MVPS01-MVPS10` 表示“竞品分析后重新排序的 MVP 顺序”，避免和 `07_后续对接路线图与任务拆解.md` 中的原始 M001-M020 任务编号混淆。
+
+## 2. MVPS01 WorkflowSpec YAML v0
 
 用户场景：
 
@@ -48,7 +50,7 @@ WorkflowSpec -> Importer -> Validate/Dry-run -> Node DAG -> Agent View -> Artifa
 - 真实 schema 校验器。
 - 在线编辑器。
 
-## 3. M002 Flow A-G Importer
+## 3. MVPS02 Flow A-G Importer
 
 用户场景：
 
@@ -89,7 +91,7 @@ WorkflowSpec -> Importer -> Validate/Dry-run -> Node DAG -> Agent View -> Artifa
 
 - 自动迁移所有历史 run。
 
-## 4. M003 Validate / Dry-run
+## 4. MVPS03 Validate / Dry-run
 
 用户场景：
 
@@ -133,7 +135,7 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 
 - 精确 token 计费。
 
-## 5. M004 Node DAG View
+## 5. MVPS04 Node DAG View
 
 用户场景：
 
@@ -170,7 +172,7 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 
 - 复杂自由布局编辑。
 
-## 6. M005 Agent Collaboration View
+## 6. MVPS05 Agent Collaboration View
 
 用户场景：
 
@@ -207,7 +209,7 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 
 - 真正自动心跳服务。
 
-## 7. M006 Artifact Board
+## 7. MVPS06 Artifact Board
 
 用户场景：
 
@@ -230,7 +232,7 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 - 文件预览器。
 - 大文件托管。
 
-## 8. M007 Gate Review UI
+## 8. MVPS07 Gate Review UI
 
 用户场景：
 
@@ -255,7 +257,7 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 
 - 在线协同批注。
 
-## 9. M008 Infinite Canvas Prototype
+## 9. MVPS08 Infinite Canvas Prototype
 
 用户场景：
 
@@ -278,7 +280,7 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 - 高级绘图能力。
 - 多人实时协作。
 
-## 10. M009 Visual/Spec Sync
+## 10. MVPS09 Visual/Spec Sync
 
 用户场景：
 
@@ -294,7 +296,7 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 
 - 自动三方 merge。
 
-## 11. M010 Evolution Board v0
+## 11. MVPS10 Evolution Board v0
 
 用户场景：
 
@@ -331,4 +333,3 @@ MVP 原型完成后，必须能演示：
 8. 在 Infinite Canvas 中新增 Pencil 原型卡并转为节点。
 9. 通过 Visual/Spec Sync 看到 YAML 和 UI 一致。
 10. 在 Evolution Board 中看到“增加 TTS 凭证预检”的建议。
-

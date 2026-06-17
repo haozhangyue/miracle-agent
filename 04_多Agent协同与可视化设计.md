@@ -51,6 +51,12 @@ idle / queued / running / waiting / blocked / reviewing / done / failed
 | `done` | 完成 | 查看产物 |
 | `failed` | 失败 | 重试、替换组件、进入修复 |
 
+命名边界：
+
+- `reviewing` 是 Agent 状态，表示 Agent 或用户正在执行审核动作。
+- `pending_review` 是节点、产物或审核门状态，表示产物等待审核。
+- 两者在 UI 上可以同屏显示，但底层事件要区分。
+
 ### 3.1 合法状态流转
 
 ```text
@@ -59,7 +65,7 @@ running -> waiting -> running
 running -> reviewing -> done
 running -> blocked -> queued
 running -> failed -> queued
-reviewing -> rejected -> queued
+reviewing -> queued
 ```
 
 非法流转必须拒绝并记录审计事件：
@@ -67,6 +73,7 @@ reviewing -> rejected -> queued
 - `pending_review` 不能直接进入下游。
 - `blocked` 不能直接标记 `done`。
 - `failed` 不能绕过修复进入 `approved`。
+- 审核驳回时，`rejected` 写入 Gate / Artifact / NodeRun；被分配返工的 Agent 进入 `queued`。
 
 ## 4. 四个核心视图
 
@@ -310,7 +317,7 @@ actions:
 
 ### 8.1 审核返工循环
 
-审核门不仅展示 pending 状态，还要展示可执行动作：
+审核门不仅展示 pending 状态，还要展示可执行动作。这里的 `pending_review` 属于审核门/产物状态，不是 AgentHealth 状态：
 
 ```text
 pending_review -> approved -> downstream_allowed

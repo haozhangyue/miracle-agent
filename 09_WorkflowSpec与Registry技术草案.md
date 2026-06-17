@@ -63,6 +63,46 @@ layouts:
 
 ## 3. NodeSpec v0
 
+NodeSpec 是“节点契约”，不是单个执行记录。它必须同时服务于 validate、dry-run、DAG 可视化、Agent 分配和产物追踪。
+
+字段模板：
+
+```yaml
+id: node_id
+name: 用户可读节点名
+type: agent
+agent_candidates: []
+recommended_libraries: []
+capability_requirements: []
+inputs: []
+outputs: []
+review_gate: null
+failure_policy:
+  retry: 0
+  on_missing_input: blocked
+  on_tool_failure: failed
+  on_quality_reject: rejected
+subworkflow_enabled: false
+```
+
+字段说明：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `id` | 是 | 节点唯一 ID。 |
+| `name` | 是 | 用户可读名称。 |
+| `type` | 是 | 节点类型，取值见下方“节点类型”。 |
+| `agent_candidates` | 否 | 可执行该节点的 Agent 候选。 |
+| `recommended_libraries` | 否 | 推荐组件库。 |
+| `capability_requirements` | 否 | 节点需要的能力标签。 |
+| `inputs` | 否 | 输入契约，建议使用对象数组。 |
+| `outputs` | 否 | 输出契约，建议使用对象数组。 |
+| `review_gate` | 否 | 绑定 GateSpec ID；不等同于 `review_gate` 节点类型。 |
+| `failure_policy` | 否 | 缺输入、工具失败、质量驳回时的状态策略。 |
+| `subworkflow_enabled` | 否 | 是否允许展开子工作流。 |
+
+示例：内容 MD 母稿节点。
+
 ```yaml
 id: B_md_master
 name: 内容 MD 母稿
@@ -110,6 +150,12 @@ subworkflow_enabled: true
 | `subworkflow` | 子工作流入口。 |
 | `end` | 正常结束。 |
 | `terminate` | 显式失败或中止。 |
+
+说明：
+
+- `type: review_gate` 表示审核节点本身。
+- `review_gate: B_md_master_gate` 表示当前业务节点绑定一个 GateSpec。
+- 两者可以共存，但含义不同：前者是节点类型，后者是审核契约引用。
 
 ## 4. EdgeSpec v0
 
@@ -327,32 +373,96 @@ nodes:
     type: agent
     agent_candidates: [intelligence-agent, verification-agent]
     recommended_libraries: [official-source-library, fact-verification-library]
-    outputs: [raw_items, clean_events]
+    outputs:
+      - id: raw_items
+        kind: markdown
+      - id: clean_events
+        kind: markdown
   - id: B_md_master
     name: 内容 MD 母稿
     type: transform
+    inputs:
+      - id: clean_events
+        kind: artifact
+        required: true
+    outputs:
+      - id: md_master_draft
+        kind: markdown
+      - id: md_master_approved
+        kind: markdown
     review_gate: B_md_master_gate
   - id: C0_script_pool
     name: 脚本池生成与评审
     type: agent
+    inputs:
+      - id: md_master_approved
+        kind: artifact
+        required: true
+    outputs:
+      - id: selected_scripts
+        kind: directory
   - id: C_storyboard
     name: PPT 与视频分镜
     type: transform
+    inputs:
+      - id: selected_scripts
+        kind: artifact
+        required: true
+    outputs:
+      - id: storyboard_draft
+        kind: markdown
     review_gate: C_storyboard_gate
   - id: D_tts_caption
     name: TTS 与字幕
     type: tool
+    inputs:
+      - id: storyboard_draft
+        kind: artifact
+        required: true
+    outputs:
+      - id: audio_manifest
+        kind: json
+      - id: captions
+        kind: directory
     review_gate: D_tts_gate
   - id: E_visual_video
     name: HyperFrames 视觉视频
     type: tool
+    inputs:
+      - id: captions
+        kind: artifact
+        required: true
+    outputs:
+      - id: hyperframes_project
+        kind: directory
   - id: F_final_render
     name: 最终渲染
     type: tool
+    inputs:
+      - id: hyperframes_project
+        kind: artifact
+        required: true
+    outputs:
+      - id: render_manifest
+        kind: json
+      - id: final_video
+        kind: external_media
     review_gate: F_render_gate
   - id: G_distribution_retro
     name: 分发复盘
     type: transform
+    inputs:
+      - id: md_master_approved
+        kind: artifact
+        required: true
+      - id: final_video
+        kind: artifact
+        required: false
+    outputs:
+      - id: distribution_pack
+        kind: markdown
+      - id: retro_report
+        kind: markdown
 edges:
   - from: A_fact_intelligence
     to: B_md_master
@@ -381,8 +491,18 @@ nodes:
     type: mcp_tool
     recommended_libraries: [pencil-prototype-library]
     capability_requirements: [prototype.pencil, content.structure_design]
-    inputs: [clean_events, topic_strategy]
-    outputs: [content_structure_prototype, visual_layout_snapshot]
+    inputs:
+      - id: clean_events
+        kind: artifact
+        required: true
+      - id: topic_strategy
+        kind: artifact
+        required: true
+    outputs:
+      - id: content_structure_prototype
+        kind: document
+      - id: visual_layout_snapshot
+        kind: image
 edges:
   - from: A_fact_intelligence
     to: prototype_pencil_before_md
@@ -419,4 +539,3 @@ MVP 必做：
 - 云端模板市场。
 - 多用户权限。
 - 自动迁移旧 run。
-
