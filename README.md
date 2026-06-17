@@ -22,6 +22,7 @@
 | 6 | [05_双模式工作流可视化编排设计.md](05_双模式工作流可视化编排设计.md) | 无限画布模式、流程节点模式、双视图同步机制 |
 | 7 | [06_智能进化体系设计.md](06_智能进化体系设计.md) | 记忆、复盘、评估、推荐、版本升级 |
 | 8 | [07_后续对接路线图与任务拆解.md](07_后续对接路线图与任务拆解.md) | 架构评审、原型设计、技术设计、功能点拆解 |
+| 9 | [08_Miracle竞品分析与架构借鉴报告.md](08_Miracle竞品分析与架构借鉴报告.md) | GitHub 竞品清单、重点项目深读、Miracle 可吸收设计 |
 
 ## 第一条落地样本
 
@@ -46,4 +47,3 @@ Flow A 情报采集与事实核验
 - Hermes Agent：长期记忆、技能进化、MCP、跨平台消息入口。
 - Claude Code：subagents、skills、dynamic workflows、hooks、agent teams。
 - Codex：CLI、MCP、subagents、approval、hosted tools、multi-agent 元数据。
-
