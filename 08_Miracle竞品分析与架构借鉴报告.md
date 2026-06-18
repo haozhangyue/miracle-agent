@@ -200,7 +200,8 @@ Miracle 需要避免“UI 改一份、文件又一份”的割裂。
 
 ```text
 WorkflowSpec / AgentSpec / ComponentSpec 是可版本化配置真相
-RunSpec / NodeRun / TraceEvent / ArtifactManifest / GateDecision 是运行事实真相
+RunSpec snapshot / NodeRun / TraceEvent / ArtifactManifest / GateDecision /
+CredentialCheckResult 是运行事实真相
 UI 只是编辑器
 CLI/SDK 也只是编辑器
 ```
@@ -325,7 +326,7 @@ Miracle 不能只定义角色，还要定义：
 - `WorkflowRegistry`：工作流模板注册表。
 - `AgentHealth`：Agent 心跳、活跃度、停滞判断。
 - `PermissionMatrix`：Agent 间通信和工具权限矩阵。
-- `CredentialSpec`：凭证范围、用途、过期状态。
+- `CredentialSpec`：凭证范围、用途和是否必需；当前可用性进入 CredentialCheckResult。
 - `RunEstimate`：启动前成本/耗时/风险预估。
 
 ### 5.2 对可视化设计的补强
@@ -345,7 +346,7 @@ Miracle 不能只定义角色，还要定义：
 
 - 画布对象可以发布为模板。
 - 画布和 YAML/JSON 配置双向同步。
-- 画布中的素材/产物卡与 ArtifactSpec 严格绑定。
+- 模板态素材/产物卡绑定 ArtifactSpec，运行态产物卡绑定 ArtifactManifest。
 - 流程节点模式提供 dry-run 预览。
 
 ### 5.4 对后续路线图的补强

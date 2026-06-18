@@ -53,8 +53,8 @@ idle / queued / running / waiting / blocked / reviewing / done / failed
 
 命名边界：
 
-- `reviewing` 是 Agent 状态，表示 Agent 或用户正在执行审核动作。
-- `pending_review` 是节点、产物或审核门状态，表示产物等待审核。
+- `reviewing` 是 Agent 状态，表示 Agent 正在执行审核工作。
+- `pending_review` 只属于 GateDecision 和 ArtifactManifest。
 - 两者在 UI 上可以同屏显示，但底层事件要区分。
 
 ### 3.1 合法状态流转
@@ -70,10 +70,10 @@ reviewing -> queued
 
 非法流转必须拒绝并记录审计事件：
 
-- `pending_review` 不能直接进入下游。
+- `GateDecision.pending_review` 和 `ArtifactManifest.pending_review` 不能进入下游。
 - `blocked` 不能直接标记 `done`。
-- `failed` 不能绕过修复进入 `approved`。
-- 审核驳回时，`rejected` 写入 Gate / Artifact / NodeRun；被分配返工的 Agent 进入 `queued`。
+- `failed` 不能绕过修复或 reconcile 生成已批准产物。
+- 审核驳回时，`rejected` 写入 GateDecision 和 ArtifactManifest；返工创建新的 NodeRun attempt，Agent 进入 `queued`。
 
 ## 4. 四个核心视图
 
@@ -160,6 +160,8 @@ flowchart TD
 
 卡片字段：
 
+- ArtifactManifest ID 和 ArtifactSpec ID。
+- run ID 和 node attempt。
 - 产物名称。
 - 类型。
 - 所属节点。
@@ -167,12 +169,14 @@ flowchart TD
 - 文件路径或外部链接。
 - 下游消费者。
 - 审核状态。
+- hash 和 source event。
 
 ## 5. Agent 协同模式
 
 ### 5.1 串行交接
 
-上游 Agent 完成后，把 approved 产物交给下游。
+上游 NodeRun 完成后，只有 GateDecision 和 ArtifactManifest 满足放行条件，Agent
+才把 approved 产物实例交给下游。
 
 示例：
 
@@ -283,12 +287,21 @@ Session: server job
 切换事件必须记录：
 
 ```yaml
-event: provider_switched
-agent_id: content-agent
+event_id: evt_000205
+sequence: 205
+run_id: run_20260618_001
 node_id: B_md_master
-from: gpt-5-codex
-to: claude-sonnet
-reason: 用户要求提高长文质量
+event_type: provider_switched
+event_category: audit
+actor:
+  type: user
+  id: local_user
+timestamp: 2026-06-18T11:10:00+08:00
+payload:
+  agent_id: content-agent
+  from: gpt-5-codex
+  to: claude-sonnet
+  reason: 用户要求提高长文质量
 ```
 
 ## 8. 错误与阻塞可视化
@@ -317,13 +330,15 @@ actions:
 
 ### 8.1 审核返工循环
 
-审核门不仅展示 pending 状态，还要展示可执行动作。这里的 `pending_review` 属于审核门/产物状态，不是 AgentHealth 状态：
+审核门不仅展示 pending 状态，还要展示可执行动作。这里的 `pending_review` 属于
+GateDecision 和 ArtifactManifest，不属于 AgentHealth 或 NodeRun：
 
 ```text
-pending_review -> approved -> downstream_allowed
-pending_review -> rejected -> queued
-pending_review -> blocked -> waiting
-pending_review -> comment -> pending_review
+GateDecision: pending_review -> approved -> downstream_allowed
+GateDecision: pending_review -> rejected
+ArtifactManifest: pending_review -> rejected
+Rejected -> create new NodeRun attempt -> queued
+GateDecision: pending_review -> commented -> pending_review
 ```
 
 驳回必须记录：

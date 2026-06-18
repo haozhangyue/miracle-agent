@@ -36,6 +36,7 @@ WorkflowSpec -> Importer -> Validate/Dry-run -> Node DAG -> Agent View -> Artifa
 - EdgeSpec。
 - GateSpec。
 - ArtifactSpec。
+- RunSpec snapshot 契约。
 
 界面区域：
 
@@ -107,12 +108,12 @@ WorkflowSpec -> Importer -> Validate/Dry-run -> Node DAG -> Agent View -> Artifa
 
 - WorkflowSpec。
 - 任务变量。
-- 当前凭证状态。
+- 当前环境。
 
 输出：
 
 - 执行计划。
-- 缺失凭证。
+- CredentialCheckResult 和缺失凭证。
 - 审核门列表。
 - 预计成本和耗时。
 - 风险提示。
@@ -152,6 +153,8 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 - WorkflowSpec。
 - RunSpec。
 - NodeRun。
+- ArtifactManifest。
+- GateDecision。
 
 输出：
 
@@ -170,9 +173,10 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 
 验收：
 
-- 节点显示状态、Agent、输入输出、审核门和错误。
+- 节点显示 NodeRun 状态、Agent、输入输出、ArtifactManifest、GateDecision 和错误。
 - 支持子工作流折叠/展开说明。
 - blocked 节点显示恢复动作。
+- 支持 pause、resume、cancel；timed_out 和 aborted 显示 reconcile 提示。
 
 暂不做：
 
@@ -229,8 +233,9 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 
 验收：
 
-- 每张产物卡绑定 ArtifactSpec。
-- 显示 produced_by 和 consumed_by。
+- 每张运行产物卡绑定 ArtifactManifest，并反向显示 ArtifactSpec。
+- 显示 run、node attempt、真实路径、hash、produced_by 和 consumed_by。
+- 重试产生的新版本不覆盖旧产物卡。
 - 大文件显示本地路径或外部链接。
 
 暂不做：
@@ -257,7 +262,9 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 
 - 支持 approve / reject / comment / block。
 - rejected 必须填写返工原因。
-- pending_review 不允许进入下游。
+- 持久化 GateDecision，并同步更新 ArtifactManifest 状态。
+- NodeRun 已经 `done` 时不因审核通过再变成 `approved`。
+- GateDecision 或 ArtifactManifest 为 pending_review 时不允许进入下游。
 
 暂不做：
 
@@ -330,12 +337,22 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 MVP 原型完成后，必须能演示：
 
 1. 导入热点工具更新 Flow A-G。
-2. 查看 WorkflowSpec YAML 摘要。
-3. 运行 dry-run，发现 TTS 凭证风险。
-4. 在 DAG 中看到节点和审核门。
+2. 查看 WorkflowSpec YAML 摘要，并在启动 run 时冻结 snapshot。
+3. 运行 dry-run，生成 CredentialCheckResult 并发现 TTS 凭证风险。
+4. 在 DAG 中区分 NodeRun、ArtifactManifest 和 GateDecision。
 5. 在 Agent View 中看到 Agent 健康和等待关系。
-6. 在 Artifact Board 中看到产物流转。
-7. 在 Gate Review UI 中驳回 MD 并返回 B 节点。
+6. 在 Artifact Board 中看到具体 run 的产物实例与版本流转。
+7. 在 Gate Review UI 中驳回 MD，保留原实例并创建新的 B 节点 attempt。
 8. 在 Infinite Canvas 中新增 Pencil 原型卡并转为节点。
 9. 通过 Visual/Spec Sync 看到 YAML 和 UI 一致。
 10. 在 Evolution Board 中看到“增加 TTS 凭证预检”的建议。
+
+页面状态来源约束：
+
+| 页面 | 主要状态来源 |
+|---|---|
+| Node DAG | WorkflowSnapshot + NodeRun |
+| Agent Collaboration | AgentSpec + AgentHealth + TraceEvent |
+| Artifact Board | ArtifactManifest，反向引用 ArtifactSpec |
+| Gate Review | GateDecision + ArtifactManifest |
+| Timeline / Audit | TraceEvent；AuditEvent 为其受保护子类型 |

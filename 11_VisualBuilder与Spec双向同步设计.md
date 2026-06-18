@@ -11,7 +11,8 @@ WorkflowSpec / AgentSpec / ComponentSpec 是可版本化配置真相
 Visual Builder 是编辑器
 YAML/JSON 文件是编辑器
 CLI/SDK 也是编辑器
-RunSpec / NodeRun / TraceEvent / ArtifactManifest / GateDecision 是运行事实真相
+RunSpec snapshot / NodeRun / TraceEvent / ArtifactManifest / GateDecision /
+CredentialCheckResult 是运行事实真相
 ```
 
 ## 2. 同步对象
@@ -22,7 +23,8 @@ RunSpec / NodeRun / TraceEvent / ArtifactManifest / GateDecision 是运行事实
 | NodeSpec | DAG / Canvas / YAML | 节点卡、画布卡、执行计划 |
 | AgentSpec | Agent 面板 / YAML | Agent Dashboard、PermissionMatrix |
 | ComponentSpec | Registry / YAML | 组件装备面板 |
-| ArtifactSpec | 节点输出 / YAML | Artifact Board、画布产物卡 |
+| ArtifactSpec | 节点输出 / YAML | 模板产物占位、节点输出契约 |
+| ArtifactManifest | NodeRun / Run Store | 运行态 Artifact Board、真实产物卡 |
 | LayoutSpec | Canvas / DAG | UI 布局 |
 
 ## 3. 无限画布对象
@@ -30,9 +32,9 @@ RunSpec / NodeRun / TraceEvent / ArtifactManifest / GateDecision 是运行事实
 | 对象 | 是否进入执行 | 对应 spec |
 |---|---|---|
 | 任务卡 | 可选 | NodeSpec |
-| Agent 卡 | 是 | AgentSpec / AgentRun |
-| 素材卡 | 可选 | ArtifactSpec / SourceSpec |
-| 产物卡 | 是 | ArtifactSpec |
+| Agent 卡 | 是 | 模板态绑定 AgentSpec；运行态绑定 AgentHealth / AgentRun |
+| 素材卡 | 可选 | 模板态绑定 ArtifactSpec / SourceSpec；运行态绑定 ArtifactManifest |
+| 产物卡 | 是 | 模板态绑定 ArtifactSpec；运行态绑定 ArtifactManifest |
 | 节点卡 | 是 | NodeSpec |
 | 区域 | 否 | CanvasLayout |
 | 版本分支 | 可选 | WorkflowSpec variant |
@@ -42,7 +44,8 @@ RunSpec / NodeRun / TraceEvent / ArtifactManifest / GateDecision 是运行事实
 
 - 非执行对象可只存在于 `layouts.canvas.notes`。
 - 一旦对象转为节点，必须生成 NodeSpec。
-- 产物卡必须绑定 ArtifactSpec。
+- 模板编辑中的产物占位卡绑定 ArtifactSpec。
+- 运行态产物卡必须绑定 ArtifactManifest，并反向显示 ArtifactSpec。
 - Agent 卡如果参与执行，必须绑定 AgentSpec 或 AgentRun。
 
 ## 4. 从 UI 到 Spec
@@ -82,12 +85,18 @@ added:
 
 ### 4.3 Artifact Board 绑定产物
 
-用户把一个文件拖到产物板：
+模板设计态新增预期产物：
 
 1. 创建 ArtifactSpec。
-2. 如果文件来自某节点输出，绑定 `produced_by`。
-3. 如果只是外部参考，标记 `external_reference`。
-4. 不能让未知产物直接进入下游。
+2. 绑定 `produced_by`、`consumed_by` 和 `path_template`。
+3. 只显示占位，不伪造真实文件路径或审核状态。
+
+运行态把文件或外部结果接入产物板：
+
+1. 创建 ArtifactManifest，并绑定 `run_id`、`node_run_id` 和 `artifact_spec_id`。
+2. 记录真实路径或外部链接、hash、source_event_id 和状态。
+3. 外部参考标记 `external_only`。
+4. 未绑定 ArtifactSpec 的实例不得直接进入自动下游，必须先人工映射。
 
 ## 5. 从 Spec 到 UI
 
@@ -98,7 +107,7 @@ added:
 3. 计算 spec diff。
 4. 更新 DAG。
 5. 更新 Canvas。
-6. 更新 Artifact Board。
+6. 更新模板产物占位；真实 run 的 Artifact Board 不因模板文件修改而重写。
 7. 如果 layout 缺失，生成默认布局。
 
 示例：
@@ -199,7 +208,8 @@ edges:
 
 - DAG 中 A 和 B 之间出现 Pencil 节点。
 - Canvas 的“原型区”出现 Pencil 节点卡。
-- Artifact Board 预生成 `content_structure_prototype` 占位。
+- 模板视图预生成 `content_structure_prototype` ArtifactSpec 占位。
+- 真实执行后，运行视图显示对应 ArtifactManifest 实例。
 - Dry-run 标记需要 Pencil MCP。
 
 ## 11. MVP 边界
@@ -209,7 +219,7 @@ MVP 必做：
 - UI 操作落成 spec diff 的规则。
 - 文件变更回写 UI 的规则。
 - Canvas 与 DAG layout 分离。
-- ArtifactSpec 绑定规则。
+- ArtifactSpec 与 ArtifactManifest 分层绑定规则。
 - 冲突处理策略文档。
 
 暂不做：

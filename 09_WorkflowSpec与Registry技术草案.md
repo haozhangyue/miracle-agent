@@ -6,7 +6,8 @@
 
 设计原则：
 
-- WorkflowSpec 是模板与编排真相；运行事实由 RunSpec、NodeRun、TraceEvent、ArtifactManifest、GateDecision 承载。
+- WorkflowSpec 是模板与编排真相；运行事实由 RunSpec snapshot、NodeRun、
+  TraceEvent、ArtifactManifest、GateDecision、CredentialCheckResult 承载。
 - UI、CLI、SDK 都只是编辑器或视图。
 - 执行依赖只看 `edges`，画布位置不影响执行。
 - 工作流必须可进入 Git、可 diff、可回滚、可注册到 Registry。
@@ -121,16 +122,15 @@ inputs:
     kind: artifact
     required: true
 outputs:
-  - id: md_master_draft
-    kind: markdown
-  - id: md_master_approved
-    kind: markdown
+  - artifact_spec_id: md_master
 review_gate: B_md_master_gate
 failure_policy:
   retry: 1
   on_missing_input: blocked
   on_tool_failure: failed
-  on_quality_reject: rejected
+  on_quality_reject:
+    gate_decision: rejected
+    requeue_node: B_md_master
 subworkflow_enabled: true
 ```
 
@@ -164,7 +164,9 @@ subworkflow_enabled: true
 - id: edge_A_to_B
   from: A_fact_intelligence
   to: B_md_master
-  condition: status in ["approved", "auto-approved"]
+  condition:
+    gate_id: A_fact_gate
+    decision_in: [approved, auto-approved]
   passes_artifacts:
     - clean_events
     - topic_strategy
@@ -175,6 +177,8 @@ subworkflow_enabled: true
 - `edges` 是唯一执行依赖来源。
 - 布局位置、画布分组、卡片距离不影响执行顺序。
 - 条件分支必须写明 `condition`，不能隐藏在节点 prompt 中。
+- 条件必须声明状态归属，例如 `gate_id + decision_in` 或
+  `artifact_spec_id + status_in`，禁止使用含义不明的 `status in [...]`。
 
 ## 5. GateSpec v0
 
@@ -183,7 +187,7 @@ id: B_md_master_gate
 node: B_md_master
 mode: manual
 reviewer: user
-allow_downstream_statuses: [approved, auto-approved]
+allow_downstream_decisions: [approved, auto-approved]
 decisions: [approve, reject, comment, block]
 reject_to: B_md_master
 required_before:
@@ -202,23 +206,75 @@ required_before:
 ## 6. ArtifactSpec v0
 
 ```yaml
-id: md_master_approved
-name: MD 母稿已审核版
+id: md_master
+name: MD 母稿
 kind: markdown
-path_template: runs/{run_id}/03_内容母稿/MD母稿_已审核.md
+path_template: runs/{run_id}/03_内容母稿/MD母稿.md
 produced_by: B_md_master
 consumed_by: [C0_script_pool, G_distribution_retro]
 review_required: true
-status_source: B_md_master_gate
+gate_id: B_md_master_gate
 ```
 
 产物原则：
 
+- ArtifactSpec 是模板产物契约，不保存真实路径、hash 或运行审核状态。
 - 产物必须知道来源节点和下游消费者。
 - 大文件只记录路径或外部链接，不强行进入 Git。
-- 产物卡与 ArtifactSpec 严格绑定，避免画布上出现不可追踪素材。
+- 模板编辑器中的产物占位卡绑定 ArtifactSpec。
 
-## 7. ProviderPolicy v0
+## 7. RunSpec 与 WorkflowSnapshot v0
+
+创建真实 run 时必须冻结所依据的工作流版本和解析结果：
+
+```yaml
+run_id: run_20260618_001
+workflow_id: content-production-v0
+workflow_version: 0.1.0
+workflow_hash: sha256:abc123
+workflow_snapshot:
+  path: runs/run_20260618_001/workflow.snapshot.yaml
+resolved_components:
+  B_md_master: content-packaging-library@0.3.0
+  D_tts_caption: tts-caption-library@0.2.1
+resolved_provider_policy:
+  path: runs/run_20260618_001/provider-policy.snapshot.json
+created_at: 2026-06-18T10:00:00+08:00
+status: running
+```
+
+规则：
+
+- snapshot 在 run 生命周期内不可变。
+- resume、retry、replay 均使用 snapshot，不重新读取当前 stable 模板。
+- 用户明确升级运行版本时，记录 migration TraceEvent，并生成新的执行计划。
+
+## 8. ArtifactManifest v0
+
+ArtifactManifest 是某次 NodeRun 实际产生的产物实例：
+
+```yaml
+artifact_id: artifact_run001_md_master_v1
+artifact_spec_id: md_master
+run_id: run_20260618_001
+node_run_id: B_md_master_attempt_1
+path: runs/run_20260618_001/03_内容母稿/MD母稿.md
+hash: sha256:def456
+size: 18420
+status: pending_review
+produced_by: B_md_master
+source_event_id: evt_000108
+created_at: 2026-06-18T10:42:00+08:00
+```
+
+规则：
+
+- NodeRun 产生 ArtifactManifest，不产生 ArtifactSpec。
+- Manifest 必须反向引用 ArtifactSpec。
+- 重试默认产生新 artifact version，不静默覆盖旧实例。
+- Artifact Board 的运行视图绑定 ArtifactManifest。
+
+## 9. ProviderPolicy v0
 
 ```yaml
 provider_policy:
@@ -243,7 +299,7 @@ ProviderPolicy 管理：
 - 凭证要求。
 - 成本和质量偏好。
 
-## 8. LayoutSpec v0
+## 10. LayoutSpec v0
 
 ```yaml
 layouts:
@@ -273,7 +329,7 @@ layouts:
 - layout diff 不应改变执行顺序。
 - 如果 UI 删除节点卡，必须明确是“隐藏卡片”还是“删除 NodeSpec”。
 
-## 9. WorkflowRegistry v0
+## 11. WorkflowRegistry v0
 
 Registry 负责模板发现、版本、来源和发布。
 
@@ -308,7 +364,7 @@ Registry 能力：
 - 回退版本。
 - 比较本地覆盖和远端模板。
 
-## 10. Validate / Dry-run / Estimate
+## 12. Validate / Dry-run / Estimate
 
 ### validate
 
@@ -334,7 +390,7 @@ miracle validate content-production-v0.workflow.yaml
 status: valid
 errors: []
 warnings:
-  - D_tts_caption requires VOLC_TTS_API_KEY but current environment is unchecked
+  - D_tts_caption requires VOLC_TTS_API_KEY; no CredentialCheckResult exists yet
 ```
 
 ### dry-run
@@ -364,7 +420,69 @@ miracle dry-run content-production-v0.workflow.yaml --input topic="Codex updates
 - 高风险节点。
 - fallback 路径。
 
-## 11. Flow A-G 导入样例
+凭证规则：
+
+- CredentialSpec 只声明凭证契约，可进入 Git。
+- dry-run 输出 CredentialCheckResult，属于本地运行事实。
+- 真实执行前再次检查凭证，不复用过期检查结果。
+
+## 13. NodeRun、AdapterResult 与幂等协议 v0
+
+NodeRun 状态：
+
+```text
+not_started / queued / running / paused / blocked / failed /
+cancelled / timed_out / aborted / skipped / done
+```
+
+Adapter 不直接写 Event Store、ArtifactManifest 或 NodeRun，只返回结果 envelope：
+
+```yaml
+operation_id: tts_run001_D
+attempt_id: tts_run001_D_attempt_2
+status: succeeded
+provider_receipt: volc_request_92837
+artifacts:
+  - artifact_spec_id: tts_audio
+    path: audio/final.wav
+    hash: sha256:789
+events:
+  - event_type: provider_call_completed
+failure: null
+```
+
+由 Orchestrator 统一接收并依次持久化 TraceEvent、ArtifactManifest、NodeRun 和必要的
+AuditEvent。
+
+幂等规则：
+
+- `operation_id` 表示稳定业务操作，重试时保持不变。
+- `attempt_id` 表示一次真实执行尝试，每次重试都生成新 ID。
+- 外部副作用节点必须保存 `provider_receipt`。
+- 执行前按 operation_id 检查是否已有成功结果。
+- 结果不明确时，`AdapterResult.status = unknown`，NodeRun 进入 `aborted` 并设置
+  `reconciliation_required: true`，不得直接重试。
+- 节点必须区分 `dry-run / preview / real-run`。
+
+统一事件 envelope：
+
+```yaml
+event_id: evt_000108
+sequence: 108
+run_id: run_20260618_001
+node_id: D_tts_caption
+event_type: node_completed
+event_category: runtime
+actor:
+  type: system
+  id: orchestrator
+timestamp: 2026-06-18T10:42:00+08:00
+payload: {}
+```
+
+AuditEvent 是 `event_category: audit` 的受保护 TraceEvent 子类型。
+
+## 14. Flow A-G 导入样例
 
 ```yaml
 id: content-production-v0
@@ -375,95 +493,78 @@ nodes:
     agent_candidates: [intelligence-agent, verification-agent]
     recommended_libraries: [official-source-library, fact-verification-library]
     outputs:
-      - id: raw_items
-        kind: markdown
-      - id: clean_events
-        kind: markdown
+      - artifact_spec_id: raw_items
+      - artifact_spec_id: clean_events
   - id: B_md_master
     name: 内容 MD 母稿
     type: transform
     inputs:
-      - id: clean_events
-        kind: artifact
+      - artifact_spec_id: clean_events
         required: true
     outputs:
-      - id: md_master_draft
-        kind: markdown
-      - id: md_master_approved
-        kind: markdown
+      - artifact_spec_id: md_master
     review_gate: B_md_master_gate
   - id: C0_script_pool
     name: 脚本池生成与评审
     type: agent
     inputs:
-      - id: md_master_approved
-        kind: artifact
+      - artifact_spec_id: md_master
+        required_status: approved
         required: true
     outputs:
-      - id: selected_scripts
-        kind: directory
+      - artifact_spec_id: selected_scripts
   - id: C_storyboard
     name: PPT 与视频分镜
     type: transform
     inputs:
-      - id: selected_scripts
-        kind: artifact
+      - artifact_spec_id: selected_scripts
         required: true
     outputs:
-      - id: storyboard_draft
-        kind: markdown
+      - artifact_spec_id: storyboard
     review_gate: C_storyboard_gate
   - id: D_tts_caption
     name: TTS 与字幕
     type: tool
     inputs:
-      - id: storyboard_draft
-        kind: artifact
+      - artifact_spec_id: storyboard
+        required_status: approved
         required: true
     outputs:
-      - id: audio_manifest
-        kind: json
-      - id: captions
-        kind: directory
+      - artifact_spec_id: audio_manifest
+      - artifact_spec_id: captions
     review_gate: D_tts_gate
   - id: E_visual_video
     name: HyperFrames 视觉视频
     type: tool
     inputs:
-      - id: captions
-        kind: artifact
+      - artifact_spec_id: captions
+        required_status: approved
         required: true
     outputs:
-      - id: hyperframes_project
-        kind: directory
+      - artifact_spec_id: hyperframes_project
   - id: F_final_render
     name: 最终渲染
     type: tool
     inputs:
-      - id: hyperframes_project
-        kind: artifact
+      - artifact_spec_id: hyperframes_project
         required: true
     outputs:
-      - id: render_manifest
-        kind: json
-      - id: final_video
-        kind: external_media
+      - artifact_spec_id: render_manifest
+      - artifact_spec_id: final_video
     review_gate: F_render_gate
   - id: G_distribution_retro
     name: 分发复盘
     type: transform
     inputs:
-      - id: md_master_approved
-        kind: artifact
+      - artifact_spec_id: md_master
+        required_status: approved
         required: true
-      - id: final_video
-        kind: artifact
+      - artifact_spec_id: final_video
+        required_status: approved
         required: false
     outputs:
-      - id: distribution_pack
-        kind: markdown
-      - id: retro_report
-        kind: markdown
+      - artifact_spec_id: distribution_pack
+      - artifact_spec_id: retro_report
 edges:
   - from: A_fact_intelligence
     to: B_md_master
@@ -481,7 +582,7 @@ edges:
     to: G_distribution_retro
 ```
 
-## 12. Pencil 节点插入样例
+## 15. Pencil 节点插入样例
 
 在 MD 母稿前插入 Pencil 原型节点：
 
@@ -493,17 +594,13 @@ nodes:
     recommended_libraries: [pencil-prototype-library]
     capability_requirements: [prototype.pencil, content.structure_design]
     inputs:
-      - id: clean_events
-        kind: artifact
+      - artifact_spec_id: clean_events
         required: true
-      - id: topic_strategy
-        kind: artifact
+      - artifact_spec_id: topic_strategy
         required: true
     outputs:
-      - id: content_structure_prototype
-        kind: document
-      - id: visual_layout_snapshot
-        kind: image
+      - artifact_spec_id: content_structure_prototype
+      - artifact_spec_id: visual_layout_snapshot
 edges:
   - from: A_fact_intelligence
     to: prototype_pencil_before_md
@@ -511,11 +608,14 @@ edges:
     to: B_md_master
 ```
 
-## 13. TTS blocked 样例
+## 16. TTS blocked 样例
 
 ```yaml
 node_run:
+  node_run_id: D_tts_caption_attempt_1
   node_id: D_tts_caption
+  operation_id: tts_run001_D
+  attempt_id: tts_run001_D_attempt_1
   status: blocked
   blocked_reason: missing_tts_credentials
   missing_credentials: [VOLC_TTS_API_KEY]
@@ -525,7 +625,7 @@ node_run:
     - 跳过 TTS，仅生成无配音审看版
 ```
 
-## 14. MVP 边界
+## 17. MVP 边界
 
 MVP 必做：
 

@@ -69,22 +69,22 @@ reviewing -> queued
 | `running` | 正在执行。 | 查看实时事件、暂停。 |
 | `waiting` | 等待上游、审核、凭证或外部服务。 | 查看等待对象、补输入。 |
 | `blocked` | 缺条件，无法继续。 | 修复凭证、替换 provider、跳过。 |
-| `reviewing` | 等待人工审核。 | 批准、驳回、评论。 |
+| `reviewing` | Agent 正在执行审核工作，不表示 Gate 尚未决定。 | 查看审核任务。 |
 | `done` | 本节点完成。 | 查看产物、进入下游。 |
 | `failed` | 执行失败。 | 重试、替换组件、查看日志。 |
 
 状态命名边界：
 
-- `reviewing` 是 Agent 状态，表示 Agent 或用户正在处理审核动作。
-- `pending_review` 是 Gate / Artifact / NodeRun 状态，表示产物等待审核。
-- UI 可以把 `pending_review` 节点显示为“审核中”，但底层状态不要混写。
-- 审核驳回时，`rejected` 写入 Gate / Artifact / NodeRun；被分配返工的 Agent 进入 `queued`。
+- `reviewing` 是 Agent 状态，表示 Agent 正在执行审核任务。
+- `pending_review` 只属于 GateDecision 和 ArtifactManifest。
+- NodeRun 完成生成后进入 `done`，不进入 `pending_review` 或 `approved`。
+- 审核驳回时，`rejected` 写入 GateDecision 和 ArtifactManifest；返工创建新的 NodeRun attempt，Agent 进入 `queued`。
 
 非法状态跳转必须拒绝并写入审计事件。例如：
 
-- `pending_review` 不能直接进入下游。
+- `GateDecision.pending_review` 和 `ArtifactManifest.pending_review` 不能进入下游。
 - `blocked` 不能直接标记 `done`。
-- `failed` 不能绕过 retry/review 进入 `approved`。
+- `failed` 不能绕过 retry/reconcile 创建已批准产物。
 
 ## 4. Agent 活跃度与停滞判断
 
@@ -118,8 +118,7 @@ permission_matrix:
       - artifacts.clean_events
       - artifacts.topic_strategy
     can_write:
-      - artifacts.md_master_draft
-      - artifacts.md_master_approved
+      - artifact_manifests.md_master
     can_call_tools:
       - read_files
       - write_markdown
@@ -132,6 +131,7 @@ permission_matrix:
     can_read: ["*"]
     can_write:
       - gate_decisions
+      - artifact_status_updates
       - audit_events
     can_approve_gates: true
 ```
@@ -182,10 +182,10 @@ A 情报采集 -> B MD 母稿 -> Gate B 审核 -> C0 脚本池 -> C 分镜 -> D 
 
 每个节点展示：
 
-- 状态。
+- NodeRun 状态。
 - Agent。
-- 产物。
-- 审核门。
+- ArtifactManifest 实例和状态。
+- GateDecision。
 - 耗时。
 - 错误或阻塞。
 
@@ -204,12 +204,21 @@ A 情报采集 -> B MD 母稿 -> Gate B 审核 -> C0 脚本池 -> C 分镜 -> D 
 记录事件：
 
 ```yaml
-event: provider_switched
+event_id: evt_000205
+sequence: 205
+run_id: run_20260618_001
+event_type: provider_switched
+event_category: audit
+actor:
+  type: user
+  id: local_user
 agent_id: content-agent
 node_id: B_md_master
-from: gpt-5-codex
-to: claude-sonnet
-reason: 用户要求提高长文质量
+timestamp: 2026-06-18T11:10:00+08:00
+payload:
+  from: gpt-5-codex
+  to: claude-sonnet
+  reason: 用户要求提高长文质量
 ```
 
 ## 9. 组件装备面板
@@ -227,13 +236,14 @@ Agent 组件装备面板展示：
 
 ## 10. 审核返工循环
 
-审核门状态，属于 Gate / Artifact / NodeRun，不属于 AgentHealth：
+审核返工由 GateDecision、ArtifactManifest 和新的 NodeRun attempt 共同表达：
 
 ```text
-pending_review -> approved -> downstream_allowed
-pending_review -> rejected -> queued
-pending_review -> blocked -> waiting
-pending_review -> comment -> pending_review
+GateDecision: pending_review -> approved -> downstream_allowed
+GateDecision: pending_review -> rejected
+ArtifactManifest: pending_review -> rejected
+Rejected -> create new NodeRun attempt -> queued
+GateDecision: pending_review -> commented -> pending_review
 ```
 
 驳回必须包含：
@@ -243,20 +253,34 @@ pending_review -> comment -> pending_review
 - 修改建议。
 - 是否保留当前草稿。
 
-## 11. Audit Events
+## 11. TraceEvent 与 AuditEvent
 
-Agent 状态和权限变化必须审计：
+AuditEvent 是统一 TraceEvent envelope 的受保护子类型，使用
+`event_category: audit`。Agent 状态变化可以是 runtime event，权限变化、危险操作、
+人工审核和恢复动作必须是 audit event。
 
-```json
-{
-  "ts": "2026-06-17T14:30:00+08:00",
-  "event": "agent_blocked",
-  "agent_id": "tts-agent",
-  "node_id": "D_tts_caption",
-  "reason": "missing_tts_credentials",
-  "recovery_actions": ["配置 VOLC_TTS_API_KEY", "切换备用 TTS provider"]
-}
+```yaml
+event_id: evt_000108
+sequence: 108
+run_id: run_20260618_001
+node_id: D_tts_caption
+event_type: agent_blocked
+event_category: runtime
+actor:
+  type: system
+  id: orchestrator
+timestamp: 2026-06-18T10:42:00+08:00
+payload:
+  agent_id: tts-agent
+  reason: missing_tts_credentials
+  recovery_actions:
+    - 配置 VOLC_TTS_API_KEY
+    - 切换备用 TTS provider
 ```
+
+所有事件必须包含 `event_id`、`sequence`、`run_id`、`event_type`、
+`event_category`、`actor`、`timestamp` 和 `payload`。审计事件不得静默覆盖，
+且必须对凭证、token、cookie 和私密输入脱敏。
 
 ## 12. MVP 边界
 
