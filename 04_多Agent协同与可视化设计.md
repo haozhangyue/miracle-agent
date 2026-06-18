@@ -291,15 +291,18 @@ Session: server job
 event_id: evt_000205
 sequence: 205
 run_id: run_20260618_001
-node_id: B_md_master
 event_type: provider_switched
 event_category: audit
+subject:
+  type: node_run
+  id: run001_B_md_master
 actor:
   type: user
   id: local_user
 timestamp: 2026-06-18T11:10:00+08:00
 payload:
   agent_id: content-agent
+  node_id: B_md_master
   from: gpt-5-codex
   to: claude-sonnet
   reason: 用户要求提高长文质量

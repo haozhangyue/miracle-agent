@@ -7,7 +7,8 @@
 设计原则：
 
 - WorkflowSpec 是模板与编排真相；运行事实由 RunSpec snapshot、NodeRun、
-  TraceEvent、ArtifactManifest、GateDecision、CredentialCheckResult 承载。
+  NodeAttempt、TraceEvent、ArtifactManifest、GateInstance、GateDecision、
+  CredentialCheckResult 承载。
 - UI、CLI、SDK 都只是编辑器或视图。
 - 执行依赖只看 `edges`，画布位置不影响执行。
 - 工作流必须可进入 Git、可 diff、可回滚、可注册到 Registry。
@@ -78,6 +79,7 @@ recommended_libraries: []
 capability_requirements: []
 inputs: []
 outputs: []
+join_policy: null
 review_gate: null
 failure_policy:
   retry: 0
@@ -99,6 +101,7 @@ subworkflow_enabled: false
 | `capability_requirements` | 否 | 节点需要的能力标签。 |
 | `inputs` | 否 | 输入契约，建议使用对象数组。 |
 | `outputs` | 否 | 输出契约，建议使用对象数组。 |
+| `join_policy` | 否 | required/optional 输入的启动和等待策略。 |
 | `review_gate` | 否 | 绑定 GateSpec ID；不等同于 `review_gate` 节点类型。 |
 | `failure_policy` | 否 | 缺输入、工具失败、质量驳回时的状态策略。 |
 | `subworkflow_enabled` | 否 | 是否允许展开子工作流。 |
@@ -171,6 +174,7 @@ subworkflow_enabled: true
 - id: edge_A_to_B
   from: A_fact_intelligence
   to: B_md_master
+  required: true
   condition:
     gate_spec_id: A_fact_gate
     decision_in: [approved, auto-approved]
@@ -182,6 +186,7 @@ subworkflow_enabled: true
 规则：
 
 - `edges` 是唯一执行依赖来源。
+- `required: true` 的边参与节点启动条件；optional edge 只提供可选输入。
 - 布局位置、画布分组、卡片距离不影响执行顺序。
 - 条件分支必须写明 `condition`，不能隐藏在节点 prompt 中。
 - 条件必须声明状态归属，例如 `gate_spec_id + decision_in` 或
@@ -222,8 +227,9 @@ kind: markdown
 path_template: runs/{run_id}/03_内容母稿/{artifact_version}/MD母稿.md
 produced_by: B_md_master
 consumed_by: [C0_script_pool, G_distribution_retro]
-review_required: true
-gate_id: B_md_master_gate
+review_policy:
+  mode: manual
+  gate_id: B_md_master_gate
 ```
 
 产物原则：
@@ -232,6 +238,15 @@ gate_id: B_md_master_gate
 - 产物必须知道来源节点和下游消费者。
 - 大文件只记录路径或外部链接，不强行进入 Git。
 - 模板编辑器中的产物占位卡绑定 ArtifactSpec。
+
+`review_policy.mode`：
+
+| mode | 行为 |
+|---|---|
+| `none` | Attempt succeeded 后 Manifest 直接进入 approved。 |
+| `auto` | validators 全部通过后 approved，失败按 `on_fail` 处理。 |
+| `manual` | Manifest 进入 pending_review，并创建 GateInstance。 |
+| `conditional` | 运行时按风险规则解析为 auto 或 manual。 |
 
 ## 7. RunSpec 与 WorkflowSnapshot v0
 
@@ -305,6 +320,7 @@ inputs:
     artifact_spec_id: md_master
     required: true
     selector:
+      source_scope: edges
       run_scope: current
       status: approved
       strategy: latest_approved
@@ -330,6 +346,8 @@ resolved_inputs:
 
 - required selector 无匹配时阻止创建 Attempt。
 - optional selector 无匹配时解析为 absent，不选择 rejected/draft 产物。
+- selector 默认 `source_scope: edges`，只能选择入边传递且可达的 ArtifactSpec。
+- run-wide 查询必须显式使用 `source_scope: run`，并由 validate 给出风险提示。
 - `explicit` 必须由用户或上游提供 artifact ID。
 - 当前 Attempt 的 resolved inputs 创建后不可漂移。
 
@@ -364,10 +382,12 @@ artifact_bindings:
 
 规则：
 
+- GateInstance 状态只允许 `pending_review / decided / invalidated`。
 - `pending_review` 属于 GateInstance，不属于 GateDecision。
 - GateDecision 只允许 `approved / auto-approved / rejected / blocked / skipped`。
 - comment 写入 GateComment 或 `event_category: audit` 的 TraceEvent。
 - 文件 hash 变化后，原决定不再适用，创建新 ArtifactManifest 和 GateInstance。
+- 临时不可审核写入 attention/blocking reason，不增加 GateInstance.blocked 状态。
 - 下游必须校验 GateDecision 的 artifact binding，不能只看 GateSpec ID。
 
 ## 11. ProviderPolicy v0
@@ -480,7 +500,10 @@ miracle validate content-production-v0.workflow.yaml
 - NodeSpec review_gate 是否引用存在 GateSpec。
 - GateSpec 的 node/reject_to/required_before 是否引用存在节点。
 - EdgeSpec passes_artifacts 是否引用存在 ArtifactSpec。
-- required input 是否存在可到达的 producer。
+- required input 是否存在传递对应 ArtifactSpec 的 required edge。
+- optional input 若由 edge 提供，该 edge 是否明确为 optional。
+- selector 是否只选择 edge 可达产物；`source_scope: run` 是否显式声明。
+- join_policy 是否覆盖 required/optional 输入，等待策略是否合法。
 - 同一个 ArtifactSpec 是否存在未声明 merge/version 策略的多个 producer。
 - required credential 是否声明。
 - layout 是否引用存在节点。
@@ -550,7 +573,10 @@ node_run:
 node_attempt:
   attempt_id: tts_run001_D_attempt_2
   node_run_id: run001_D_tts
-  operation_id: tts_run001_D
+  operation_id: tts_run001_D_r1_sha256_storyboard222_real
+  business_revision: 1
+  input_fingerprint: sha256:storyboard222
+  execution_mode: real-run
   status: succeeded
   provider: backup_tts
   resolved_inputs:
@@ -569,7 +595,7 @@ succeeded / failed / timed_out / cancelled / aborted / unknown
 Adapter 不直接写 Event Journal 或投影，只返回结果 envelope：
 
 ```yaml
-operation_id: tts_run001_D
+operation_id: tts_run001_D_r1_sha256_storyboard222_real
 attempt_id: tts_run001_D_attempt_2
 status: succeeded
 provider_receipt: volc_request_92837
@@ -587,7 +613,11 @@ ArtifactManifest、GateInstance 等可重建投影。
 
 幂等规则：
 
-- `operation_id` 表示稳定业务操作，重试时保持不变。
+- 网络重试、provider fallback、核对确认未执行后的重试复用 `operation_id`。
+- 审核返工、用户主动重跑、resolved input 变化或 preview 转 real-run 创建新
+  `business_revision` 和新 `operation_id`。
+- MVP 按 `node_run_id + business_revision + input_fingerprint + execution_mode`
+  派生 operation ID，不新增 NodeOperation 持久化对象。
 - `attempt_id` 表示一次真实执行尝试，每次重试都生成新 ID。
 - 外部副作用节点必须保存 `provider_receipt`。
 - 执行前按 operation_id 检查是否已有成功结果。
@@ -601,15 +631,17 @@ ArtifactManifest、GateInstance 等可重建投影。
 - 底层会话或进程可原地恢复时，复用当前 Attempt。
 - 底层进程已终止、provider 重试、fallback、审核返工或重新执行时，新建 Attempt。
 
-统一事件 envelope：
+统一事件 envelope 使用通用 subject：
 
 ```yaml
 event_id: evt_000108
 sequence: 108
 run_id: run_20260618_001
-node_id: D_tts_caption
 event_type: node_completed
 event_category: runtime
+subject:
+  type: node_run
+  id: run001_D_tts
 actor:
   type: system
   id: orchestrator
@@ -618,6 +650,9 @@ payload: {}
 ```
 
 AuditEvent 是 `event_category: audit` 的受保护 TraceEvent 子类型。
+`subject.type` 可取 `run / node_run / node_attempt / artifact / gate_instance /
+credential / workflow / registry / local_service`。Registry 等 run 外事件允许
+`run_id: null`，不得虚构 node ID。
 
 ## 16. Event Journal 与崩溃提交协议 v0
 
@@ -631,7 +666,9 @@ NodeRun / NodeAttempt / ArtifactManifest / GateInstance / Run 状态是可重建
 提交协议：
 
 ```text
-AdapterResult
+allocate NodeAttempt identity and freeze inputs
+-> append attempt_dispatched
+-> call provider
 -> append adapter_result_received
 -> project ArtifactManifest / NodeAttempt / NodeRun
 -> append adapter_result_committed
@@ -643,27 +680,84 @@ AdapterResult
 - sequence 由 Orchestrator 单写入器分配，按 run 全局递增。
 - event_id 用于去重；重复 event_id 视为幂等成功。
 - 重放投影严格按 sequence 处理。
+- 不存在 dispatched 时，可以正常调度。
+- 存在 dispatched 但不存在 received 时，进入 reconcile，不直接重试 provider。
 - 存在 received 但不存在 committed 时，不重新调用 provider，只补齐投影并提交。
+- committed 只表示 received 对应的全部投影已完成，不承载唯一业务结果。
 - fsync、文件锁、分片和 SQLite 索引细节留到 P3。
 
 事件示例：
 
 ```yaml
+event_type: attempt_dispatched
+run_id: run_20260618_001
+operation_id: tts_run001_D_r1_sha256_storyboard222_real
+attempt_id: tts_run001_D_attempt_2
+subject:
+  type: node_attempt
+  id: tts_run001_D_attempt_2
+payload:
+  adapter_id: official_api
+  provider: volc_tts
+  execution_mode: real-run
+  resolved_inputs:
+    approved_storyboard:
+      artifact_id: storyboard_run001_v2
+      hash: sha256:storyboard222
+```
+
+```yaml
 event_type: adapter_result_received
-operation_id: tts_run001_D
+operation_id: tts_run001_D_r1_sha256_storyboard222_real
 attempt_id: tts_run001_D_attempt_2
 payload:
   status: succeeded
+  adapter_id: official_api
+  provider: volc_tts
   provider_receipt: volc_request_92837
+  duration_ms: 80320
+  cost:
+    currency: CNY
+    amount: 0.42
+  artifacts:
+    - artifact_id: audio_run001_v2
+      artifact_spec_id: audio_manifest
+      path: runs/run001/06_音频字幕/tts_run001_D_attempt_2/audio_manifest.json
+      hash: sha256:audio222
+    - artifact_id: captions_run001_v2
+      artifact_spec_id: captions
+      path: runs/run001/06_音频字幕/tts_run001_D_attempt_2/captions
+      hash: sha256:captions222
+  failure: null
+  runtime_events:
+    - event_type: provider_call_completed
 ```
 
 ```yaml
 event_type: adapter_result_committed
-operation_id: tts_run001_D
+operation_id: tts_run001_D_r1_sha256_storyboard222_real
 attempt_id: tts_run001_D_attempt_2
 payload:
-  artifact_ids: [audio_run001_v2]
+  received_event_id: evt_adapter_result_received_001
 ```
+
+`adapter_result_received.payload` 必须保存完整、可重建且已脱敏的 AdapterResult，
+包括 adapter/provider、receipt、耗时、成本、全部 artifact descriptor、failure 和
+runtime events；凭证、token、cookie 和私密输入不得进入 Journal。
+
+投影使用稳定键 upsert：
+
+| 投影 | 稳定键 |
+|---|---|
+| NodeAttempt | `attempt_id` |
+| NodeRun | `node_run_id` |
+| ArtifactManifest | `artifact_id` |
+| GateInstance | `gate_instance_id` |
+| GateDecision | `decision_id` |
+| ReconciliationRecord | `reconciliation_id` |
+
+同一稳定键且内容一致视为幂等成功，不增加 attempt_count、不重复创建 Manifest 或
+GateInstance；同一稳定键内容冲突时进入 `projection_conflict`，停止自动提交。
 
 ## 17. Flow A-G 正式可校验样例
 
@@ -691,6 +785,7 @@ nodes:
         artifact_spec_id: clean_events
         required: true
         selector:
+          source_scope: edges
           run_scope: current
           status: approved
           strategy: latest_approved
@@ -705,6 +800,7 @@ nodes:
         artifact_spec_id: md_master
         required: true
         selector:
+          source_scope: edges
           run_scope: current
           status: approved
           strategy: latest_approved
@@ -718,6 +814,7 @@ nodes:
         artifact_spec_id: selected_scripts
         required: true
         selector:
+          source_scope: edges
           run_scope: current
           status: approved
           strategy: latest_approved
@@ -732,6 +829,7 @@ nodes:
         artifact_spec_id: storyboard
         required: true
         selector:
+          source_scope: edges
           run_scope: current
           status: approved
           strategy: latest_approved
@@ -747,6 +845,7 @@ nodes:
         artifact_spec_id: captions
         required: true
         selector:
+          source_scope: edges
           run_scope: current
           status: approved
           strategy: latest_approved
@@ -760,6 +859,7 @@ nodes:
         artifact_spec_id: hyperframes_project
         required: true
         selector:
+          source_scope: edges
           run_scope: current
           strategy: latest
     outputs:
@@ -769,11 +869,16 @@ nodes:
   - id: G_distribution_retro
     name: 分发复盘
     type: transform
+    join_policy:
+      start_when: required_inputs_ready
+      optional_inputs:
+        wait_policy: wait_if_active
     inputs:
       - name: approved_md_master
         artifact_spec_id: md_master
         required: true
         selector:
+          source_scope: edges
           run_scope: current
           status: approved
           strategy: latest_approved
@@ -781,6 +886,7 @@ nodes:
         artifact_spec_id: final_video
         required: false
         selector:
+          source_scope: edges
           run_scope: current
           status: approved
           strategy: latest_approved
@@ -792,30 +898,42 @@ edges:
     from: A_fact_intelligence
     to: B_md_master
     passes_artifacts: [clean_events]
+    required: true
   - id: edge_B_C0
     from: B_md_master
     to: C0_script_pool
     passes_artifacts: [md_master]
+    required: true
+  - id: edge_B_G
+    from: B_md_master
+    to: G_distribution_retro
+    passes_artifacts: [md_master]
+    required: true
   - id: edge_C0_C
     from: C0_script_pool
     to: C_storyboard
     passes_artifacts: [selected_scripts]
+    required: true
   - id: edge_C_D
     from: C_storyboard
     to: D_tts_caption
     passes_artifacts: [storyboard]
+    required: true
   - id: edge_D_E
     from: D_tts_caption
     to: E_visual_video
     passes_artifacts: [captions]
+    required: true
   - id: edge_E_F
     from: E_visual_video
     to: F_final_render
     passes_artifacts: [hyperframes_project]
+    required: true
   - id: edge_F_G
     from: F_final_render
     to: G_distribution_retro
     passes_artifacts: [final_video]
+    required: false
 gates:
   - id: B_md_master_gate
     node: B_md_master
@@ -851,81 +969,97 @@ artifacts:
     path_template: runs/{run_id}/01_事实底稿/{artifact_version}/raw_items.md
     produced_by: A_fact_intelligence
     consumed_by: []
-    review_required: false
+    review_policy:
+      mode: none
   - id: clean_events
     kind: markdown
     path_template: runs/{run_id}/02_事实核验/{artifact_version}/clean_events.md
     produced_by: A_fact_intelligence
     consumed_by: [B_md_master]
-    review_required: false
-    default_release_status: approved
+    review_policy:
+      mode: auto
+      validators: [file_exists, schema_valid, sources_present]
+      on_pass: approved
+      on_fail: rejected
   - id: md_master
     kind: markdown
     path_template: runs/{run_id}/03_内容母稿/{artifact_version}/MD母稿.md
     produced_by: B_md_master
     consumed_by: [C0_script_pool, G_distribution_retro]
-    review_required: true
-    gate_id: B_md_master_gate
+    review_policy:
+      mode: manual
+      gate_id: B_md_master_gate
   - id: selected_scripts
     kind: directory
     path_template: runs/{run_id}/04_脚本池/{artifact_version}
     produced_by: C0_script_pool
     consumed_by: [C_storyboard]
-    review_required: false
-    default_release_status: approved
+    review_policy:
+      mode: auto
+      validators: [file_exists, schema_valid]
+      on_pass: approved
+      on_fail: rejected
   - id: storyboard
     kind: markdown
     path_template: runs/{run_id}/05_分镜/{artifact_version}/storyboard.md
     produced_by: C_storyboard
     consumed_by: [D_tts_caption]
-    review_required: true
-    gate_id: C_storyboard_gate
+    review_policy:
+      mode: manual
+      gate_id: C_storyboard_gate
   - id: audio_manifest
     kind: json
     path_template: runs/{run_id}/06_音频字幕/{attempt_id}/audio_manifest.json
     produced_by: D_tts_caption
     consumed_by: [E_visual_video]
-    review_required: true
-    gate_id: D_tts_gate
+    review_policy:
+      mode: manual
+      gate_id: D_tts_gate
   - id: captions
     kind: directory
     path_template: runs/{run_id}/06_音频字幕/{attempt_id}/captions
     produced_by: D_tts_caption
     consumed_by: [E_visual_video]
-    review_required: true
-    gate_id: D_tts_gate
+    review_policy:
+      mode: manual
+      gate_id: D_tts_gate
   - id: hyperframes_project
     kind: directory
     path_template: runs/{run_id}/07_视频工程/{attempt_id}
     produced_by: E_visual_video
     consumed_by: [F_final_render]
-    review_required: false
+    review_policy:
+      mode: none
   - id: render_manifest
     kind: json
     path_template: runs/{run_id}/08_最终渲染/{attempt_id}/render_manifest.json
     produced_by: F_final_render
     consumed_by: [G_distribution_retro]
-    review_required: true
-    gate_id: F_render_gate
+    review_policy:
+      mode: manual
+      gate_id: F_render_gate
   - id: final_video
     kind: external_media
     path_template: runs/{run_id}/08_最终渲染/{attempt_id}/final_video.mp4
     produced_by: F_final_render
     consumed_by: [G_distribution_retro]
-    review_required: true
-    gate_id: F_render_gate
+    review_policy:
+      mode: manual
+      gate_id: F_render_gate
   - id: distribution_pack
     kind: markdown
     path_template: runs/{run_id}/09_分发/{artifact_version}/distribution_pack.md
     produced_by: G_distribution_retro
     consumed_by: []
-    review_required: false
+    review_policy:
+      mode: none
   - id: retro_report
     kind: markdown
     path_template: runs/{run_id}/10_复盘/{artifact_version}/retro_report.md
     produced_by: G_distribution_retro
     consumed_by: []
-    review_required: false
+    review_policy:
+      mode: none
 provider_policy:
   default_runtime_adapter: codex
   allowed_runtime_adapters: [codex, hermes, openclaw, claude_code, official_api]

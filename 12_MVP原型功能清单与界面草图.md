@@ -50,6 +50,7 @@ WorkflowSpec -> Importer -> Validate/Dry-run -> Node DAG -> Agent View -> Artifa
 
 - Flow A-G 包含完整 nodes、edges、artifacts、gates、provider_policy 和 layouts。
 - 所有 input/output/gate/producer/consumer/edge artifact 引用均可 validate。
+- ArtifactSpec 使用 `review_policy: none/auto/manual/conditional`，不依赖隐式默认状态。
 - 能表达 Pencil 节点插入。
 - 能表达 TTS blocked。
 
@@ -140,6 +141,9 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 - 能显示人工审核门。
 - 能显示 provider 和 fallback。
 - 能阻止不存在 ArtifactSpec/GateSpec、不可到达 producer 和多 producer 冲突。
+- required input 必须有 required artifact edge；optional input 只能由 optional edge
+  或显式 `source_scope: run` 提供。
+- 能预览 G 节点的 join policy：视频分支未启用时不等待，已启动时 wait_if_active。
 
 暂不做：
 
@@ -185,6 +189,9 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 - blocked 节点显示恢复动作。
 - 支持 pause、resume、cancel；Attempt 的 timed_out/aborted/unknown 显示 retry 或
   reconcile 动作。
+- 节点详情显示 operation revision；网络重试/fallback 复用 operation，审核返工、
+  输入变化和 preview 转 real-run 创建新 operation。
+- 外部副作用有 dispatched 无 received 时显示 `reconciling`，不提供直接重试按钮。
 - Run 顶部同时显示主状态和 attention flags，例如 running + pending_review + blocked。
 
 暂不做：
@@ -277,6 +284,7 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 - GateDecision 与 ArtifactManifest 状态投影保持一致。
 - NodeRun 已经 `done` 时不因审核通过再变成 `approved`。
 - GateInstance 或 ArtifactManifest 为 pending_review 时不允许进入下游。
+- GateInstance 仅显示 pending_review/decided/invalidated；临时阻塞显示为 attention。
 - 已批准文件 hash 变化时，原批准失效并创建新 ArtifactManifest/GateInstance。
 
 暂不做：
@@ -359,6 +367,9 @@ MVP 原型完成后，必须能演示：
 8. 在 Infinite Canvas 中新增 Pencil 原型卡并转为节点。
 9. 通过 Visual/Spec Sync 看到 YAML 和 UI 一致。
 10. 在 Evolution Board 中看到“增加 TTS 凭证预检”的建议。
+11. 仅运行 MD 分支时，G 由 B -> G required edge 启动，不等待未启用的视频分支。
+12. 模拟外部调用崩溃窗口，分别演示 dispatched 未 received 和 received 未 committed
+    的恢复动作。
 
 页面状态来源约束：
 
@@ -374,7 +385,11 @@ MVP 原型完成后，必须能演示：
 Event Journal 验收：
 
 - 每个 run 使用 append-only JSONL journal 和 run 级 sequence。
-- AdapterResult 先写 `adapter_result_received`，投影完成后写
+- 外部调用前先写 `attempt_dispatched`；dispatched 未 received 时进入 reconcile。
+- `adapter_result_received` 保存完整脱敏 AdapterResult，投影完成后写
   `adapter_result_committed`。
 - 重启遇到 received 未 committed 时，只补齐投影，不重新调用 provider。
+- 投影按 attempt_id/node_run_id/artifact_id/gate_instance_id 等稳定键 upsert；同键
+  内容冲突进入 projection conflict。
 - NodeAttempt 启动前已冻结 resolved artifact IDs 和 hashes。
+- TraceEvent 使用通用 subject；run 外事件无需虚构 node ID。

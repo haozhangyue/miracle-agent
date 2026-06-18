@@ -77,6 +77,8 @@ reviewing -> queued
 
 - `reviewing` 是 Agent 状态，表示 Agent 正在执行审核任务。
 - `pending_review` 属于 GateInstance 和 ArtifactManifest，不属于 GateDecision。
+- GateInstance 只保存 `pending_review / decided / invalidated`；临时无法审核属于
+  attention/blocking reason，不是 GateInstance 状态。
 - NodeRun 完成生成后进入 `done`，不进入 `pending_review` 或 `approved`。
 - 审核驳回时，创建不可变 GateDecision 并把 ArtifactManifest 标为 `rejected`；
   返工在原 NodeRun 下创建新的 NodeAttempt，Agent 进入 `queued`。
@@ -211,13 +213,16 @@ sequence: 205
 run_id: run_20260618_001
 event_type: provider_switched
 event_category: audit
+subject:
+  type: node_run
+  id: run001_B_md_master
 actor:
   type: user
   id: local_user
-agent_id: content-agent
-node_id: B_md_master
 timestamp: 2026-06-18T11:10:00+08:00
 payload:
+  agent_id: content-agent
+  node_id: B_md_master
   from: gpt-5-codex
   to: claude-sonnet
   reason: 用户要求提高长文质量
@@ -269,14 +274,17 @@ AuditEvent 是统一 TraceEvent envelope 的受保护子类型，使用
 event_id: evt_000108
 sequence: 108
 run_id: run_20260618_001
-node_id: D_tts_caption
 event_type: agent_blocked
 event_category: runtime
+subject:
+  type: node_run
+  id: run001_D_tts
 actor:
   type: system
   id: orchestrator
 timestamp: 2026-06-18T10:42:00+08:00
 payload:
+  node_id: D_tts_caption
   agent_id: tts-agent
   reason: missing_tts_credentials
   recovery_actions:
@@ -284,9 +292,10 @@ payload:
     - 切换备用 TTS provider
 ```
 
-所有事件必须包含 `event_id`、`sequence`、`run_id`、`event_type`、
-`event_category`、`actor`、`timestamp` 和 `payload`。审计事件不得静默覆盖，
-且必须对凭证、token、cookie 和私密输入脱敏。
+所有事件必须包含 `event_id`、`sequence`、`event_type`、`event_category`、
+`subject`、`actor`、`timestamp` 和 `payload`。run 内事件还必须包含 `run_id`；
+Registry、Local Service 等 run 外事件允许为空。审计事件不得静默覆盖，且必须对
+凭证、token、cookie 和私密输入脱敏。
 
 ## 12. MVP 边界
 
