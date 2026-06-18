@@ -202,7 +202,6 @@ node: B_md_master
 mode: manual
 reviewer: user
 allow_downstream_decisions: [approved, auto-approved]
-decisions: [approve, reject, block, skip]
 actions: [approve, reject, comment, block, skip]
 reject_to: B_md_master
 required_before:
@@ -217,6 +216,17 @@ required_before:
 | `auto` | 自动检查。 |
 | `conditional` | 根据条件决定 manual 或 auto。 |
 | `skip` | 本轮跳过。 |
+
+GateSpec 字段语义：
+
+- `actions` 是 UI、CLI 或 API 可以发起的动作，只允许
+  `approve / reject / comment / block / skip`。
+- 动作执行后，除 comment 外，分别形成
+  `approved / rejected / blocked / skipped` GateDecision；自动审核形成
+  `auto-approved`。
+- `allow_downstream_decisions` 使用 GateDecision 的结果枚举，不使用动作枚举。
+- `required_before` 只允许约束通过 required edge 消费该审核产物的下游节点。
+  optional edge 的等待和放行由目标节点的 join policy 与 selector 决定。
 
 ## 6. ArtifactSpec v0
 
@@ -498,7 +508,11 @@ miracle validate content-production-v0.workflow.yaml
 - NodeSpec 输入和输出引用的 ArtifactSpec 是否存在。
 - ArtifactSpec 的 produced_by/consumed_by 是否引用存在节点。
 - NodeSpec review_gate 是否引用存在 GateSpec。
+- NodeSpec review_gate 与其输出 ArtifactSpec 的 manual/conditional
+  `review_policy.gate_id` 是否一致。
 - GateSpec 的 node/reject_to/required_before 是否引用存在节点。
+- GateSpec actions 是否使用动作枚举，allow_downstream_decisions 是否使用决定枚举。
+- GateSpec required_before 是否只指向通过 required edge 消费审核产物的下游节点。
 - EdgeSpec passes_artifacts 是否引用存在 ArtifactSpec。
 - required input 是否存在传递对应 ArtifactSpec 的 required edge。
 - optional input 若由 edge 提供，该 edge 是否明确为 optional。
@@ -873,6 +887,9 @@ nodes:
       start_when: required_inputs_ready
       optional_inputs:
         wait_policy: wait_if_active
+        max_wait: 30m
+        on_terminal_without_artifact: continue_without_optional
+        on_timeout: require_user_decision
     inputs:
       - name: approved_md_master
         artifact_spec_id: md_master
@@ -938,31 +955,30 @@ gates:
   - id: B_md_master_gate
     node: B_md_master
     mode: manual
-    decisions: [approve, reject, block, skip]
+    allow_downstream_decisions: [approved, auto-approved]
     actions: [approve, reject, comment, block, skip]
     reject_to: B_md_master
     required_before: [C0_script_pool]
   - id: C_storyboard_gate
     node: C_storyboard
     mode: manual
-    decisions: [approve, reject, block, skip]
+    allow_downstream_decisions: [approved, auto-approved]
     actions: [approve, reject, comment, block, skip]
     reject_to: C_storyboard
     required_before: [D_tts_caption]
   - id: D_tts_gate
     node: D_tts_caption
     mode: manual
-    decisions: [approve, reject, block, skip]
+    allow_downstream_decisions: [approved, auto-approved]
     actions: [approve, reject, comment, block, skip]
     reject_to: D_tts_caption
     required_before: [E_visual_video]
   - id: F_render_gate
     node: F_final_render
     mode: manual
-    decisions: [approve, reject, block, skip]
+    allow_downstream_decisions: [approved, auto-approved]
     actions: [approve, reject, comment, block, skip]
     reject_to: F_final_render
-    required_before: [G_distribution_retro]
 artifacts:
   - id: raw_items
     kind: markdown

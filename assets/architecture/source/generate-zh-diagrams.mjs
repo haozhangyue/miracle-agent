@@ -168,7 +168,7 @@ const diagrams = [
         ${arrow(1291, 295, 1374, 295, "可选分支")}
 
         ${panel({ x: 164, y: 555, w: 431, h: 236, title: "AgentHealth 健康视图", lines: ["心跳 / 当前 Attempt", "等待对象 / 恢复动作", "不决定产物是否放行"], color: colors.green, headerFill: colors.greenFill })}
-        ${panel({ x: 744, y: 555, w: 431, h: 236, title: "依赖关系视图", lines: ["B → G：必需 md_master", "F → G：可选 final_video", "仅分支已启动时 wait_if_active"], color: colors.cyan, headerFill: colors.cyanFill, bodySize: 21 })}
+        ${panel({ x: 744, y: 555, w: 431, h: 236, title: "依赖关系视图", lines: ["B → G：必需 md_master", "F → G：可选 final_video", "已启动最多等待 30 分钟", "无合格产物则继续纯 MD"], color: colors.cyan, headerFill: colors.cyanFill, bodySize: 20 })}
         ${panel({ x: 1324, y: 555, w: 431, h: 236, title: "审计与时间线", lines: ["基于 subject 的 TraceEvent", "业务修订 + Attempt 历史", "对账记录与审核决策"], color: colors.amber, headerFill: colors.amberFill })}
       `,
       "纯 MD 流程通过 B→G 进入分发；已启动的视频分支仍保持可见并被明确等待",
@@ -195,7 +195,7 @@ const diagrams = [
         ${arrow(1500, 237, 1540, 237)}
 
         ${panel({ x: 89, y: 430, w: 431, h: 270, title: "汇聚与选择器规则", lines: ["选择器默认只查看入边", "必需输入必须由必需边提供", "可选边默认不阻塞", "全局 Run 查找必须显式声明"], color: colors.blue, headerFill: colors.blueFill, bodySize: 21 })}
-        ${panel({ x: 604, y: 430, w: 431, h: 270, title: "Flow A-G 汇聚", lines: ["B → G：md_master 必需", "F → G：final_video 可选", "启动条件：required_inputs_ready", "视频已启动：wait_if_active"], color: colors.green, headerFill: colors.greenFill, bodySize: 21 })}
+        ${panel({ x: 604, y: 430, w: 431, h: 270, title: "Flow A-G 汇聚", lines: ["B → G：md_master 必需", "F → G：final_video 可选", "已启动最多等待 30 分钟", "无合格产物则继续纯 MD"], color: colors.green, headerFill: colors.greenFill, bodySize: 21 })}
         ${panel({ x: 1119, y: 430, w: 352, h: 270, title: "产物审核策略", lines: ["none → 直接 approved", "auto → 由校验器决定", "manual → 创建待审 GateInstance", "conditional → 解析并记录"], color: colors.amber, headerFill: colors.amberFill, bodySize: 20 })}
         ${panel({ x: 1554, y: 430, w: 281, h: 270, title: "审核门状态", lines: ["pending_review", "decided", "invalidated", "阻塞属于 attention"], color: colors.violet, headerFill: colors.violetFill, bodySize: 20 })}
       `,

@@ -143,7 +143,8 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 - 能阻止不存在 ArtifactSpec/GateSpec、不可到达 producer 和多 producer 冲突。
 - required input 必须有 required artifact edge；optional input 只能由 optional edge
   或显式 `source_scope: run` 提供。
-- 能预览 G 节点的 join policy：视频分支未启用时不等待，已启动时 wait_if_active。
+- 能预览 G 节点的 join policy：视频分支未启用时不等待；已启动时最多等待 30 分钟；
+  分支无合格产物终止时继续纯 MD 分发；超时要求用户决定。
 
 暂不做：
 
