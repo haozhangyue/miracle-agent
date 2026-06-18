@@ -48,7 +48,8 @@ WorkflowSpec -> Importer -> Validate/Dry-run -> Node DAG -> Agent View -> Artifa
 
 验收：
 
-- 能表达 Flow A-G。
+- Flow A-G 包含完整 nodes、edges、artifacts、gates、provider_policy 和 layouts。
+- 所有 input/output/gate/producer/consumer/edge artifact 引用均可 validate。
 - 能表达 Pencil 节点插入。
 - 能表达 TTS blocked。
 
@@ -76,6 +77,7 @@ WorkflowSpec -> Importer -> Validate/Dry-run -> Node DAG -> Agent View -> Artifa
 - AgentSpec 草案。
 - ComponentLibrary 草案。
 - ArtifactSpec 草案。
+- GateSpec 草案。
 
 界面区域：
 
@@ -137,6 +139,7 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 - 能在 TTS 凭证缺失时预警。
 - 能显示人工审核门。
 - 能显示 provider 和 fallback。
+- 能阻止不存在 ArtifactSpec/GateSpec、不可到达 producer 和多 producer 冲突。
 
 暂不做：
 
@@ -153,7 +156,9 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 - WorkflowSpec。
 - RunSpec。
 - NodeRun。
+- NodeAttempt。
 - ArtifactManifest。
+- GateInstance。
 - GateDecision。
 
 输出：
@@ -173,10 +178,14 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 
 验收：
 
-- 节点显示 NodeRun 状态、Agent、输入输出、ArtifactManifest、GateDecision 和错误。
+- DAG 中固定节点只对应一个 NodeRun；详情可展开全部 NodeAttempt。
+- 节点显示 NodeRun 聚合状态、当前 Attempt、resolved inputs、ArtifactManifest、
+  GateInstance、GateDecision 和错误。
 - 支持子工作流折叠/展开说明。
 - blocked 节点显示恢复动作。
-- 支持 pause、resume、cancel；timed_out 和 aborted 显示 reconcile 提示。
+- 支持 pause、resume、cancel；Attempt 的 timed_out/aborted/unknown 显示 retry 或
+  reconcile 动作。
+- Run 顶部同时显示主状态和 attention flags，例如 running + pending_review + blocked。
 
 暂不做：
 
@@ -234,8 +243,9 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 验收：
 
 - 每张运行产物卡绑定 ArtifactManifest，并反向显示 ArtifactSpec。
-- 显示 run、node attempt、真实路径、hash、produced_by 和 consumed_by。
+- 显示 run、NodeRun、NodeAttempt、artifact version、真实路径、hash、producer 和 consumer。
 - 重试产生的新版本不覆盖旧产物卡。
+- 显示 latest 和 latest approved 逻辑指针，但下游实际读取具体 artifact ID。
 - 大文件显示本地路径或外部链接。
 
 暂不做：
@@ -262,9 +272,12 @@ A -> B -> C0 -> C -> D(block risk) -> E -> F -> G
 
 - 支持 approve / reject / comment / block。
 - rejected 必须填写返工原因。
-- 持久化 GateDecision，并同步更新 ArtifactManifest 状态。
+- 创建 GateInstance，绑定待审核 artifact ID 和 hash。
+- approve/reject/block/skip 形成不可变 GateDecision；comment 形成 GateComment/AuditEvent。
+- GateDecision 与 ArtifactManifest 状态投影保持一致。
 - NodeRun 已经 `done` 时不因审核通过再变成 `approved`。
-- GateDecision 或 ArtifactManifest 为 pending_review 时不允许进入下游。
+- GateInstance 或 ArtifactManifest 为 pending_review 时不允许进入下游。
+- 已批准文件 hash 变化时，原批准失效并创建新 ArtifactManifest/GateInstance。
 
 暂不做：
 
@@ -339,10 +352,10 @@ MVP 原型完成后，必须能演示：
 1. 导入热点工具更新 Flow A-G。
 2. 查看 WorkflowSpec YAML 摘要，并在启动 run 时冻结 snapshot。
 3. 运行 dry-run，生成 CredentialCheckResult 并发现 TTS 凭证风险。
-4. 在 DAG 中区分 NodeRun、ArtifactManifest 和 GateDecision。
+4. 在 DAG 中区分 NodeRun 聚合状态和多次 NodeAttempt。
 5. 在 Agent View 中看到 Agent 健康和等待关系。
 6. 在 Artifact Board 中看到具体 run 的产物实例与版本流转。
-7. 在 Gate Review UI 中驳回 MD，保留原实例并创建新的 B 节点 attempt。
+7. 在 Gate Review UI 中驳回 MD，保留原实例并在同一 B NodeRun 下创建新 Attempt。
 8. 在 Infinite Canvas 中新增 Pencil 原型卡并转为节点。
 9. 通过 Visual/Spec Sync 看到 YAML 和 UI 一致。
 10. 在 Evolution Board 中看到“增加 TTS 凭证预检”的建议。
@@ -351,8 +364,17 @@ MVP 原型完成后，必须能演示：
 
 | 页面 | 主要状态来源 |
 |---|---|
-| Node DAG | WorkflowSnapshot + NodeRun |
+| Run 顶部 | RunSpec 主状态 + attention flags |
+| Node DAG | WorkflowSnapshot + NodeRun；详情展开 NodeAttempt |
 | Agent Collaboration | AgentSpec + AgentHealth + TraceEvent |
 | Artifact Board | ArtifactManifest，反向引用 ArtifactSpec |
-| Gate Review | GateDecision + ArtifactManifest |
+| Gate Review | GateInstance + GateDecision/GateComment + ArtifactManifest |
 | Timeline / Audit | TraceEvent；AuditEvent 为其受保护子类型 |
+
+Event Journal 验收：
+
+- 每个 run 使用 append-only JSONL journal 和 run 级 sequence。
+- AdapterResult 先写 `adapter_result_received`，投影完成后写
+  `adapter_result_committed`。
+- 重启遇到 received 未 committed 时，只补齐投影，不重新调用 provider。
+- NodeAttempt 启动前已冻结 resolved artifact IDs 和 hashes。

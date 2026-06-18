@@ -200,8 +200,8 @@ Miracle 需要避免“UI 改一份、文件又一份”的割裂。
 
 ```text
 WorkflowSpec / AgentSpec / ComponentSpec 是可版本化配置真相
-RunSpec snapshot / NodeRun / TraceEvent / ArtifactManifest / GateDecision /
-CredentialCheckResult 是运行事实真相
+RunSpec snapshot / NodeRun / NodeAttempt / TraceEvent / ArtifactManifest /
+GateInstance / GateDecision / CredentialCheckResult 是运行事实真相
 UI 只是编辑器
 CLI/SDK 也只是编辑器
 ```

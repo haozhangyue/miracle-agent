@@ -76,13 +76,14 @@ reviewing -> queued
 状态命名边界：
 
 - `reviewing` 是 Agent 状态，表示 Agent 正在执行审核任务。
-- `pending_review` 只属于 GateDecision 和 ArtifactManifest。
+- `pending_review` 属于 GateInstance 和 ArtifactManifest，不属于 GateDecision。
 - NodeRun 完成生成后进入 `done`，不进入 `pending_review` 或 `approved`。
-- 审核驳回时，`rejected` 写入 GateDecision 和 ArtifactManifest；返工创建新的 NodeRun attempt，Agent 进入 `queued`。
+- 审核驳回时，创建不可变 GateDecision 并把 ArtifactManifest 标为 `rejected`；
+  返工在原 NodeRun 下创建新的 NodeAttempt，Agent 进入 `queued`。
 
 非法状态跳转必须拒绝并写入审计事件。例如：
 
-- `GateDecision.pending_review` 和 `ArtifactManifest.pending_review` 不能进入下游。
+- `GateInstance.pending_review` 和 `ArtifactManifest.pending_review` 不能进入下游。
 - `blocked` 不能直接标记 `done`。
 - `failed` 不能绕过 retry/reconcile 创建已批准产物。
 
@@ -183,9 +184,10 @@ A 情报采集 -> B MD 母稿 -> Gate B 审核 -> C0 脚本池 -> C 分镜 -> D 
 每个节点展示：
 
 - NodeRun 状态。
+- 当前 NodeAttempt 和历史 Attempts。
 - Agent。
 - ArtifactManifest 实例和状态。
-- GateDecision。
+- GateInstance、GateDecision 和绑定的 artifact hash。
 - 耗时。
 - 错误或阻塞。
 
@@ -236,14 +238,15 @@ Agent 组件装备面板展示：
 
 ## 10. 审核返工循环
 
-审核返工由 GateDecision、ArtifactManifest 和新的 NodeRun attempt 共同表达：
+审核返工由 GateInstance、GateDecision、ArtifactManifest 和新的 NodeAttempt 共同表达：
 
 ```text
-GateDecision: pending_review -> approved -> downstream_allowed
-GateDecision: pending_review -> rejected
+GateInstance: pending_review -> decided
+GateDecision: approved -> bound artifact ID/hash downstream_allowed
+GateDecision: rejected
 ArtifactManifest: pending_review -> rejected
-Rejected -> create new NodeRun attempt -> queued
-GateDecision: pending_review -> commented -> pending_review
+Rejected -> same NodeRun creates new NodeAttempt -> queued
+Comment -> GateComment / audit TraceEvent; GateInstance stays pending_review
 ```
 
 驳回必须包含：
@@ -252,6 +255,9 @@ GateDecision: pending_review -> commented -> pending_review
 - 返回节点。
 - 修改建议。
 - 是否保留当前草稿。
+
+批准后文件 hash 变化时，原 GateDecision 不适用于修改后的文件；系统必须创建新的
+ArtifactManifest 和 GateInstance，不能复用旧批准。
 
 ## 11. TraceEvent 与 AuditEvent
 

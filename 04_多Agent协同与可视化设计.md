@@ -54,7 +54,7 @@ idle / queued / running / waiting / blocked / reviewing / done / failed
 命名边界：
 
 - `reviewing` 是 Agent 状态，表示 Agent 正在执行审核工作。
-- `pending_review` 只属于 GateDecision 和 ArtifactManifest。
+- `pending_review` 只属于 GateInstance 和 ArtifactManifest。
 - 两者在 UI 上可以同屏显示，但底层事件要区分。
 
 ### 3.1 合法状态流转
@@ -70,10 +70,11 @@ reviewing -> queued
 
 非法流转必须拒绝并记录审计事件：
 
-- `GateDecision.pending_review` 和 `ArtifactManifest.pending_review` 不能进入下游。
+- `GateInstance.pending_review` 和 `ArtifactManifest.pending_review` 不能进入下游。
 - `blocked` 不能直接标记 `done`。
 - `failed` 不能绕过修复或 reconcile 生成已批准产物。
-- 审核驳回时，`rejected` 写入 GateDecision 和 ArtifactManifest；返工创建新的 NodeRun attempt，Agent 进入 `queued`。
+- 审核驳回时，创建不可变 GateDecision 并更新 ArtifactManifest；返工在原 NodeRun
+  下创建新的 NodeAttempt，Agent 进入 `queued`。
 
 ## 4. 四个核心视图
 
@@ -161,7 +162,7 @@ flowchart TD
 卡片字段：
 
 - ArtifactManifest ID 和 ArtifactSpec ID。
-- run ID 和 node attempt。
+- run ID、NodeRun ID 和 NodeAttempt ID。
 - 产物名称。
 - 类型。
 - 所属节点。
@@ -331,14 +332,15 @@ actions:
 ### 8.1 审核返工循环
 
 审核门不仅展示 pending 状态，还要展示可执行动作。这里的 `pending_review` 属于
-GateDecision 和 ArtifactManifest，不属于 AgentHealth 或 NodeRun：
+GateInstance 和 ArtifactManifest，不属于 AgentHealth、NodeRun 或 GateDecision：
 
 ```text
-GateDecision: pending_review -> approved -> downstream_allowed
-GateDecision: pending_review -> rejected
+GateInstance: pending_review -> decided
+GateDecision: approved -> bound artifact ID/hash downstream_allowed
+GateDecision: rejected
 ArtifactManifest: pending_review -> rejected
-Rejected -> create new NodeRun attempt -> queued
-GateDecision: pending_review -> commented -> pending_review
+Rejected -> same NodeRun creates new NodeAttempt -> queued
+Comment -> GateComment / audit TraceEvent
 ```
 
 驳回必须记录：
