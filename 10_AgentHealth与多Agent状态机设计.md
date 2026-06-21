@@ -49,6 +49,13 @@ recovery_actions:
 | `equipped_libraries` | 装备组件库。 |
 | `recovery_actions` | 可恢复动作。 |
 
+并发说明：
+
+- 上述 AgentHealth v0 表示一个具体运行上下文中的健康投影，不代表 Agent 角色只能参与
+  一个 Run。
+- 智能体中心需要按 AgentSpec 聚合多个活跃执行、排队任务和阻塞任务。
+- P2 只定义聚合展示需求；P3 再定义 runtime/session、执行实例、并发容量和投影身份键。
+
 ## 3. Agent 状态机
 
 ```text
