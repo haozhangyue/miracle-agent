@@ -4,7 +4,10 @@
 
 ## 当前阶段
 
-第一版只交付方案文档，不创建代码工程。P0/P1.5 和四轮架构评审已经完成；采纳项已回写到正式架构文档。P2 产品信息架构先形成初版，再通过 A/B 候选比较，最终收口到 `16_融合_产品信息架构与设计图规划.md`。融合方案的产品评审整改已完成，启动术语、Run 不可变边界、Attention 生命周期、状态归属、导航所有权和首轮原型范围已经收口。下一步进入 6 个核心界面的低保真可点击原型。
+第一版只交付方案和原型资产，不创建代码工程。P0/P1.5 和四轮架构评审已经完成；
+P2 产品信息架构已收口到 `16_融合_产品信息架构与设计图规划.md`。当前已并行完成
+Product Design 三个视觉方向和 Pencil 六页可编辑原型，进入双轨原型人工评审与融合
+决策阶段。
 
 1. 多 Agent 协同可视化。
 2. 工作流流程节点编排。
@@ -49,6 +52,11 @@
 | `HISTORICAL` | [16_产品信息架构与设计图规划.md](16_产品信息架构与设计图规划.md) | 产品 IA 初版，已被融合版取代 |
 | `HISTORICAL` | [16_abtest_产品信息架构与设计图规划.md](16_abtest_产品信息架构与设计图规划.md) | A/B 候选方案，已被融合版吸收 |
 | `CURRENT` | [16_融合_产品信息架构与设计图规划.md](16_融合_产品信息架构与设计图规划.md) | 当前有效的 P2 产品方案 |
+| `CURRENT` | [prototypes/p2/00_双轨原型共同设计简报.md](prototypes/p2/00_双轨原型共同设计简报.md) | Product Design 与 Pencil 的共同原型输入 |
+| `CURRENT` | [prototypes/p2/product-design/README.md](prototypes/p2/product-design/README.md) | 三个 Product Design 视觉候选 |
+| `CURRENT` | [prototypes/p2/pencil/README.md](prototypes/p2/pencil/README.md) | 六页 Pencil 原型、源文件和导出图 |
+| `CURRENT` | [prototypes/p2/01_双轨原型评审表.md](prototypes/p2/01_双轨原型评审表.md) | 人工评审评分与任务走查模板 |
+| `REFERENCE` | [prototypes/p2/02_双轨原型初步对比结论.md](prototypes/p2/02_双轨原型初步对比结论.md) | 内部预评审和融合建议 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 版本记录要求
