@@ -59,6 +59,22 @@ Product Design 三个视觉方向和 Pencil 六页可编辑原型，进入双轨
 | `REFERENCE` | [prototypes/p2/02_双轨原型初步对比结论.md](prototypes/p2/02_双轨原型初步对比结论.md) | 内部预评审和融合建议 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
+## 原型资产目录说明
+
+- `prototypes/p2/`：P2 原型说明、评审表、对比结论和 Pencil 可编辑源文件。
+- `prototypes/p2/product-design/README.md`：Product Design 三个视觉方向说明。
+- `prototypes/p2/pencil/README.md`：Pencil 六页低保真原型说明和源文件入口。
+- `assets/prototypes/product-design/`：Product Design A/B/C 三张视觉候选图片。
+- `assets/prototypes/pencil/`：Pencil `P2F-01` 到 `P2F-06` 六页导出图片。
+
+快速人工评审时，优先阅读
+[prototypes/p2/02_双轨原型初步对比结论.md](prototypes/p2/02_双轨原型初步对比结论.md)，
+再按其中的路径表打开具体图片。需要打分时使用
+[prototypes/p2/01_双轨原型评审表.md](prototypes/p2/01_双轨原型评审表.md)。
+
+当前融合原则：Product Design 主导最终界面的视觉方向、布局体验和交互重心；Pencil
+用于校验六页任务闭环、对象语义、状态归属和审核安全边界，不作为最终视觉主方案。
+
 ## 版本记录要求
 
 项目统一通过 `VERSION_HISTORY.md` 维护系统演进历史。完成重要阶段、完整模块、核心协议
