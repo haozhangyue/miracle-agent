@@ -89,6 +89,15 @@
 - 新增三个 Product Design 视觉候选：行动中枢、Run 驾驶舱、态势与处置台。
 - 新增 `P2F-01` 至 `P2F-06` 六页 Pencil 可编辑原型和页面导出图。
 - 新增双轨原型评审表与内部初步对比结论，进入人工评审和融合决策。
+- 完成人工选择和复审：Product Design A/B/C 三张图作为主视觉真相，本阶段聚焦 Web
+  工作台交互，不做 APP/移动端兼容。
+- 新增 P2 Web 工作台可点击原型，覆盖首页、新任务、Dry-run、Run 工作区、Attention 和
+  审核抽屉。
+- 新增桌面 Web 截图验证，确认 Product Design A/B/C 对应首页、Run 和 Attention 方向。
+- 按最新人工决策完成原型视觉映射收口：A 固定用于首页，B 固定用于 Run 工作区，C 的
+  根因联动固定用于 Attention。
+- `fusion-clickable` 引入 `lucide-react` 图标库并重构三页桌面布局，重新生成
+  `home-desktop.png`、`run-desktop.png`、`attention-desktop.png`。
 
 本节在 P2 产品信息架构和可点击原型完成评审后，转换为正式的 `v0.6.0` 版本记录。
 

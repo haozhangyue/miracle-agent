@@ -6,8 +6,8 @@
 
 第一版只交付方案和原型资产，不创建代码工程。P0/P1.5 和四轮架构评审已经完成；
 P2 产品信息架构已收口到 `16_融合_产品信息架构与设计图规划.md`。当前已并行完成
-Product Design 三个视觉方向和 Pencil 六页可编辑原型，进入双轨原型人工评审与融合
-决策阶段。
+Product Design 三个视觉方向和 Pencil 六页可编辑原型已经完成，并已按复审结论生成
+P2 Web 工作台可点击原型，进入 Web 交互评审与迭代阶段。
 
 1. 多 Agent 协同可视化。
 2. 工作流流程节点编排。
@@ -56,7 +56,9 @@ Product Design 三个视觉方向和 Pencil 六页可编辑原型，进入双轨
 | `CURRENT` | [prototypes/p2/product-design/README.md](prototypes/p2/product-design/README.md) | 三个 Product Design 视觉候选 |
 | `CURRENT` | [prototypes/p2/pencil/README.md](prototypes/p2/pencil/README.md) | 六页 Pencil 原型、源文件和导出图 |
 | `CURRENT` | [prototypes/p2/01_双轨原型评审表.md](prototypes/p2/01_双轨原型评审表.md) | 人工评审评分与任务走查模板 |
-| `REFERENCE` | [prototypes/p2/02_双轨原型初步对比结论.md](prototypes/p2/02_双轨原型初步对比结论.md) | 内部预评审和融合建议 |
+| `CURRENT` | [prototypes/p2/02_双轨原型初步对比结论.md](prototypes/p2/02_双轨原型初步对比结论.md) | 人工选择结果和融合建议 |
+| `CURRENT` | [prototypes/p2/03_融合版原型决策与验收说明.md](prototypes/p2/03_融合版原型决策与验收说明.md) | Product Design A/B/C Web-only 决策和验收口径 |
+| `CURRENT` | [prototypes/p2/fusion-clickable/README.md](prototypes/p2/fusion-clickable/README.md) | P2 Web 工作台可点击原型入口 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明
@@ -64,16 +66,24 @@ Product Design 三个视觉方向和 Pencil 六页可编辑原型，进入双轨
 - `prototypes/p2/`：P2 原型说明、评审表、对比结论和 Pencil 可编辑源文件。
 - `prototypes/p2/product-design/README.md`：Product Design 三个视觉方向说明。
 - `prototypes/p2/pencil/README.md`：Pencil 六页低保真原型说明和源文件入口。
+- `prototypes/p2/fusion-clickable/`：P2 Web 工作台代码级可点击原型。
 - `assets/prototypes/product-design/`：Product Design A/B/C 三张视觉候选图片。
 - `assets/prototypes/pencil/`：Pencil `P2F-01` 到 `P2F-06` 六页导出图片。
+- `assets/prototypes/fusion-clickable/`：融合版 Web 工作台原型桌面截图。
 
-快速人工评审时，优先阅读
-[prototypes/p2/02_双轨原型初步对比结论.md](prototypes/p2/02_双轨原型初步对比结论.md)，
-再按其中的路径表打开具体图片。需要打分时使用
-[prototypes/p2/01_双轨原型评审表.md](prototypes/p2/01_双轨原型评审表.md)。
+当前 Product Design A/B/C 固定映射：
+
+- A 用于首页：[assets/prototypes/fusion-clickable/home-desktop.png](assets/prototypes/fusion-clickable/home-desktop.png)
+- B 用于 Run 工作区：[assets/prototypes/fusion-clickable/run-desktop.png](assets/prototypes/fusion-clickable/run-desktop.png)
+- C 的根因联动用于 Attention：[assets/prototypes/fusion-clickable/attention-desktop.png](assets/prototypes/fusion-clickable/attention-desktop.png)
+
+快速评审 Web 工作台原型时，优先阅读
+[prototypes/p2/03_融合版原型决策与验收说明.md](prototypes/p2/03_融合版原型决策与验收说明.md)，
+再运行 [prototypes/p2/fusion-clickable/](prototypes/p2/fusion-clickable/)。
 
 当前融合原则：Product Design 主导最终界面的视觉方向、布局体验和交互重心；Pencil
 用于校验六页任务闭环、对象语义、状态归属和审核安全边界，不作为最终视觉主方案。
+当前阶段只验证 Web 工作台交互，APP/移动端兼容模式后续单独设计。
 
 ## 版本记录要求
 

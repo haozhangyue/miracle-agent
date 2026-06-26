@@ -7,6 +7,21 @@
 
 本轮只用于视觉方向对比，不是代码原型，也不替代可编辑的 Pencil 低保真原型。
 
+## 最终采纳结果
+
+2026-06-26 复审后，A/B/C 不再作为并列首页方案，而是固定映射到三个 Web 工作台页面：
+
+- A 行动中枢 -> 首页。
+- B Run 驾驶舱 -> Run 工作区。
+- C 态势与处置台 -> Attention 的根因联动与关联对象态势。
+
+当前有效的代码级原型见 [../fusion-clickable/README.md](../fusion-clickable/README.md)，
+最新截图见：
+
+- [home-desktop.png](../../../assets/prototypes/fusion-clickable/home-desktop.png)
+- [run-desktop.png](../../../assets/prototypes/fusion-clickable/run-desktop.png)
+- [attention-desktop.png](../../../assets/prototypes/fusion-clickable/attention-desktop.png)
+
 ## 概念 A：行动中枢
 
 ![概念 A：行动中枢](../../../assets/prototypes/product-design/miracle-p2-concept-a.png)
