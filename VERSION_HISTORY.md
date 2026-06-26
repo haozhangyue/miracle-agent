@@ -104,6 +104,9 @@
   传播和恢复动作表达。
 - 新增 P2 原型评审截图证据目录 `assets/reviews/p2-prototype-audit/`，保留首页、Run、
   Attention 和 Agent Collaboration 四个桌面截图。
+- 补充 `14_技术架构选型与系统架构图.md` 的后端演进边界：明确 Node.js 是 MVP
+  Local Sidecar，不是商业化云端主后端限定；商业化阶段建议拆分 Java/Kotlin 云端控制平面、
+  Python/Node Worker 和队列化执行平面。
 
 本节在 P2 产品信息架构和可点击原型完成评审后，转换为正式的 `v0.6.0` 版本记录。
 
