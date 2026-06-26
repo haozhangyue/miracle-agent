@@ -7,6 +7,7 @@
 - 首页：Product Design A 行动中枢，用于默认首页。
 - Run 工作区：Product Design B Run 驾驶舱，用于任务运行页。
 - Attention：Product Design C 态势与处置台，重点吸收根因联动和关联对象态势。
+- Agent Collaboration：作为 P2F-07 独立补充页，突出多 Agent 协同、交接合同和阻塞传播。
 - 新任务、Dry-run、审核抽屉：按 Product Design 视觉语言补齐。
 - Pencil 六页原型：作为流程、对象语义、状态归属和审核安全校验底稿。
 
@@ -17,6 +18,7 @@
 | 首页 | Product Design A | [../../../assets/prototypes/fusion-clickable/home-desktop.png](../../../assets/prototypes/fusion-clickable/home-desktop.png) |
 | Run 工作区 | Product Design B | [../../../assets/prototypes/fusion-clickable/run-desktop.png](../../../assets/prototypes/fusion-clickable/run-desktop.png) |
 | Attention | Product Design C 根因联动 | [../../../assets/prototypes/fusion-clickable/attention-desktop.png](../../../assets/prototypes/fusion-clickable/attention-desktop.png) |
+| Agent Collaboration | P2F-07 独立补充 | [../../../assets/prototypes/fusion-clickable/agent-collaboration-desktop.png](../../../assets/prototypes/fusion-clickable/agent-collaboration-desktop.png) |
 
 ## 运行方式
 
@@ -40,7 +42,8 @@ http://127.0.0.1:5173/
 - Run 可切换阶段过滤、选择节点、打开节点详情。
 - Run 事件与审计抽屉可展开或折叠。
 - Attention 可切换不同根因并刷新关联对象态势。
-- 工作流、智能体、资源库、设置保留导航占位，后续单独展开。
+- 智能体页已补充 P2F-07 Agent Collaboration，可查看当前 Run 的 Agent 交接链路。
+- 工作流、资源库、设置保留导航占位，后续单独展开。
 
 ## 当前边界
 

@@ -71,7 +71,7 @@
 
 **目标版本：** `v0.6.0`
 **相对基线：** `1bd740f`
-**当前文件变化：** 新增 19，更新 8，删除 0；发布前重新统计最终行数。
+**当前文件变化：** 新增 41，更新 8，删除 0；发布前重新统计最终行数。
 
 ### 变更摘要
 
@@ -98,6 +98,12 @@
   根因联动固定用于 Attention。
 - `fusion-clickable` 引入 `lucide-react` 图标库并重构三页桌面布局，重新生成
   `home-desktop.png`、`run-desktop.png`、`attention-desktop.png`。
+- 完成 P2 Web 原型评审，生成 `18_P2原型评审纪要与修订清单.md`，明确主链路有条件
+  通过、P2 修订项、P3 延后项和 P2/P3 分界。
+- 新增 `P2F-07 Agent Collaboration` Web 页面原型，补充多 Agent 协同、交接合同、阻塞
+  传播和恢复动作表达。
+- 新增 P2 原型评审截图证据目录 `assets/reviews/p2-prototype-audit/`，保留首页、Run、
+  Attention 和 Agent Collaboration 四个桌面截图。
 
 本节在 P2 产品信息架构和可点击原型完成评审后，转换为正式的 `v0.6.0` 版本记录。
 

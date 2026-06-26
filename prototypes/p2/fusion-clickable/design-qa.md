@@ -13,6 +13,7 @@ implementation screenshot path:
 - `assets/prototypes/fusion-clickable/home-desktop.png`
 - `assets/prototypes/fusion-clickable/run-desktop.png`
 - `assets/prototypes/fusion-clickable/attention-desktop.png`
+- `assets/prototypes/fusion-clickable/agent-collaboration-desktop.png`
 
 viewport:
 
@@ -23,6 +24,7 @@ state:
 - 首页默认态。
 - Run 工作区桌面三栏态。
 - Attention Queue 根因聚合与右侧协作依赖态势。
+- Agent Collaboration 多 Agent 协同与交接态势。
 
 full-view comparison evidence:
 
@@ -36,12 +38,14 @@ focused region comparison evidence:
 - Run 节点卡：状态、标题、Agent、阶段标签和选中态可读，无主要文字重叠。
 - Web 工作台事件条：底部事件与审计可展开，展示运行事件。
 - Attention 关联态势：选择不同根因后，左侧展开内容和右侧当前选中对象会同步刷新。
+- Agent Collaboration：智能体页展示 Agent 链路、交接合同、阻塞传播和恢复动作，1440 桌面下无横向裁切。
 
 findings:
 
 - No P0/P1/P2 findings remain.
 - P3: 当前原型已引入 `lucide-react` 作为工作台图标库；后续进入正式前端时仍需统一图标尺寸、焦点态和组件 token。
 - P3: 当前原型未覆盖 APP/移动端适配；后续如需要 APP，应另开移动端信息架构和交互设计。
+- P3: Agent Collaboration 当前验证 Run 内协同态势，不定义 Agent 容量、并发调度和真实数据接口。
 
 patches made since previous QA pass:
 
@@ -49,5 +53,6 @@ patches made since previous QA pass:
 - 按最终映射重构三页：A 用于首页，B 用于 Run 工作区，C 的根因联动用于 Attention。
 - 新增 `lucide-react` 图标库，替换文字占位式图形。
 - 重新生成 `home-desktop.png`、`run-desktop.png`、`attention-desktop.png` 三张桌面截图。
+- 新增 `P2F-07 Agent Collaboration` Web 页面原型，并生成 `agent-collaboration-desktop.png`。
 
 final result: passed

@@ -224,6 +224,75 @@ const attentionItems = [
   },
 ];
 
+const collaborationAgents = [
+  {
+    id: "intelligence",
+    number: 1,
+    name: "intelligence-agent",
+    role: "情报采集与事实核验",
+    status: "done",
+    statusText: "done",
+    handoff: "clean_events.json -> content-agent",
+    contract: "输出必须带 source_url、claim、confidence 和 evidence_hash。",
+    health: "完成 · 证据链完整",
+  },
+  {
+    id: "content",
+    number: 2,
+    name: "content-agent",
+    role: "内容 MD 母稿",
+    status: "pending_review",
+    statusText: "GateInstance · pending_review",
+    handoff: "md_master_v2.md -> script-agent",
+    contract: "GateDecision approved 后才允许脚本池读取。",
+    health: "等待人工审核",
+  },
+  {
+    id: "script",
+    number: 3,
+    name: "script-agent",
+    role: "脚本与分镜",
+    status: "queued",
+    statusText: "queued",
+    handoff: "script_draft_v1.md -> tts-agent / video-agent",
+    contract: "读取母稿版本和 hash，不读取未批准草稿。",
+    health: "排队 · 上游 Gate 未放行",
+  },
+  {
+    id: "tts",
+    number: 4,
+    name: "tts-agent",
+    role: "TTS 与字幕",
+    status: "blocked",
+    statusText: "NodeRun · blocked",
+    handoff: "audio_master_v1.wav + subtitle_master_v1.srt -> video-agent",
+    contract: "必须具备 ProviderCredential，并写入 ArtifactManifest。",
+    health: "阻塞 · VOLC_TTS_API_KEY 缺失",
+  },
+  {
+    id: "video",
+    number: 5,
+    name: "video-agent",
+    role: "视频渲染",
+    status: "waiting",
+    statusText: "AgentHealth · waiting",
+    handoff: "video_master_v1.mp4 -> distribution-agent",
+    contract: "等待音频、字幕和画面配置齐备后启动。",
+    health: "等待 tts-agent 产物",
+  },
+  {
+    id: "distribution",
+    number: 6,
+    name: "distribution-agent",
+    role: "分发复盘",
+    status: "queued",
+    statusText: "queued",
+    handoff: "publish_package_v1 -> review/delivery",
+    contract: "Markdown 分发可绕过视频分支，视频分发必须等待最终渲染 Gate。",
+    health: "排队 · 可走 MD 分支",
+  },
+];
+
 function StatusPill({ status, children }) {
   return <span className={`status-pill status-${status}`}>{children ?? status}</span>;
 }
@@ -884,6 +953,101 @@ function Attention() {
   );
 }
 
+function AgentCollaboration() {
+  const [active, setActive] = useState("tts");
+  const agent = collaborationAgents.find((entry) => entry.id === active) ?? collaborationAgents[0];
+
+  return (
+    <section className="collab-view">
+      <div className="collab-hero">
+        <div>
+          <span>P2F-07 · Agent Collaboration</span>
+          <h1>多 Agent 协同与交接态势</h1>
+          <p>围绕当前 Run 展示 Agent 职责、交接合同、依赖阻塞和可恢复动作，避免用户只看到单个节点状态。</p>
+        </div>
+        <div className="collab-metrics">
+          <MiniPanel title="活跃 Agent" value="6" desc="1 blocked / 2 waiting" />
+          <MiniPanel title="交接合同" value="5" desc="2 个受 Gate 约束" />
+          <MiniPanel title="阻塞传播" value="2" desc="影响 video / publish" />
+        </div>
+      </div>
+
+      <div className="collab-grid">
+        <section className="agent-map surface">
+          <div className="panel-head">
+            <h2>协同链路</h2>
+            <small>当前 Run 的 Agent 交接图</small>
+          </div>
+          <div className="agent-lanes">
+            {collaborationAgents.map((entry) => (
+              <button key={entry.id} className={`agent-lane ${entry.id === active ? "selected" : ""} ${entry.status}`} onClick={() => setActive(entry.id)}>
+                <span className={`node-number ${entry.status}`}>{entry.number}</span>
+                <div>
+                  <strong>{entry.name}</strong>
+                  <p>{entry.role}</p>
+                  <StatusPill status={entry.status}>{entry.statusText}</StatusPill>
+                </div>
+                <span className="handoff-chip">{entry.handoff}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="handoff-panel surface">
+          <div className="panel-head">
+            <h2>交接协议与阻塞传播</h2>
+            <small>选中：{agent.name}</small>
+          </div>
+          <div className="handoff-card">
+            <span>Agent 职责</span>
+            <strong>{agent.role}</strong>
+            <span>当前状态</span>
+            <StatusPill status={agent.status}>{agent.statusText}</StatusPill>
+            <span>交接合同</span>
+            <p>{agent.contract}</p>
+            <span>输出去向</span>
+            <p>{agent.handoff}</p>
+          </div>
+          <div className="dependency-board">
+            <div>
+              <h3>上游输入</h3>
+              <p>md_master_v2.md · pending_review</p>
+              <p>script_draft_v1.md · queued</p>
+            </div>
+            <div>
+              <h3>当前风险</h3>
+              <p>{agent.health}</p>
+              <p>失败后保留 NodeAttempt，不覆盖 NodeRun 历史。</p>
+            </div>
+            <div>
+              <h3>下游影响</h3>
+              <p>video-agent waiting</p>
+              <p>distribution-agent 可走 Markdown 分支。</p>
+            </div>
+          </div>
+        </section>
+
+        <aside className="collab-actions surface">
+          <div className="panel-head">
+            <h2>恢复动作</h2>
+            <small>必须绑定对象和安全边界</small>
+          </div>
+          <div className="restore-list">
+            <button><Wrench size={17} /> 配置 ProviderCredential <span>影响 tts-agent</span></button>
+            <button><RefreshCw size={17} /> 切换备用 Provider <span>保留 Attempt</span></button>
+            <button><GitBranch size={17} /> 跳过可选视频分支 <span>仅 MD 交付</span></button>
+          </div>
+          <div className="event-list collab-events">
+            <p><b>10:20:11</b> tts-agent attempt_001 failed，写入 NodeRun blocked。</p>
+            <p><b>10:19:58</b> video-agent 进入 waiting，等待音频与字幕产物。</p>
+            <p><b>10:18:44</b> content-agent 创建 GateInstance，阻止未审核母稿进入脚本池。</p>
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
 function MiniPanel({ title, value, desc }) {
   return (
     <div className="mini-panel">
@@ -953,7 +1117,7 @@ export function App() {
       {active === "attention" && <Attention />}
       {active === "review" && <ReviewDrawer />}
       {active === "workflow" && <PlaceholderPage title="工作流" desc="Workflow Builder 和 Registry 视图后续单独展开。" />}
-      {active === "agents" && <PlaceholderPage title="智能体" desc="Agent Center 后续基于 C 的协作态势继续细化。" />}
+      {active === "agents" && <AgentCollaboration />}
       {active === "registry" && <PlaceholderPage title="资源库" desc="组件库、模板和 Provider 资产后续进入资源库设计。" />}
       {active === "settings" && <PlaceholderPage title="设置" desc="凭证、Provider、权限和审计策略后续进入设置设计。" />}
     </AppShell>
