@@ -8,8 +8,8 @@
 | 项目 | 当前值 |
 |---|---|
 | 当前大版本 | `v0.5.1` |
-| 版本名称 | P4 MVP 可运行主链路 |
-| 当前阶段 | P4 第一轮 MVP 可运行主链路已落地 |
+| 版本名称 | P4 MVP 第二轮交互增强 |
+| 当前阶段 | P4 第二轮已落地 React Flow DAG、Artifact 预览、Gate 投影和 Canvas 草稿态 |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -122,8 +122,15 @@
 - MVP 已覆盖 MVPS01-MVPS07 可运行主链路，MVPS08-MVPS10 提供入口占位。
 - 验证通过 `npm run typecheck`、`npm run test`、`npm run build`，并完成 Sidecar API
   smoke test 和 Playwright 页面截图。
+- P4 第二轮新增 React Flow DAG 视图、Artifact Detail 文件预览、Gate 决策影响投影和
+  Infinite Canvas 草稿态。
+- 新增 `25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md`，同步记录新增接口、
+  fixture、页面变化和验收重点。
+- Sidecar 新增 `/runs/:id/dag`、`/workflows/:id/canvas-draft` 读写和增强后的
+  Artifact/Gate Detail 响应；核心边界仍保持 Run/WorkflowSnapshot 只读、Canvas 草稿不
+  影响执行依赖、Gate projection 不直接覆盖 Artifact。
 
-本节在 P4 第一轮 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
+本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 
 ## 5. 里程碑
 

@@ -5,20 +5,25 @@ import {
   Boxes,
   CheckCircle2,
   ClipboardCheck,
+  Eye,
+  FileSearch,
   FileText,
   GitBranch,
   Home,
   LayoutDashboard,
   Loader2,
+  Move,
   Network,
   Play,
   Plus,
+  Save,
   Search,
   ShieldCheck,
   Sparkles,
   Workflow,
   XCircle
 } from "lucide-react";
+import { Background, Controls, MarkerType, ReactFlow, type Edge as FlowEdge, type Node as FlowNode } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
 
 type Page = "home" | "new" | "dryrun" | "run" | "attention" | "agents" | "artifacts" | "review" | "canvas" | "sync" | "evolution";
@@ -67,6 +72,7 @@ export function App() {
   const [runId, setRunId] = useState("run-demo-001");
   const [selectedNode, setSelectedNode] = useState("nr_run-demo-001_E_tts");
   const [selectedAttention, setSelectedAttention] = useState("att_tts_credential");
+  const [selectedArtifact, setSelectedArtifact] = useState("art_md_master_v2");
   const [selectedGate, setSelectedGate] = useState("gate-md-master-001");
 
   return (
@@ -88,7 +94,7 @@ export function App() {
           <NavButton page="agents" active={page} setPage={setPage} icon={<Bot size={18} />} label="智能体" />
           <NavButton page="artifacts" active={page} setPage={setPage} icon={<Archive size={18} />} label="产物" />
           <NavButton page="review" active={page} setPage={setPage} icon={<ClipboardCheck size={18} />} label="审核" />
-          <NavButton page="canvas" active={page} setPage={setPage} icon={<LayoutDashboard size={18} />} label="画布占位" />
+          <NavButton page="canvas" active={page} setPage={setPage} icon={<LayoutDashboard size={18} />} label="画布草稿" />
           <NavButton page="sync" active={page} setPage={setPage} icon={<GitBranch size={18} />} label="Spec Sync" />
           <NavButton page="evolution" active={page} setPage={setPage} icon={<Sparkles size={18} />} label="进化占位" />
         </nav>
@@ -112,9 +118,9 @@ export function App() {
         {page === "run" && <RunPage runId={runId} selectedNode={selectedNode} setSelectedNode={setSelectedNode} go={setPage} />}
         {page === "attention" && <AttentionPage selected={selectedAttention} setSelected={setSelectedAttention} go={setPage} />}
         {page === "agents" && <AgentsPage />}
-        {page === "artifacts" && <ArtifactsPage />}
+        {page === "artifacts" && <ArtifactsPage selectedArtifact={selectedArtifact} setSelectedArtifact={setSelectedArtifact} />}
         {page === "review" && <ReviewPage selectedGate={selectedGate} setSelectedGate={setSelectedGate} />}
-        {page === "canvas" && <Placeholder title="Infinite Canvas Prototype" description="MVPS08 第一轮只保留入口和 CanvasLayout 数据结构。完整无限画布在 P4 第二轮实现。" />}
+        {page === "canvas" && <CanvasPage workflowId={workflowId} />}
         {page === "sync" && <Placeholder title="Visual / Spec Sync" description="MVPS09 第一轮只保留入口和 spec diff 概念。文件 watcher 和冲突合并在后续实现。" />}
         {page === "evolution" && <Placeholder title="Evolution Board v0" description="MVPS10 第一轮只保留入口和 EvolutionCandidate 类型。进化建议算法在真实运行数据积累后实现。" />}
       </main>
@@ -260,6 +266,7 @@ function DryRunPage({ workflowId, setRunId, go }: { workflowId: string; setRunId
 
 function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; selectedNode: string; setSelectedNode: (id: string) => void; go: (page: Page) => void }) {
   const run = useApi<any>(`/runs/${runId}`, [runId]);
+  const dag = useApi<any>(`/runs/${runId}/dag`, [runId]);
   const events = useApi<any>(`/runs/${runId}/events`, [runId]);
   const node = selectedNode ? useApi<any>(`/runs/${runId}/nodes/${selectedNode}`, [runId, selectedNode]) : { loading: false } as ApiState<any>;
   const stages = useMemo(() => {
@@ -267,6 +274,36 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
     if (!workflow) return [];
     return Array.from(new Set(Object.values(workflow.layouts.dag).map((item: any) => item.stage ?? "默认阶段")));
   }, [run.data]);
+  const flowNodes = useMemo<FlowNode[]>(() => {
+    return (dag.data?.dag.nodes ?? []).map((item: any) => ({
+      id: item.id,
+      type: "default",
+      position: { x: Math.round(item.position.x * 0.55), y: Math.round(item.position.y * 1.15) },
+      data: {
+        label: (
+          <div className={`flowNode ${statusClass(item.status)}`}>
+            <strong>{item.name}</strong>
+            <span>{item.agent_id ?? "-"} · NodeRun · {item.status}</span>
+            <small>{item.stage}</small>
+          </div>
+        ),
+        nodeRunId: item.node_run_id
+      },
+      className: item.node_run_id === selectedNode ? "flowShell selected" : "flowShell"
+    }));
+  }, [dag.data, selectedNode]);
+  const flowEdges = useMemo<FlowEdge[]>(() => {
+    return (dag.data?.dag.edges ?? []).map((item: any) => ({
+      id: item.id,
+      source: item.from,
+      target: item.to,
+      label: item.label,
+      animated: !item.required,
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: { stroke: item.required ? "#1d64e8" : "#f59e0b", strokeWidth: item.required ? 2 : 1.5 },
+      labelStyle: { fill: item.required ? "#1d64e8" : "#9a5b00", fontWeight: 700 }
+    }));
+  }, [dag.data]);
 
   return (
     <section className="page">
@@ -280,19 +317,22 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
       <div className="stageTabs">{stages.map((stage) => <span key={String(stage)}>{String(stage)}</span>)}</div>
       <div className="runGrid">
         <Panel title="执行流程视图">
-          <DataState state={run}>
-            <div className="dagList">
-              {run.data?.workflow.nodes.map((spec: any) => {
-                const nodeRun = run.data.nodes.find((item: any) => item.node_id === spec.id);
-                return (
-                  <button className={nodeRun?.node_run_id === selectedNode ? "dagNode selected" : "dagNode"} key={spec.id} onClick={() => setSelectedNode(nodeRun?.node_run_id)}>
-                    <span className={`dot ${statusClass(nodeRun?.status ?? "queued")}`} />
-                    <strong>{spec.name}</strong>
-                    <small>{spec.agent_candidates[0]} · NodeRun · {nodeRun?.status ?? "queued"}</small>
-                  </button>
-                );
-              })}
+          <DataState state={dag}>
+            <div className="flowCanvas">
+              <ReactFlow
+                nodes={flowNodes}
+                edges={flowEdges}
+                nodesDraggable={false}
+                nodesConnectable={false}
+                elementsSelectable
+                fitView
+                onNodeClick={(_, clicked) => clicked.data.nodeRunId && setSelectedNode(String(clicked.data.nodeRunId))}
+              >
+                <Controls showInteractive={false} />
+                <Background gap={22} size={1} />
+              </ReactFlow>
             </div>
+            <div className="flowLegend"><span><i className="requiredLine" /> required</span><span><i className="optionalLine" /> optional</span><span>layout 只影响 UI，不影响执行依赖</span></div>
           </DataState>
         </Panel>
         <Panel title="所选节点上下文">
@@ -369,26 +409,76 @@ function AgentsPage() {
   );
 }
 
-function ArtifactsPage() {
+function ArtifactsPage({ selectedArtifact, setSelectedArtifact }: { selectedArtifact: string; setSelectedArtifact: (id: string) => void }) {
   const artifacts = useApi<{ artifacts: any[] }>("/artifacts", []);
+  const detail = useApi<any>(`/artifacts/${selectedArtifact}`, [selectedArtifact]);
   return (
     <section className="page">
       <PageTitle eyebrow="Artifact Board" title="产物资产" subtitle="按类型、版本、审核状态和 producer 查看产物。" />
-      <Panel title="Artifact Manifest">
-        <DataState state={artifacts}>
-          <table><thead><tr><th>产物</th><th>类型</th><th>版本</th><th>状态</th><th>审核</th><th>Producer</th></tr></thead>
-          <tbody>{artifacts.data?.artifacts.map((artifact) => <tr key={artifact.artifact_id}><td>{artifact.artifact_id}</td><td>{artifact.type}</td><td>v{artifact.version}</td><td><Pill value={artifact.status} /></td><td><Pill value={artifact.review_status} /></td><td>{artifact.producer}</td></tr>)}</tbody></table>
-        </DataState>
-      </Panel>
+      <div className="artifactGrid">
+        <Panel title="Artifact Manifest" count={artifacts.data?.artifacts.length}>
+          <DataState state={artifacts}>
+            <table><thead><tr><th>产物</th><th>类型</th><th>状态</th><th>审核</th><th>操作</th></tr></thead>
+            <tbody>{artifacts.data?.artifacts.map((artifact) => (
+              <tr key={artifact.artifact_id} className={artifact.artifact_id === selectedArtifact ? "selectedRow" : ""}>
+                <td><strong>{artifact.artifact_id}</strong><small>v{artifact.version} · {artifact.producer}</small></td>
+                <td>{artifact.type}</td>
+                <td><Pill value={artifact.status} /></td>
+                <td><Pill value={artifact.review_status} /></td>
+                <td><button className="linkButton" onClick={() => setSelectedArtifact(artifact.artifact_id)}><Eye size={14} /> 预览</button></td>
+              </tr>
+            ))}</tbody></table>
+          </DataState>
+        </Panel>
+        <Panel title="Artifact Detail Preview">
+          <DataState state={detail}>
+            <div className="artifactDetail">
+              <div className="detailHeader">
+                <FileSearch size={22} />
+                <div>
+                  <strong>{detail.data?.artifact.artifact_id}</strong>
+                  <span>{detail.data?.artifact.path}</span>
+                </div>
+                <Pill value={detail.data?.preview.mode} />
+              </div>
+              <div className="manifestGrid">
+                <Metric label="类型" value={String(detail.data?.artifact.type)} />
+                <Metric label="版本" value={`v${detail.data?.artifact.version}`} />
+                <Metric label="Hash" value={String(detail.data?.artifact.hash).replace("sha256:", "")} />
+              </div>
+              <ArtifactPreviewBox detail={detail.data} />
+            </div>
+          </DataState>
+        </Panel>
+      </div>
     </section>
   );
 }
 
+function ArtifactPreviewBox({ detail }: { detail: any }) {
+  const preview = detail?.preview;
+  if (!preview?.available) {
+    return <div className="previewEmpty"><Archive size={28} /><strong>暂无可预览内容</strong><span>{preview?.reason ?? "当前产物没有本地预览。"}</span></div>;
+  }
+  if (preview.mode === "json") {
+    let content = preview.content;
+    try {
+      content = JSON.stringify(JSON.parse(preview.content), null, 2);
+    } catch {
+      content = preview.content;
+    }
+    return <pre className="previewBlock">{content}</pre>;
+  }
+  return <pre className={preview.mode === "markdown" ? "previewBlock markdownPreview" : "previewBlock"}>{preview.content}</pre>;
+}
+
 function ReviewPage({ selectedGate }: { selectedGate: string; setSelectedGate: (id: string) => void }) {
   const [refresh, setRefresh] = useState(0);
+  const [decisionResult, setDecisionResult] = useState<any>();
   const gate = useApi<any>(`/gates/${selectedGate}?run_id=run-demo-001`, [selectedGate, refresh]);
   async function decide(decision: "approve" | "reject") {
-    await api(`/gates/${selectedGate}/decision?run_id=run-demo-001`, { method: "POST", body: JSON.stringify({ decision, actor: "local_user", comment: decision === "approve" ? "审核通过" : "需要返工" }) });
+    const result = await api<any>(`/gates/${selectedGate}/decision?run_id=run-demo-001`, { method: "POST", body: JSON.stringify({ decision, actor: "local_user", comment: decision === "approve" ? "审核通过" : "需要返工" }) });
+    setDecisionResult(result);
     setRefresh((value) => value + 1);
   }
   return (
@@ -402,7 +492,103 @@ function ReviewPage({ selectedGate }: { selectedGate: string; setSelectedGate: (
             <Pill value={gate.data?.gate.status} />
             <pre className="jsonBlock">{JSON.stringify(gate.data?.target_artifact, null, 2)}</pre>
             <div className="safeActions"><button onClick={() => decide("approve")}><CheckCircle2 size={16} /> 批准</button><button onClick={() => decide("reject")}><XCircle size={16} /> 驳回</button></div>
+            <ProjectionPanel projection={decisionResult?.projection ?? gate.data?.projection} receipt={decisionResult} />
           </div>
+        </DataState>
+      </Panel>
+    </section>
+  );
+}
+
+function ProjectionPanel({ projection, receipt }: { projection?: any; receipt?: any }) {
+  if (!projection) return null;
+  return (
+    <div className="projectionPanel">
+      <header>
+        <strong>决策投影</strong>
+        <Pill value={projection.projected_artifact_review_status} />
+      </header>
+      <p>该投影用于说明 Gate 决策后的执行影响，不直接覆盖 ArtifactManifest。</p>
+      {receipt && <div className="receiptLine">Receipt: {receipt.gate_decision_id} · Events: {receipt.created_events?.join(", ")}</div>}
+      <div className="projectionList">
+        {projection.affected_node_runs.map((item: any) => (
+          <div key={item.node_id}>
+            <strong>{item.node_id}</strong>
+            <span>{`${item.current_status ?? "-"} -> ${item.projected_status}`}</span>
+            <small>{item.reason}</small>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CanvasPage({ workflowId }: { workflowId: string }) {
+  const draftState = useApi<any>(`/workflows/${workflowId}/canvas-draft`, [workflowId]);
+  const [objects, setObjects] = useState<any[]>([]);
+  const [saveState, setSaveState] = useState<string>("未保存");
+
+  useEffect(() => {
+    if (draftState.data?.draft.objects) {
+      setObjects(draftState.data.draft.objects);
+      setSaveState("已加载草稿");
+    }
+  }, [draftState.data]);
+
+  function moveObject(id: string, dx: number, dy: number) {
+    setObjects((current) => current.map((object) => object.id === id ? { ...object, x: object.x + dx, y: object.y + dy } : object));
+    setSaveState("有未保存修改");
+  }
+
+  async function saveDraft() {
+    const result = await api<any>(`/workflows/${workflowId}/canvas-draft`, {
+      method: "POST",
+      body: JSON.stringify({ objects })
+    });
+    setObjects(result.draft.objects);
+    setSaveState(`已保存 · ${new Date(result.draft.updated_at).toLocaleTimeString()}`);
+  }
+
+  return (
+    <section className="page">
+      <PageTitle eyebrow="Infinite Canvas Draft" title="无限画布草稿态" subtitle="草稿只保存 layout/spec diff，不改变 WorkflowSpec 执行依赖。" />
+      <div className="canvasToolbar">
+        <Pill value={saveState} />
+        <button className="primary" onClick={saveDraft}><Save size={16} /> 保存草稿</button>
+      </div>
+      <Panel title="Canvas Draft Board">
+        <DataState state={draftState}>
+          <div className="canvasBoard">
+            {objects.map((object) => (
+              <div
+                className={object.type === "zone" ? "canvasZone" : "canvasCard"}
+                key={object.id}
+                style={{ left: object.x, top: object.y, width: object.width, height: object.height }}
+              >
+                <header>
+                  <strong>{object.title ?? object.id}</strong>
+                  <Pill value={object.type} />
+                </header>
+                {object.type !== "zone" && <small>{object.ref_id} · {object.zone_id ?? "unassigned"}</small>}
+                {object.type !== "zone" && (
+                  <div className="moveControls">
+                    <button onClick={() => moveObject(object.id, -24, 0)}><Move size={13} />左</button>
+                    <button onClick={() => moveObject(object.id, 24, 0)}>右</button>
+                    <button onClick={() => moveObject(object.id, 0, -24)}>上</button>
+                    <button onClick={() => moveObject(object.id, 0, 24)}>下</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </DataState>
+      </Panel>
+      <Panel title="Spec Diff Preview">
+        <DataState state={draftState}>
+          <pre className="jsonBlock">{JSON.stringify({
+            workflow_id: workflowId,
+            operations: objects.map((object) => ({ op: "replace", path: `/layouts/canvas/objects/${object.id}`, value: { x: object.x, y: object.y, zone_id: object.zone_id } }))
+          }, null, 2)}</pre>
         </DataState>
       </Panel>
     </section>

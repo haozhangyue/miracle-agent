@@ -7,8 +7,10 @@
 P0/P1.5 和四轮架构评审已经完成；P2 产品信息架构、Web 工作台原型和
 `P2F-07 Agent Collaboration` 已完成评审。当前结论是 P2 原型完全通过，P3 已完成
 Run 冻结对象、审核真相、AdapterResult、EdgeSpec join_policy、启动 Run API 和
-Gate Detail API 的一致性修订。P4 第一轮已落地可运行 MVP 主链路，新增
-`apps/web`、`apps/sidecar`、`packages/core` 和 `fixtures/mvp-workspace/.miracle`。
+Gate Detail API 的一致性修订。P4 第一轮已落地可运行 MVP 主链路，第二轮已补充
+React Flow DAG、Artifact Detail 预览、Gate 决策投影和 Infinite Canvas 草稿态。
+当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
+`fixtures/mvp-workspace/.miracle`。
 
 P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；`content-production`
 只是第一个样本 Domain。Node.js 本地服务只作为 MVP Local Sidecar，不是商业化云端主
@@ -71,6 +73,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [22_P3前端架构与工作台状态设计.md](22_P3前端架构与工作台状态设计.md) | 前端路由、页面状态、RoleProfile 和 DomainPack UI 扩展 |
 | `CURRENT` | [23_P3MVP任务拆解与验收计划.md](23_P3MVP任务拆解与验收计划.md) | MVPS01-MVPS10 工程任务、验收和测试计划 |
 | `CURRENT` | [24_P4_MVP可运行主链路交付说明.md](24_P4_MVP可运行主链路交付说明.md) | P4 第一轮 MVP 工程、启动方式、验证结果和后续建议 |
+| `CURRENT` | [25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md](25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md) | P4 第二轮 DAG、Artifact、Gate projection 和 Canvas draft 交付说明 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明

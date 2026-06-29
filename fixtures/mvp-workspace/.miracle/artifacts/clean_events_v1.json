@@ -1,0 +1,9 @@
+[
+  {
+    "event_id": "evt_demo_codex_claude_code",
+    "title": "Codex 与 Claude Code 动态中文内容包",
+    "source_level": "L2",
+    "verified": true,
+    "summary": "用于 P4 MVP 的事实清洗样本，不代表实时资讯。"
+  }
+]

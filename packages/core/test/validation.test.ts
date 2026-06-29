@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDryRunPlan, createRunFromWorkflow, validateWorkflowSpec, type WorkflowSpec } from "../src";
+import { buildCanvasDraftFromWorkflow, buildDagProjection, buildGateDecisionProjection, createDryRunPlan, createRunFromWorkflow, validateWorkflowSpec, type GateInstance, type NodeRun, type WorkflowSpec } from "../src";
 
 const workflow: WorkflowSpec = {
   id: "content-production-v0",
@@ -76,5 +76,25 @@ describe("workflow validation", () => {
     expect(created.runSpec.workflow_snapshot_id).toBe("snap_run_test_001");
     expect(created.workflowSnapshot.workflow.id).toBe(workflow.id);
     expect(created.events[0].type).toBe("run_created");
+  });
+
+  it("builds DAG, Gate and Canvas projections without mutating runtime facts", () => {
+    const nodeRuns: NodeRun[] = [
+      { node_run_id: "nr_b", run_id: "run_test_001", node_id: "B_md_master", status: "reviewing", updated_at: "2026-06-29T10:00:00.000Z", upstream_artifacts: [], output_artifacts: ["art_md"] },
+      { node_run_id: "nr_g", run_id: "run_test_001", node_id: "G_distribution", status: "queued", updated_at: "2026-06-29T10:00:00.000Z", upstream_artifacts: ["art_md"], output_artifacts: [] }
+    ];
+    const gate: GateInstance = {
+      gate_instance_id: "gate_001",
+      run_id: "run_test_001",
+      gate_spec_id: "md_master_gate",
+      target: { type: "ArtifactManifest", id: "art_md" },
+      status: "pending_review",
+      required_before: ["G_distribution"],
+      decisions: []
+    };
+
+    expect(buildDagProjection(workflow, nodeRuns).edges[0]).toMatchObject({ label: "required", from: "B_md_master", to: "G_distribution" });
+    expect(buildGateDecisionProjection(gate, workflow, nodeRuns, "approve")).toMatchObject({ projected_artifact_review_status: "approved", mutates_artifact: false });
+    expect(buildCanvasDraftFromWorkflow(workflow).objects.some((object) => object.ref_id === "B_md_master")).toBe(true);
   });
 });

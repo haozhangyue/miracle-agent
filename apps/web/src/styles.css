@@ -78,10 +78,20 @@ progress { width: 100%; height: 8px; accent-color: #1264e8; }
 .stageTabs { display: flex; gap: 8px; flex-wrap: wrap; }
 .stageTabs span { background: white; border: 1px solid #dfe7f3; border-radius: 99px; padding: 7px 12px; font-size: 13px; color: #50627c; }
 .runGrid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr); gap: 16px; }
-.dagList { display: grid; gap: 10px; }
-.dagNode { border: 1px solid #dfe7f3; background: #fff; border-radius: 8px; padding: 14px; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; text-align: left; cursor: pointer; }
-.dagNode.selected { border-color: #f35c5c; box-shadow: inset 3px 0 0 #f35c5c; }
-.dagNode small { grid-column: 2; color: #758399; }
+.flowCanvas { height: 560px; border: 1px solid #dfe7f3; border-radius: 8px; overflow: hidden; background: #f8fbff; }
+.flowShell { border: 0 !important; box-shadow: 0 10px 24px rgba(29, 70, 125, .08); border-radius: 8px !important; overflow: hidden; }
+.flowShell.selected { box-shadow: 0 0 0 2px #ef4444, 0 14px 26px rgba(239, 68, 68, .16); }
+.flowNode { min-width: 190px; display: grid; gap: 3px; border-left: 4px solid #94a3b8; padding: 10px 12px; background: white; color: #172033; }
+.flowNode strong { font-size: 14px; }
+.flowNode span, .flowNode small { font-size: 11px; color: #64748b; }
+.flowNode.ok { border-left-color: #19a957; }
+.flowNode.info { border-left-color: #1d64e8; }
+.flowNode.warn { border-left-color: #f59e0b; }
+.flowNode.danger { border-left-color: #e23b3b; }
+.flowLegend { display: flex; gap: 18px; align-items: center; color: #64748b; font-size: 12px; margin-top: 10px; }
+.flowLegend span { display: inline-flex; align-items: center; gap: 7px; }
+.flowLegend i { width: 28px; height: 0; border-top: 3px solid #1d64e8; display: inline-block; }
+.flowLegend .optionalLine { border-top-color: #f59e0b; border-top-style: dashed; }
 .dot { width: 13px; height: 13px; border-radius: 50%; margin-top: 3px; background: #9aa8bc; }
 .dot.ok { background: #19a957; }
 .dot.info { background: #1d64e8; }
@@ -104,10 +114,46 @@ progress { width: 100%; height: 8px; accent-color: #1264e8; }
 .safeActions { display: flex; gap: 10px; flex-wrap: wrap; }
 .safeActions button { border: 1px solid #bed2f3; color: #075fe8; background: #f6f9ff; border-radius: 7px; min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .agentCard { display: grid; gap: 7px; }
+.artifactGrid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(420px, .9fr); gap: 16px; align-items: start; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; border-bottom: 1px solid #e7edf6; padding: 11px 8px; font-size: 13px; }
 th { color: #617089; background: #f8fbff; }
+td small { display: block; color: #718097; margin-top: 3px; }
+.selectedRow { background: #f3f7ff; }
+.linkButton { border: 1px solid #c7d8f4; color: #075fe8; background: #f8fbff; border-radius: 6px; min-height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.artifactDetail { display: grid; gap: 12px; }
+.detailHeader { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; border-bottom: 1px solid #edf1f7; padding-bottom: 10px; }
+.detailHeader strong, .detailHeader span { display: block; }
+.detailHeader span { color: #718097; font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.manifestGrid { display: grid; grid-template-columns: .6fr .6fr 1.2fr; gap: 10px; }
+.previewBlock { margin: 0; min-height: 240px; max-height: 520px; overflow: auto; border: 1px solid #dfe7f3; border-radius: 8px; background: #0d1729; color: #dce8ff; padding: 14px; font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
+.markdownPreview { background: #fbfdff; color: #172033; }
+.previewEmpty { min-height: 240px; border: 1px dashed #cbd6e7; border-radius: 8px; display: grid; place-items: center; align-content: center; gap: 8px; color: #64748b; text-align: center; padding: 22px; }
 .reviewBox { display: grid; gap: 12px; }
+.projectionPanel { border: 1px solid #dfe7f3; border-radius: 8px; padding: 12px; background: #fbfdff; display: grid; gap: 10px; }
+.projectionPanel header { display: flex; justify-content: space-between; align-items: center; }
+.projectionPanel p { color: #64748b; margin: 0; }
+.receiptLine { border: 1px solid #dbeafe; background: #eff6ff; border-radius: 7px; padding: 8px 10px; color: #1d4ed8; font-size: 12px; }
+.projectionList { display: grid; gap: 8px; }
+.projectionList div { border: 1px solid #e4ebf5; border-radius: 7px; background: white; padding: 10px; display: grid; gap: 4px; }
+.projectionList span { color: #075fe8; font-weight: 700; }
+.projectionList small { color: #64748b; }
+.canvasToolbar { display: flex; justify-content: space-between; align-items: center; }
+.canvasBoard { position: relative; height: 660px; min-width: 980px; overflow: auto; background:
+  linear-gradient(#edf3fb 1px, transparent 1px),
+  linear-gradient(90deg, #edf3fb 1px, transparent 1px),
+  #f8fbff;
+  background-size: 24px 24px;
+  border: 1px solid #dfe7f3;
+  border-radius: 8px;
+}
+.canvasZone, .canvasCard { position: absolute; border-radius: 8px; padding: 12px; }
+.canvasZone { border: 1px dashed #aac0df; background: rgba(220, 234, 255, .36); color: #47617e; }
+.canvasCard { border: 1px solid #c9d9ef; background: white; box-shadow: 0 12px 28px rgba(32, 65, 110, .09); display: grid; gap: 8px; }
+.canvasCard header, .canvasZone header { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.canvasCard small { color: #64748b; }
+.moveControls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.moveControls button { border: 1px solid #dbe4f2; background: #f8fbff; border-radius: 5px; min-height: 28px; color: #4d607a; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
 .placeholder { min-height: 220px; display: grid; place-items: center; text-align: center; color: #64748b; }
 .loading, .error { min-height: 88px; display: flex; align-items: center; gap: 8px; color: #64748b; }
 .error { color: #bd2727; }

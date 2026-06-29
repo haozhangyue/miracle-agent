@@ -107,12 +107,17 @@ API smoke test 已覆盖：
 - 不做移动端 / APP。
 - `MVPS08-MVPS10` 本轮只保留入口和占位。
 
-## 6. 下一轮建议
+## 6. 第二轮进展
 
-P4 第二轮建议按以下顺序推进：
+以下建议已在 [25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md](25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md) 中落地：
+
+1. 将 Run 工作区 DAG 从列表升级为 React Flow 只读图。
+2. 为 Artifact Detail 增加 markdown/json/text 预览。
+3. 将 Gate Review 决策后的下游状态投影补全。
+4. 开始 MVPS08 Infinite Canvas 的可编辑草稿态。
+
+尚未完成的后续项：
 
 1. 增加 Sidecar API 集成测试。
-2. 将 Run 工作区 DAG 从列表升级为 React Flow 只读图。
-3. 为 Artifact Detail 增加 markdown/report 预览。
-4. 将 Gate Review 决策后的下游状态投影补全。
-5. 开始 MVPS08 Infinite Canvas 的可编辑草稿态。
+2. 接入真实 Runner 最小协议。
+3. 将 Canvas 草稿发布为 Workflow draft。

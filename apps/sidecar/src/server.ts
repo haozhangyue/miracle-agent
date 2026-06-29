@@ -1,4 +1,16 @@
-import { createDryRunPlan, createRunFromWorkflow, validateWorkflowSpec, type GateDecision, type GateInstance, type WorkflowSpec } from "@miracle/core";
+import {
+  buildCanvasDraftFromWorkflow,
+  buildDagProjection,
+  buildGateDecisionProjection,
+  createDryRunPlan,
+  createRunFromWorkflow,
+  validateWorkflowSpec,
+  type CanvasLayout,
+  type GateDecision,
+  type GateInstance,
+  type NodeRun,
+  type WorkflowSpec
+} from "@miracle/core";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -28,6 +40,14 @@ function sendError(res: ServerResponse, status: number, code: string, message: s
 async function readJson<T>(relativePath: string): Promise<T> {
   const raw = await readFile(path.join(workspaceDir, relativePath), "utf8");
   return JSON.parse(raw) as T;
+}
+
+async function readJsonOptional<T>(relativePath: string): Promise<T | undefined> {
+  try {
+    return await readJson<T>(relativePath);
+  } catch {
+    return undefined;
+  }
 }
 
 async function writeJson(relativePath: string, value: unknown) {
@@ -98,6 +118,48 @@ async function readEvents(runId: string) {
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+function resolveWorkspacePath(relativePath: string) {
+  const root = path.resolve(workspaceDir);
+  const target = path.resolve(root, relativePath);
+  return target.startsWith(`${root}${path.sep}`) ? target : undefined;
+}
+
+function previewMode(filePath: string, artifactType: string): "markdown" | "json" | "text" | "binary" {
+  const ext = path.extname(filePath).toLowerCase();
+  if (artifactType === "markdown" || ext === ".md") return "markdown";
+  if (artifactType === "json" || ext === ".json") return "json";
+  if ([".txt", ".srt", ".vtt", ".csv", ".log"].includes(ext) || ["script", "document", "publish_package", "report", "image"].includes(artifactType)) return "text";
+  return "binary";
+}
+
+async function readArtifactPreview(artifact: Record<string, unknown>) {
+  const artifactPath = String(artifact.path ?? "");
+  const type = String(artifact.type ?? "");
+  const mode = previewMode(artifactPath, type);
+  if (artifact.status === "missing") {
+    return { available: false, mode: "missing", reason: "ArtifactManifest 状态为 missing，当前没有可预览文件。" };
+  }
+  if (mode === "binary") {
+    return { available: false, mode, reason: "二进制产物当前只展示 Manifest，后续接入媒体播放器或下载能力。" };
+  }
+  const targetPath = resolveWorkspacePath(artifactPath);
+  if (!targetPath) {
+    return { available: false, mode: "missing", reason: "ArtifactManifest 路径超出当前 workspace，已拒绝预览。" };
+  }
+  try {
+    const raw = await readFile(targetPath, "utf8");
+    const limit = 12_000;
+    return {
+      available: true,
+      mode,
+      content: raw.length > limit ? raw.slice(0, limit) : raw,
+      truncated: raw.length > limit
+    };
+  } catch {
+    return { available: false, mode: "missing", reason: `本地文件不存在：${artifactPath}` };
+  }
+}
+
 function getId(parts: string[], index: number) {
   return decodeURIComponent(parts[index] ?? "");
 }
@@ -136,6 +198,40 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     if (req.method === "GET" && parts.length === 4) return sendJson(res, 200, { workflow, metadata: { source: workflow.registry_meta.source, readonly: false } });
     if (req.method === "POST" && parts[4] === "validate") return sendJson(res, 200, validateWorkflowSpec(workflow));
     if (req.method === "POST" && parts[4] === "dry-run") return sendJson(res, 200, createDryRunPlan(workflow, []));
+    if (parts[4] === "canvas-draft") {
+      const draftPath = `drafts/canvas-${workflowId}.json`;
+      if (req.method === "GET") {
+        const draft = (await readJsonOptional<CanvasLayout>(draftPath)) ?? buildCanvasDraftFromWorkflow(workflow);
+        return sendJson(res, 200, {
+          draft,
+          spec_diff_preview: {
+            diff_id: `diff_canvas_${workflowId}`,
+            workflow_id: workflowId,
+            operations: draft.objects.map((object) => ({ op: "replace", path: `/layouts/canvas/objects/${object.id}`, value: object }))
+          }
+        });
+      }
+      if (req.method === "POST") {
+        const body = await parseBody(req);
+        const objects = Array.isArray(body.objects) ? body.objects : [];
+        const draft: CanvasLayout = {
+          workflow_id: workflowId,
+          status: "draft",
+          updated_at: new Date().toISOString(),
+          objects: objects.map((object) => object as CanvasLayout["objects"][number])
+        };
+        await writeJson(draftPath, draft);
+        return sendJson(res, 200, {
+          accepted: true,
+          draft,
+          spec_diff_preview: {
+            diff_id: `diff_canvas_${Date.now()}`,
+            workflow_id: workflowId,
+            operations: draft.objects.map((object) => ({ op: "replace", path: `/layouts/canvas/objects/${object.id}`, value: object }))
+          }
+        });
+      }
+    }
   }
 
   if (req.method === "GET" && url.pathname === "/api/v0/runs") {
@@ -179,6 +275,10 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const runId = getId(parts, 3);
     if (req.method === "GET" && parts.length === 4) return sendJson(res, 200, await readRunBundle(runId));
     if (req.method === "GET" && parts[4] === "events") return sendJson(res, 200, { events: await readEvents(runId) });
+    if (req.method === "GET" && parts[4] === "dag") {
+      const bundle = await readRunBundle(runId);
+      return sendJson(res, 200, { dag: buildDagProjection(bundle.workflow, bundle.nodes as NodeRun[]) });
+    }
     if (req.method === "GET" && parts[4] === "nodes" && parts[5]) {
       const bundle = await readRunBundle(runId);
       const nodes = bundle.nodes as Array<Record<string, unknown>>;
@@ -231,7 +331,8 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const runId = url.searchParams.get("run_id") ?? "run-demo-001";
     const artifacts = await readJson<Array<Record<string, unknown>>>(`runs/${runId}/artifacts.json`);
     const artifact = artifacts.find((item) => item.artifact_id === getId(parts, 3));
-    return artifact ? sendJson(res, 200, { artifact }) : sendError(res, 404, "not_found", "Artifact not found");
+    if (!artifact) return sendError(res, 404, "not_found", "Artifact not found");
+    return sendJson(res, 200, { artifact, preview: await readArtifactPreview(artifact) });
   }
 
   if (parts[0] === "api" && parts[1] === "v0" && parts[2] === "gates" && parts[3]) {
@@ -242,18 +343,24 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const gate = gates.find((item) => item.gate_instance_id === gateId);
     if (!gate) return sendError(res, 404, "not_found", "Gate not found");
     if (req.method === "GET") {
+      const bundle = await readRunBundle(runId);
       return sendJson(res, 200, {
         gate,
         target_artifact: artifacts.find((artifact) => artifact.artifact_id === gate.target.id),
-        history_decisions: gate.decisions
+        history_decisions: gate.decisions,
+        projection: buildGateDecisionProjection(gate, bundle.workflow, bundle.nodes as NodeRun[])
       });
     }
     if (req.method === "POST" && parts[4] === "decision") {
+      if (gate.status !== "pending_review") {
+        return sendError(res, 409, "gate_already_decided", "GateInstance is already decided. Create a new review cycle before adding another decision.");
+      }
       const body = await parseBody(req);
+      const decisionValue = body.decision === "reject" || body.decision === "request_changes" ? body.decision : "approve";
       const decision: GateDecision = {
         decision_id: `gd_${Date.now()}`,
         actor: String(body.actor ?? "local_user"),
-        decision: body.decision === "reject" || body.decision === "request_changes" ? body.decision : "approve",
+        decision: decisionValue,
         comment: String(body.comment ?? ""),
         created_at: new Date().toISOString()
       };
@@ -269,7 +376,14 @@ async function route(req: IncomingMessage, res: ServerResponse) {
         created_at: decision.created_at
       };
       await appendEvent(runId, event);
-      return sendJson(res, 200, { accepted: true, gate_decision_id: decision.decision_id, created_events: [event.event_id], next_suggested_actions: decision.decision === "approve" ? ["continue_downstream"] : ["create_rework_attempt"] });
+      const bundle = await readRunBundle(runId);
+      return sendJson(res, 200, {
+        accepted: true,
+        gate_decision_id: decision.decision_id,
+        created_events: [event.event_id],
+        projection: buildGateDecisionProjection(gate, bundle.workflow, bundle.nodes as NodeRun[], decision.decision),
+        next_suggested_actions: decision.decision === "approve" ? ["continue_downstream"] : ["create_rework_attempt"]
+      });
     }
   }
 

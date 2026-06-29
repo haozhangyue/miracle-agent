@@ -294,7 +294,20 @@ export interface ValidationResult {
 }
 
 export interface CanvasLayout {
-  objects: Array<{ id: string; type: "task" | "agent" | "artifact" | "node" | "zone" | "version_branch"; x: number; y: number }>;
+  workflow_id?: string;
+  status?: "draft" | "published";
+  updated_at?: string;
+  objects: Array<{
+    id: string;
+    type: "task" | "agent" | "artifact" | "node" | "zone" | "version_branch";
+    title?: string;
+    ref_id?: string;
+    zone_id?: string;
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+  }>;
 }
 
 export interface SpecDiff {
@@ -308,4 +321,56 @@ export interface EvolutionCandidate {
   source_run_id: string;
   status: "draft" | "evaluating" | "approved" | "rejected";
   suggestion: string;
+}
+
+export interface DagProjection {
+  nodes: Array<{
+    id: string;
+    node_run_id?: string;
+    name: string;
+    type: NodeSpec["type"];
+    status: NodeRunStatus;
+    agent_id?: string;
+    provider?: string;
+    position: { x: number; y: number; stage?: string };
+    stage: string;
+    input_artifacts: string[];
+    output_artifacts: string[];
+    review_gate_ref?: string;
+  }>;
+  edges: Array<{
+    id: string;
+    from: string;
+    to: string;
+    required: boolean;
+    label: string;
+    join_policy: EdgeSpec["join_policy"];
+  }>;
+}
+
+export interface ArtifactPreview {
+  artifact: ArtifactManifest;
+  preview: {
+    available: boolean;
+    mode: "markdown" | "json" | "text" | "binary" | "missing";
+    content?: string;
+    truncated?: boolean;
+    reason?: string;
+  };
+}
+
+export interface GateDecisionProjection {
+  gate_instance_id: string;
+  current_status: GateStatus;
+  target_artifact_id: string;
+  projected_artifact_review_status: ArtifactReviewStatus;
+  affected_node_runs: Array<{
+    node_id: string;
+    node_run_id?: string;
+    current_status?: NodeRunStatus;
+    projected_status: NodeRunStatus;
+    reason: string;
+  }>;
+  event_types: string[];
+  mutates_artifact: false;
 }
