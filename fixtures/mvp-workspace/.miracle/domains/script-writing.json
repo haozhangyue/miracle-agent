@@ -1,0 +1,16 @@
+{
+  "id": "script-writing",
+  "name": "AI 剧本",
+  "version": "0.1.0",
+  "status": "experimental",
+  "categories": ["creative", "script"],
+  "artifact_types": ["character_sheet", "outline", "episode_script", "storyboard"],
+  "role_profiles": ["operator", "writer", "reviewer"],
+  "workflow_templates": ["script-writing-v0"],
+  "component_libraries": ["story-planning-library", "script-writing-library"],
+  "default_views": {
+    "home": "writer",
+    "run": "artifact",
+    "attention": "review"
+  }
+}

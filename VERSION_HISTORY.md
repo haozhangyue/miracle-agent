@@ -8,8 +8,8 @@
 | 项目 | 当前值 |
 |---|---|
 | 当前大版本 | `v0.5.1` |
-| 版本名称 | P3 技术详细设计与扩展性修订 |
-| 当前阶段 | P3 技术详细设计完成一致性修订，准备进入 P4 MVP 实现评审 |
+| 版本名称 | P4 MVP 可运行主链路 |
+| 当前阶段 | P4 第一轮 MVP 可运行主链路已落地 |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -117,8 +117,13 @@
 - 补齐 `EdgeSpec.join_policy`、`POST /runs` 启动协议、`GET /gates/:id`、AdapterResult
   状态枚举和 operation/provider/artifact 对账字段。
 - 明确 Agent/Adapter 不直接写 Event Journal，运行事实仍由 Sidecar Orchestrator 单写入。
+- 新增 P4 第一轮 MVP 工程：`apps/web`、`apps/sidecar`、`packages/core`、
+  `fixtures/mvp-workspace/.miracle` 和 P4 截图证据。
+- MVP 已覆盖 MVPS01-MVPS07 可运行主链路，MVPS08-MVPS10 提供入口占位。
+- 验证通过 `npm run typecheck`、`npm run test`、`npm run build`，并完成 Sidecar API
+  smoke test 和 Playwright 页面截图。
 
-本节在 P3 技术详细设计评审收口后，转换为正式的 `v0.6.0` 版本记录。
+本节在 P4 第一轮 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 
 ## 5. 里程碑
 

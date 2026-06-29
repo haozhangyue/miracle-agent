@@ -1,0 +1,11 @@
+[
+  {
+    "gate_instance_id": "gate-md-master-001",
+    "run_id": "run-demo-001",
+    "gate_spec_id": "md_master_gate",
+    "target": { "type": "ArtifactManifest", "id": "art_md_master_v2" },
+    "status": "pending_review",
+    "required_before": ["C_script", "G_distribution"],
+    "decisions": []
+  }
+]

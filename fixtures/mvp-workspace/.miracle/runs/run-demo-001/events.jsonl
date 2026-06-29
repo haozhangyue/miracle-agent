@@ -1,0 +1,4 @@
+{"event_id":"evt_run_created","run_id":"run-demo-001","type":"run_created","subject":{"type":"RunSpec","id":"run-demo-001"},"message":"RunSpec created and WorkflowSnapshot frozen","created_at":"2026-06-29T09:00:00.000Z"}
+{"event_id":"evt_collect_done","run_id":"run-demo-001","type":"node_done","subject":{"type":"NodeRun","id":"nr_run-demo-001_A_collect"},"message":"clean_events_v1 已生成","created_at":"2026-06-29T09:08:00.000Z"}
+{"event_id":"evt_gate_pending","run_id":"run-demo-001","type":"gate_pending_review","subject":{"type":"GateInstance","id":"gate-md-master-001"},"message":"md_master_v2 等待人工审核","created_at":"2026-06-29T09:22:00.000Z"}
+{"event_id":"evt_tts_blocked","run_id":"run-demo-001","type":"node_blocked","subject":{"type":"NodeRun","id":"nr_run-demo-001_E_tts"},"message":"缺少 VOLC_TTS_API_KEY，视频 optional 分支被阻塞，Markdown 分发主链路不受影响","created_at":"2026-06-29T09:24:00.000Z"}

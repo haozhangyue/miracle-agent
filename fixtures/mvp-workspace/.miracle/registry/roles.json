@@ -1,0 +1,47 @@
+[
+  {
+    "id": "operator",
+    "name": "操作者",
+    "default_landing": "home",
+    "visible_modules": ["home", "new_task", "run", "attention", "agents", "artifacts", "review"],
+    "primary_objects": ["RunSpec", "AttentionItem", "ArtifactManifest"],
+    "default_filters": { "attention_status": ["open"], "severity": ["P0", "P1"] },
+    "actions": ["start_run", "resolve_attention", "review_artifact"]
+  },
+  {
+    "id": "editor",
+    "name": "编辑",
+    "default_landing": "artifact_board",
+    "visible_modules": ["home", "run", "attention", "artifacts", "review"],
+    "primary_objects": ["ArtifactManifest", "GateInstance"],
+    "default_filters": { "artifact_type": ["markdown", "script"], "gate_status": ["pending_review"] },
+    "actions": ["approve_gate", "reject_gate", "request_rework"]
+  },
+  {
+    "id": "designer",
+    "name": "设计师",
+    "default_landing": "artifact_board",
+    "visible_modules": ["home", "run", "attention", "artifacts"],
+    "primary_objects": ["ArtifactManifest", "AttentionItem"],
+    "default_filters": { "artifact_type": ["image", "prototype"] },
+    "actions": ["review_artifact", "request_variant"]
+  },
+  {
+    "id": "researcher",
+    "name": "研究员",
+    "default_landing": "run",
+    "visible_modules": ["home", "run", "attention", "artifacts", "review"],
+    "primary_objects": ["ArtifactManifest", "GateInstance"],
+    "default_filters": { "artifact_type": ["dataset", "report", "citation"] },
+    "actions": ["audit_citation", "approve_gate"]
+  },
+  {
+    "id": "writer",
+    "name": "编剧",
+    "default_landing": "artifact_board",
+    "visible_modules": ["home", "run", "attention", "artifacts"],
+    "primary_objects": ["ArtifactManifest"],
+    "default_filters": { "artifact_type": ["character_sheet", "outline", "episode_script"] },
+    "actions": ["review_artifact", "request_rework"]
+  }
+]

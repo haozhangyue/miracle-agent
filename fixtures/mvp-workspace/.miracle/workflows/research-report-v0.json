@@ -1,0 +1,25 @@
+{
+  "id": "research-report-v0",
+  "name": "研究报告任务流",
+  "version": "0.1.0",
+  "domain": "research-analysis",
+  "category": "research",
+  "nodes": [
+    { "id": "question", "name": "问题定义", "type": "source", "domain_tags": ["research-analysis"], "capability_requirements": ["question.define"], "recommended_libraries": ["source-collection-library"], "agent_candidates": ["research-agent"], "inputs": [], "outputs": [{ "id": "question_doc", "kind": "artifact", "artifact_type": "document", "required": true, "artifact_spec_ref": "question_artifact" }], "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" } },
+    { "id": "collect", "name": "资料采集", "type": "source", "domain_tags": ["research-analysis"], "capability_requirements": ["source.collect"], "recommended_libraries": ["source-collection-library"], "agent_candidates": ["research-agent"], "inputs": [{ "id": "question_doc", "kind": "artifact", "artifact_type": "document", "required": true }], "outputs": [{ "id": "dataset", "kind": "artifact", "artifact_type": "dataset", "required": true, "artifact_spec_ref": "dataset_artifact" }], "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" } },
+    { "id": "report", "name": "分析报告", "type": "transform", "domain_tags": ["research-analysis"], "capability_requirements": ["report.write"], "recommended_libraries": ["report-writing-library"], "agent_candidates": ["research-agent"], "inputs": [{ "id": "dataset", "kind": "artifact", "artifact_type": "dataset", "required": true }], "outputs": [{ "id": "report", "kind": "artifact", "artifact_type": "report", "required": true, "artifact_spec_ref": "report_artifact" }], "review_gate_ref": "citation_gate", "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" } }
+  ],
+  "edges": [
+    { "from": "question", "to": "collect", "required": true, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "collect", "to": "report", "required": true, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } }
+  ],
+  "gates": [{ "id": "citation_gate", "name": "引用审计", "target_artifact_ref": "report_artifact", "required_before": [], "actions": ["approve", "reject"] }],
+  "artifacts": [
+    { "id": "question_artifact", "type": "document", "produced_by": "question", "review_policy": { "mode": "none" }, "required_for": ["collect"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "dataset_artifact", "type": "dataset", "produced_by": "collect", "review_policy": { "mode": "none" }, "required_for": ["report"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "report_artifact", "type": "report", "produced_by": "report", "review_policy": { "mode": "manual", "gate_spec_id": "citation_gate" }, "required_for": [], "versioning": { "immutable": true, "compare_by": "hash" } }
+  ],
+  "provider_policy": { "default_provider": "mock-research-provider", "allowed_providers": ["mock-research-provider"], "required_credentials": [], "fallback_providers": [] },
+  "layouts": { "dag": { "question": { "x": 80, "y": 60, "stage": "定义" }, "collect": { "x": 320, "y": 60, "stage": "采集" }, "report": { "x": 560, "y": 60, "stage": "报告" } } },
+  "registry_meta": { "source": "builtin_template", "status": "experimental" }
+}

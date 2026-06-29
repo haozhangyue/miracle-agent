@@ -1,0 +1,16 @@
+{
+  "id": "image-generation",
+  "name": "生图任务",
+  "version": "0.1.0",
+  "status": "experimental",
+  "categories": ["design", "visual"],
+  "artifact_types": ["document", "prompt", "image", "publish_package"],
+  "role_profiles": ["operator", "designer", "reviewer"],
+  "workflow_templates": ["image-generation-v0"],
+  "component_libraries": ["prompt-optimization-library", "image-generation-library"],
+  "default_views": {
+    "home": "designer",
+    "run": "artifact",
+    "attention": "provider"
+  }
+}

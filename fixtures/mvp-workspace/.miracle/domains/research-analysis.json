@@ -1,0 +1,16 @@
+{
+  "id": "research-analysis",
+  "name": "研究分析",
+  "version": "0.1.0",
+  "status": "experimental",
+  "categories": ["research", "analysis"],
+  "artifact_types": ["dataset", "evidence_table", "report", "citation"],
+  "role_profiles": ["operator", "researcher", "reviewer"],
+  "workflow_templates": ["research-report-v0"],
+  "component_libraries": ["source-collection-library", "fact-check-library", "report-writing-library"],
+  "default_views": {
+    "home": "researcher",
+    "run": "audit",
+    "attention": "citation"
+  }
+}

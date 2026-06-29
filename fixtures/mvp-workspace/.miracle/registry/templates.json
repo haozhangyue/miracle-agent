@@ -1,0 +1,42 @@
+[
+  {
+    "template_id": "content-production-v0",
+    "workflow_id": "content-production-v0",
+    "domain": "content-production",
+    "name": "内容生产全流程 A-G",
+    "version": "0.6.0",
+    "status": "stable",
+    "source": "local_registry",
+    "tags": ["Flow A-G", "publishing", "video"]
+  },
+  {
+    "template_id": "image-generation-v0",
+    "workflow_id": "image-generation-v0",
+    "domain": "image-generation",
+    "name": "生图任务流",
+    "version": "0.1.0",
+    "status": "experimental",
+    "source": "builtin_template",
+    "tags": ["image", "prompt"]
+  },
+  {
+    "template_id": "research-report-v0",
+    "workflow_id": "research-report-v0",
+    "domain": "research-analysis",
+    "name": "研究报告任务流",
+    "version": "0.1.0",
+    "status": "experimental",
+    "source": "builtin_template",
+    "tags": ["research", "report"]
+  },
+  {
+    "template_id": "script-writing-v0",
+    "workflow_id": "script-writing-v0",
+    "domain": "script-writing",
+    "name": "AI 剧本任务流",
+    "version": "0.1.0",
+    "status": "experimental",
+    "source": "builtin_template",
+    "tags": ["script", "story"]
+  }
+]

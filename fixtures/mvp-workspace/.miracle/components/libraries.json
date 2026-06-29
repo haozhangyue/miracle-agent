@@ -1,0 +1,10 @@
+[
+  { "id": "official-source-library", "name": "官方源采集组件库", "capabilities": ["source.collect", "fact.verify"] },
+  { "id": "content-packaging-library", "name": "内容包装组件库", "capabilities": ["content.longform_draft", "fact.safe_writing"] },
+  { "id": "tts-caption-library", "name": "TTS 字幕组件库", "capabilities": ["tts.generate", "subtitle.generate"] },
+  { "id": "video-render-library", "name": "视频渲染组件库", "capabilities": ["video.render"] },
+  { "id": "distribution-library", "name": "分发复盘组件库", "capabilities": ["publish.package", "retro.collect"] },
+  { "id": "image-generation-library", "name": "生图组件库", "capabilities": ["image.generate", "image.upscale"] },
+  { "id": "prompt-optimization-library", "name": "Prompt 策划组件库", "capabilities": ["prompt.optimize"] },
+  { "id": "report-writing-library", "name": "报告写作组件库", "capabilities": ["report.write"] }
+]

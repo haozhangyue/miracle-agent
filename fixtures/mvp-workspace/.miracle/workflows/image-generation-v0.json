@@ -1,0 +1,28 @@
+{
+  "id": "image-generation-v0",
+  "name": "生图任务流",
+  "version": "0.1.0",
+  "domain": "image-generation",
+  "category": "visual",
+  "nodes": [
+    { "id": "brief", "name": "需求输入", "type": "source", "domain_tags": ["image-generation"], "capability_requirements": ["brief.collect"], "recommended_libraries": ["prompt-optimization-library"], "agent_candidates": ["visual-agent"], "inputs": [], "outputs": [{ "id": "creative_brief", "kind": "artifact", "artifact_type": "document", "required": true, "artifact_spec_ref": "brief_artifact" }], "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" } },
+    { "id": "prompt", "name": "Prompt 策划", "type": "transform", "domain_tags": ["image-generation"], "capability_requirements": ["prompt.optimize"], "recommended_libraries": ["prompt-optimization-library"], "agent_candidates": ["visual-agent"], "inputs": [{ "id": "creative_brief", "kind": "artifact", "artifact_type": "document", "required": true }], "outputs": [{ "id": "image_prompt", "kind": "artifact", "artifact_type": "prompt", "required": true, "artifact_spec_ref": "prompt_artifact" }], "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" } },
+    { "id": "generate", "name": "图像生成", "type": "agent", "domain_tags": ["image-generation"], "capability_requirements": ["image.generate"], "recommended_libraries": ["image-generation-library"], "agent_candidates": ["visual-agent"], "inputs": [{ "id": "image_prompt", "kind": "artifact", "artifact_type": "prompt", "required": true }], "outputs": [{ "id": "generated_images", "kind": "artifact", "artifact_type": "image", "required": true, "artifact_spec_ref": "image_artifact" }], "review_gate_ref": "image_review_gate", "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" } },
+    { "id": "deliver", "name": "交付", "type": "artifact", "domain_tags": ["image-generation"], "capability_requirements": ["publish.package"], "recommended_libraries": ["image-generation-library"], "agent_candidates": ["visual-agent"], "inputs": [{ "id": "generated_images", "kind": "artifact", "artifact_type": "image", "required": true }], "outputs": [{ "id": "publish_package", "kind": "artifact", "artifact_type": "publish_package", "required": true, "artifact_spec_ref": "image_package_artifact" }], "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" } }
+  ],
+  "edges": [
+    { "from": "brief", "to": "prompt", "required": true, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "prompt", "to": "generate", "required": true, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "generate", "to": "deliver", "required": true, "artifact_selector": { "artifact_type": "image", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT20M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } }
+  ],
+  "gates": [{ "id": "image_review_gate", "name": "图像审核", "target_artifact_ref": "image_artifact", "required_before": ["deliver"], "actions": ["approve", "reject"] }],
+  "artifacts": [
+    { "id": "brief_artifact", "type": "document", "produced_by": "brief", "review_policy": { "mode": "none" }, "required_for": ["prompt"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "prompt_artifact", "type": "prompt", "produced_by": "prompt", "review_policy": { "mode": "none" }, "required_for": ["generate"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "image_artifact", "type": "image", "produced_by": "generate", "review_policy": { "mode": "manual", "gate_spec_id": "image_review_gate" }, "required_for": ["deliver"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "image_package_artifact", "type": "publish_package", "produced_by": "deliver", "review_policy": { "mode": "none" }, "required_for": [], "versioning": { "immutable": true, "compare_by": "hash" } }
+  ],
+  "provider_policy": { "default_provider": "mock-image-provider", "allowed_providers": ["mock-image-provider", "official-api"], "required_credentials": [], "fallback_providers": ["mock-image-provider"] },
+  "layouts": { "dag": { "brief": { "x": 80, "y": 60, "stage": "需求" }, "prompt": { "x": 320, "y": 60, "stage": "策划" }, "generate": { "x": 560, "y": 60, "stage": "生成" }, "deliver": { "x": 800, "y": 60, "stage": "交付" } } },
+  "registry_meta": { "source": "builtin_template", "status": "experimental" }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "content-production",
+  "name": "内容生产",
+  "version": "0.1.0",
+  "status": "stable",
+  "categories": ["media", "publishing"],
+  "artifact_types": ["markdown", "script", "audio", "video", "publish_package"],
+  "role_profiles": ["operator", "editor", "reviewer"],
+  "workflow_templates": ["content-production-v0"],
+  "component_libraries": ["official-source-library", "content-packaging-library", "tts-caption-library", "distribution-library"],
+  "default_views": {
+    "home": "operator",
+    "run": "flow",
+    "attention": "risk"
+  }
+}

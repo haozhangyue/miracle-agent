@@ -1,0 +1,17 @@
+{
+  "run_id": "run-demo-001",
+  "workflow_id": "content-production-v0",
+  "workflow_version": "0.6.0",
+  "workflow_snapshot_id": "snap-run-demo-001",
+  "status": "running",
+  "execution_policy": "hybrid",
+  "role_profile": "operator",
+  "resolved_components": ["official-source-library", "content-packaging-library", "tts-caption-library", "video-render-library", "distribution-library"],
+  "resolved_provider_policy": {
+    "default_provider": "codex-local",
+    "allowed_providers": ["codex-local", "official-api", "mock-provider"],
+    "required_credentials": ["VOLC_TTS_API_KEY"],
+    "fallback_providers": ["mock-tts"]
+  },
+  "created_at": "2026-06-29T09:00:00.000Z"
+}

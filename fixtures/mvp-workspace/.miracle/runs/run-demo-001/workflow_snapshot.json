@@ -1,0 +1,6 @@
+{
+  "snapshot_id": "snap-run-demo-001",
+  "run_id": "run-demo-001",
+  "frozen_at": "2026-06-29T09:00:00.000Z",
+  "workflow_ref": "content-production-v0"
+}

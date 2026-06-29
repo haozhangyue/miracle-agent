@@ -1,0 +1,136 @@
+{
+  "id": "content-production-v0",
+  "name": "内容生产全流程 A-G",
+  "version": "0.6.0",
+  "domain": "content-production",
+  "category": "media",
+  "nodes": [
+    {
+      "id": "A_collect",
+      "name": "情报采集与事实校验",
+      "type": "source",
+      "domain_tags": ["content-production"],
+      "capability_requirements": ["source.collect", "fact.verify"],
+      "recommended_libraries": ["official-source-library"],
+      "agent_candidates": ["intelligence-agent"],
+      "inputs": [],
+      "outputs": [{ "id": "clean_events", "kind": "artifact", "artifact_type": "json", "required": true, "artifact_spec_ref": "clean_events_artifact" }],
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "B_md_master",
+      "name": "内容 MD 母稿",
+      "type": "transform",
+      "domain_tags": ["content-production"],
+      "capability_requirements": ["content.longform_draft", "fact.safe_writing"],
+      "recommended_libraries": ["content-packaging-library"],
+      "agent_candidates": ["content-agent"],
+      "inputs": [{ "id": "clean_events", "kind": "artifact", "artifact_type": "json", "required": true }],
+      "outputs": [{ "id": "md_master", "kind": "artifact", "artifact_type": "markdown", "required": true, "artifact_spec_ref": "md_master_artifact" }],
+      "review_gate_ref": "md_master_gate",
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "C_script",
+      "name": "脚本与分镜",
+      "type": "transform",
+      "domain_tags": ["content-production"],
+      "capability_requirements": ["script.write", "storyboard.plan"],
+      "recommended_libraries": ["content-packaging-library"],
+      "agent_candidates": ["script-agent"],
+      "inputs": [{ "id": "md_master", "kind": "artifact", "artifact_type": "markdown", "required": true }],
+      "outputs": [{ "id": "script_draft", "kind": "artifact", "artifact_type": "script", "required": true, "artifact_spec_ref": "script_artifact" }],
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "E_tts",
+      "name": "TTS 与字幕",
+      "type": "agent",
+      "domain_tags": ["content-production"],
+      "capability_requirements": ["tts.generate", "subtitle.generate"],
+      "recommended_libraries": ["tts-caption-library"],
+      "agent_candidates": ["tts-agent"],
+      "inputs": [{ "id": "script_draft", "kind": "artifact", "artifact_type": "script", "required": true }],
+      "outputs": [
+        { "id": "audio_master", "kind": "artifact", "artifact_type": "audio", "required": false, "artifact_spec_ref": "audio_artifact" },
+        { "id": "subtitle_master", "kind": "artifact", "artifact_type": "document", "required": false, "artifact_spec_ref": "subtitle_artifact" }
+      ],
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "F_video",
+      "name": "视频渲染",
+      "type": "tool",
+      "domain_tags": ["content-production"],
+      "capability_requirements": ["video.render"],
+      "recommended_libraries": ["video-render-library"],
+      "agent_candidates": ["video-agent"],
+      "inputs": [
+        { "id": "audio_master", "kind": "artifact", "artifact_type": "audio", "required": false },
+        { "id": "subtitle_master", "kind": "artifact", "artifact_type": "document", "required": false }
+      ],
+      "outputs": [{ "id": "video_master", "kind": "artifact", "artifact_type": "video", "required": false, "artifact_spec_ref": "video_artifact" }],
+      "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "G_distribution",
+      "name": "分发与复盘",
+      "type": "artifact",
+      "domain_tags": ["content-production"],
+      "capability_requirements": ["publish.package", "retro.collect"],
+      "recommended_libraries": ["distribution-library"],
+      "agent_candidates": ["distribution-agent"],
+      "inputs": [
+        { "id": "md_master", "kind": "artifact", "artifact_type": "markdown", "required": true },
+        { "id": "video_master", "kind": "artifact", "artifact_type": "video", "required": false }
+      ],
+      "outputs": [{ "id": "publish_package", "kind": "artifact", "artifact_type": "publish_package", "required": true, "artifact_spec_ref": "publish_package_artifact" }],
+      "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    }
+  ],
+  "edges": [
+    { "from": "A_collect", "to": "B_md_master", "required": true, "artifact_selector": { "artifact_type": "json" }, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "B_md_master", "to": "C_script", "required": true, "artifact_selector": { "artifact_type": "markdown", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "C_script", "to": "E_tts", "required": false, "artifact_selector": { "artifact_type": "script" }, "join_policy": { "wait_if_active": true, "max_wait": "PT10M", "on_timeout": "require_decision", "on_no_qualified_artifact": "ignore_optional" } },
+    { "from": "E_tts", "to": "F_video", "required": false, "artifact_selector": { "artifact_type": "audio" }, "join_policy": { "wait_if_active": true, "max_wait": "PT10M", "on_timeout": "require_decision", "on_no_qualified_artifact": "ignore_optional" } },
+    { "from": "B_md_master", "to": "G_distribution", "required": true, "artifact_selector": { "artifact_type": "markdown", "review_status": "approved" }, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "F_video", "to": "G_distribution", "required": false, "artifact_selector": { "artifact_type": "video" }, "join_policy": { "wait_if_active": true, "max_wait": "PT5M", "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "ignore_optional" } }
+  ],
+  "gates": [
+    { "id": "md_master_gate", "name": "母稿审核", "target_artifact_ref": "md_master_artifact", "required_before": ["C_script", "G_distribution"], "actions": ["approve", "reject", "request_changes"] }
+  ],
+  "artifacts": [
+    { "id": "clean_events_artifact", "type": "json", "produced_by": "A_collect", "review_policy": { "mode": "none" }, "required_for": ["B_md_master"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "md_master_artifact", "type": "markdown", "produced_by": "B_md_master", "review_policy": { "mode": "manual", "gate_spec_id": "md_master_gate" }, "required_for": ["C_script", "G_distribution"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "script_artifact", "type": "script", "produced_by": "C_script", "review_policy": { "mode": "none" }, "required_for": ["E_tts"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "audio_artifact", "type": "audio", "produced_by": "E_tts", "review_policy": { "mode": "none" }, "required_for": ["F_video"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "subtitle_artifact", "type": "document", "produced_by": "E_tts", "review_policy": { "mode": "none" }, "required_for": ["F_video"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "video_artifact", "type": "video", "produced_by": "F_video", "review_policy": { "mode": "none" }, "required_for": ["G_distribution"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "publish_package_artifact", "type": "publish_package", "produced_by": "G_distribution", "review_policy": { "mode": "none" }, "required_for": [], "versioning": { "immutable": true, "compare_by": "hash" } }
+  ],
+  "provider_policy": {
+    "default_provider": "codex-local",
+    "allowed_providers": ["codex-local", "official-api", "mock-provider"],
+    "required_credentials": ["VOLC_TTS_API_KEY"],
+    "fallback_providers": ["mock-tts"]
+  },
+  "layouts": {
+    "dag": {
+      "A_collect": { "x": 80, "y": 70, "stage": "情报采集" },
+      "B_md_master": { "x": 340, "y": 70, "stage": "内容策划与母稿" },
+      "C_script": { "x": 600, "y": 70, "stage": "脚本与分镜" },
+      "E_tts": { "x": 860, "y": 70, "stage": "音频与字幕" },
+      "F_video": { "x": 1120, "y": 70, "stage": "视频制作" },
+      "G_distribution": { "x": 860, "y": 260, "stage": "分发与复盘" }
+    },
+    "canvas": {
+      "zones": [
+        { "id": "facts", "name": "事实区", "node_ids": ["A_collect"] },
+        { "id": "content", "name": "内容区", "node_ids": ["B_md_master", "C_script"] },
+        { "id": "media", "name": "媒体区", "node_ids": ["E_tts", "F_video"] },
+        { "id": "delivery", "name": "交付区", "node_ids": ["G_distribution"] }
+      ]
+    }
+  },
+  "registry_meta": { "source": "local_registry", "status": "stable" }
+}

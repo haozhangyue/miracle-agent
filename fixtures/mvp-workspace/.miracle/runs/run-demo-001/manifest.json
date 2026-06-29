@@ -1,0 +1,10 @@
+{
+  "run_id": "run-demo-001",
+  "run_spec_path": "runs/run-demo-001/run_spec.json",
+  "workflow_snapshot_path": "runs/run-demo-001/workflow_snapshot.json",
+  "events_path": "runs/run-demo-001/events.jsonl",
+  "nodes_path": "runs/run-demo-001/nodes.json",
+  "artifacts_path": "runs/run-demo-001/artifacts.json",
+  "gates_path": "runs/run-demo-001/gates.json",
+  "attention_path": "runs/run-demo-001/attention.json"
+}

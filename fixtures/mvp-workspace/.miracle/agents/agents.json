@@ -1,0 +1,57 @@
+[
+  {
+    "agent_id": "intelligence-agent",
+    "name": "情报 Agent",
+    "status": "done",
+    "active_runs": ["run-demo-001"],
+    "current_node_runs": [],
+    "queued_node_runs": [],
+    "blocked_reason": null,
+    "waiting_for": [],
+    "equipped_libraries": ["official-source-library", "fact-check-library"]
+  },
+  {
+    "agent_id": "content-agent",
+    "name": "内容 Agent",
+    "status": "reviewing",
+    "active_runs": ["run-demo-001"],
+    "current_node_runs": ["nr_run-demo-001_B_md_master"],
+    "queued_node_runs": [],
+    "blocked_reason": null,
+    "waiting_for": ["gate:gate-md-master-001"],
+    "equipped_libraries": ["content-packaging-library"]
+  },
+  {
+    "agent_id": "tts-agent",
+    "name": "TTS Agent",
+    "status": "blocked",
+    "active_runs": ["run-demo-001"],
+    "current_node_runs": ["nr_run-demo-001_E_tts"],
+    "queued_node_runs": [],
+    "blocked_reason": "缺少 VOLC_TTS_API_KEY",
+    "waiting_for": ["credential:VOLC_TTS_API_KEY"],
+    "equipped_libraries": ["tts-caption-library"]
+  },
+  {
+    "agent_id": "video-agent",
+    "name": "视频 Agent",
+    "status": "waiting",
+    "active_runs": ["run-demo-001"],
+    "current_node_runs": [],
+    "queued_node_runs": ["nr_run-demo-001_F_video"],
+    "blocked_reason": null,
+    "waiting_for": ["artifact:audio_master_v1", "artifact:subtitle_master_v1"],
+    "equipped_libraries": ["video-render-library"]
+  },
+  {
+    "agent_id": "distribution-agent",
+    "name": "分发 Agent",
+    "status": "queued",
+    "active_runs": ["run-demo-001"],
+    "current_node_runs": [],
+    "queued_node_runs": ["nr_run-demo-001_G_distribution"],
+    "blocked_reason": null,
+    "waiting_for": ["gate:gate-md-master-001"],
+    "equipped_libraries": ["distribution-library"]
+  }
+]

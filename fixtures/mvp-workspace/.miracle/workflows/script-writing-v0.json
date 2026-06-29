@@ -1,0 +1,25 @@
+{
+  "id": "script-writing-v0",
+  "name": "AI 剧本任务流",
+  "version": "0.1.0",
+  "domain": "script-writing",
+  "category": "creative",
+  "nodes": [
+    { "id": "theme", "name": "主题输入", "type": "source", "domain_tags": ["script-writing"], "capability_requirements": ["theme.collect"], "recommended_libraries": ["story-planning-library"], "agent_candidates": ["writer-agent"], "inputs": [], "outputs": [{ "id": "theme_doc", "kind": "artifact", "artifact_type": "document", "required": true, "artifact_spec_ref": "theme_artifact" }], "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" } },
+    { "id": "outline", "name": "大纲", "type": "transform", "domain_tags": ["script-writing"], "capability_requirements": ["outline.write"], "recommended_libraries": ["story-planning-library"], "agent_candidates": ["writer-agent"], "inputs": [{ "id": "theme_doc", "kind": "artifact", "artifact_type": "document", "required": true }], "outputs": [{ "id": "outline", "kind": "artifact", "artifact_type": "outline", "required": true, "artifact_spec_ref": "outline_artifact" }], "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" } },
+    { "id": "episode", "name": "分集剧本", "type": "transform", "domain_tags": ["script-writing"], "capability_requirements": ["script.write"], "recommended_libraries": ["script-writing-library"], "agent_candidates": ["writer-agent"], "inputs": [{ "id": "outline", "kind": "artifact", "artifact_type": "outline", "required": true }], "outputs": [{ "id": "episode_script", "kind": "artifact", "artifact_type": "episode_script", "required": true, "artifact_spec_ref": "episode_artifact" }], "review_gate_ref": "script_review_gate", "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" } }
+  ],
+  "edges": [
+    { "from": "theme", "to": "outline", "required": true, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "outline", "to": "episode", "required": true, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } }
+  ],
+  "gates": [{ "id": "script_review_gate", "name": "剧本审核", "target_artifact_ref": "episode_artifact", "required_before": [], "actions": ["approve", "reject"] }],
+  "artifacts": [
+    { "id": "theme_artifact", "type": "document", "produced_by": "theme", "review_policy": { "mode": "none" }, "required_for": ["outline"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "outline_artifact", "type": "outline", "produced_by": "outline", "review_policy": { "mode": "none" }, "required_for": ["episode"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "episode_artifact", "type": "episode_script", "produced_by": "episode", "review_policy": { "mode": "manual", "gate_spec_id": "script_review_gate" }, "required_for": [], "versioning": { "immutable": true, "compare_by": "hash" } }
+  ],
+  "provider_policy": { "default_provider": "mock-script-provider", "allowed_providers": ["mock-script-provider"], "required_credentials": [], "fallback_providers": [] },
+  "layouts": { "dag": { "theme": { "x": 80, "y": 60, "stage": "主题" }, "outline": { "x": 320, "y": 60, "stage": "大纲" }, "episode": { "x": 560, "y": 60, "stage": "分集" } } },
+  "registry_meta": { "source": "builtin_template", "status": "experimental" }
+}

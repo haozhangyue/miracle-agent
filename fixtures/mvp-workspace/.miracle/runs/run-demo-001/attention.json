@@ -1,0 +1,38 @@
+[
+  {
+    "attention_id": "att_tts_credential",
+    "root_cause_key": "credential:VOLC_TTS_API_KEY:missing",
+    "title": "TTS 凭证缺失",
+    "severity": "P0",
+    "status": "open",
+    "related_objects": [
+      { "type": "NodeRun", "id": "nr_run-demo-001_E_tts", "label": "TTS 与字幕" },
+      { "type": "AgentHealth", "id": "tts-agent", "label": "TTS Agent" },
+      { "type": "ArtifactManifest", "id": "art_audio_master_v1", "label": "audio" },
+      { "type": "ArtifactManifest", "id": "art_subtitle_master_v1", "label": "subtitle" }
+    ],
+    "impact": {
+      "blocked_nodes": ["nr_run-demo-001_E_tts"],
+      "waiting_agents": ["video-agent"],
+      "unaffected_paths": ["markdown_distribution"]
+    },
+    "safe_actions": ["configure_credential", "switch_provider", "skip_optional_branch"]
+  },
+  {
+    "attention_id": "att_gate_md_master",
+    "root_cause_key": "gate:gate-md-master-001:pending_review",
+    "title": "母稿待审核",
+    "severity": "P0",
+    "status": "open",
+    "related_objects": [
+      { "type": "GateInstance", "id": "gate-md-master-001", "label": "母稿审核" },
+      { "type": "ArtifactManifest", "id": "art_md_master_v2", "label": "md_master_v2" }
+    ],
+    "impact": {
+      "blocked_nodes": ["nr_run-demo-001_C_script", "nr_run-demo-001_G_distribution"],
+      "waiting_agents": ["content-agent", "distribution-agent"],
+      "unaffected_paths": []
+    },
+    "safe_actions": ["approve_gate", "reject_gate", "request_changes"]
+  }
+]
