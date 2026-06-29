@@ -127,8 +127,10 @@ permission_matrix:
     can_read:
       - artifacts.clean_events
       - artifacts.topic_strategy
-    can_write:
-      - artifact_manifests.md_master
+    can_produce:
+      - artifacts.md_master
+    can_emit:
+      - adapter_result
     can_call_tools:
       - read_files
       - write_markdown
@@ -139,12 +141,16 @@ permission_matrix:
     can_auto_downstream: false
   review-agent:
     can_read: ["*"]
-    can_write:
+    can_propose:
       - gate_decisions
       - artifact_status_updates
-      - audit_events
+      - audit_event_summaries
     can_approve_gates: true
 ```
+
+PermissionMatrix 只描述 Agent 能读、能生产、能调用和能建议什么；运行事实仍由
+Orchestrator 单写入。Agent/Adapter 不直接写 `TraceEvent`、`ArtifactManifest`、
+`GateDecision` 或 `NodeRun`。
 
 权限维度：
 

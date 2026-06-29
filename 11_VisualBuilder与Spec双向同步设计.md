@@ -11,7 +11,7 @@ WorkflowSpec / AgentSpec / ComponentSpec 是可版本化配置真相
 Visual Builder 是编辑器
 YAML/JSON 文件是编辑器
 CLI/SDK 也是编辑器
-RunSpec snapshot / NodeRun / NodeAttempt / TraceEvent / ArtifactManifest /
+RunSpec / WorkflowSnapshot / NodeRun / NodeAttempt / TraceEvent / ArtifactManifest /
 GateInstance / GateDecision / CredentialCheckResult 是运行事实真相
 ```
 

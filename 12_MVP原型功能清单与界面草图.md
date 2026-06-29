@@ -36,7 +36,7 @@ WorkflowSpec -> Importer -> Validate/Dry-run -> Node DAG -> Agent View -> Artifa
 - EdgeSpec。
 - GateSpec。
 - ArtifactSpec。
-- RunSpec snapshot 契约。
+- RunSpec / WorkflowSnapshot 契约。
 
 界面区域：
 

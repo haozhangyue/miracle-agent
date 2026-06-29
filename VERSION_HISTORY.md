@@ -8,8 +8,8 @@
 | 项目 | 当前值 |
 |---|---|
 | 当前大版本 | `v0.5.1` |
-| 版本名称 | 版本演进记录机制 |
-| 当前阶段 | P2 融合产品信息架构完成，准备进入低保真原型 |
+| 版本名称 | P3 技术详细设计与扩展性修订 |
+| 当前阶段 | P3 技术详细设计完成一致性修订，准备进入 P4 MVP 实现评审 |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -98,8 +98,8 @@
   根因联动固定用于 Attention。
 - `fusion-clickable` 引入 `lucide-react` 图标库并重构三页桌面布局，重新生成
   `home-desktop.png`、`run-desktop.png`、`attention-desktop.png`。
-- 完成 P2 Web 原型评审，生成 `18_P2原型评审纪要与修订清单.md`，明确主链路有条件
-  通过、P2 修订项、P3 延后项和 P2/P3 分界。
+- 完成 P2 Web 原型评审，生成 `18_P2原型评审纪要与修订清单.md`；最新结论为 P2
+  原型完全通过，原问题项进入后续设计备忘和 P3 实现关注项。
 - 新增 `P2F-07 Agent Collaboration` Web 页面原型，补充多 Agent 协同、交接合同、阻塞
   传播和恢复动作表达。
 - 新增 P2 原型评审截图证据目录 `assets/reviews/p2-prototype-audit/`，保留首页、Run、
@@ -107,8 +107,18 @@
 - 补充 `14_技术架构选型与系统架构图.md` 的后端演进边界：明确 Node.js 是 MVP
   Local Sidecar，不是商业化云端主后端限定；商业化阶段建议拆分 Java/Kotlin 云端控制平面、
   Python/Node Worker 和队列化执行平面。
+- 新增 P3 技术详细设计文档组 `19-23`：总纲与扩展性原则、核心数据模型、Local
+  Sidecar API 与后端演进、前端架构与工作台状态、MVP 任务拆解与验收计划。
+- P3 文档明确 Miracle 是通用 Agent OS，`content-production` 和 Flow A-G 只是第一条
+  样本 Domain，不进入核心模型硬编码。
+- 完成 P3 一致性修订：统一 `RunSpec / WorkflowSnapshot / RunManifest` 边界，移除
+  `RunSnapshot` 作为核心对象；将审核真相收口到 `ArtifactSpec / GateSpec /
+  GateInstance / GateDecision`，NodeSpec 仅保留 `review_gate_ref`。
+- 补齐 `EdgeSpec.join_policy`、`POST /runs` 启动协议、`GET /gates/:id`、AdapterResult
+  状态枚举和 operation/provider/artifact 对账字段。
+- 明确 Agent/Adapter 不直接写 Event Journal，运行事实仍由 Sidecar Orchestrator 单写入。
 
-本节在 P2 产品信息架构和可点击原型完成评审后，转换为正式的 `v0.6.0` 版本记录。
+本节在 P3 技术详细设计评审收口后，转换为正式的 `v0.6.0` 版本记录。
 
 ## 5. 里程碑
 

@@ -6,7 +6,7 @@
 
 设计原则：
 
-- WorkflowSpec 是模板与编排真相；运行事实由 RunSpec snapshot、NodeRun、
+- WorkflowSpec 是模板与编排真相；运行事实由 RunSpec、WorkflowSnapshot、NodeRun、
   NodeAttempt、TraceEvent、ArtifactManifest、GateInstance、GateDecision、
   CredentialCheckResult 承载。
 - UI、CLI、SDK 都只是编辑器或视图。

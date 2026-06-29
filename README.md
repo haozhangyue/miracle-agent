@@ -4,11 +4,14 @@
 
 ## 当前阶段
 
-第一版只交付方案和原型资产，不创建代码工程。P0/P1.5 和四轮架构评审已经完成；
-P2 产品信息架构已收口到 `16_融合_产品信息架构与设计图规划.md`。当前已并行完成
-Product Design 三个视觉方向和 Pencil 六页可编辑原型已经完成，并已按复审结论生成
-P2 Web 工作台可点击原型；本轮已生成 `18_P2原型评审纪要与修订清单.md`，主链路有条件
-通过，进入 P2 修订收口阶段。
+第一版只交付方案、原型和技术设计资产，不创建正式代码工程。P0/P1.5 和四轮架构评审
+已经完成；P2 产品信息架构、Web 工作台原型和 `P2F-07 Agent Collaboration` 已完成评审。
+当前结论是 P2 原型完全通过，已进入 P3 技术详细设计阶段；P3 已完成 Run 冻结对象、
+审核真相、AdapterResult、EdgeSpec join_policy、启动 Run API 和 Gate Detail API 的一致性修订。
+
+P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；`content-production`
+只是第一个样本 Domain。Node.js 本地服务只作为 MVP Local Sidecar，不是商业化云端主
+后端的最终限定。
 
 1. 多 Agent 协同可视化。
 2. 工作流流程节点编排。
@@ -61,6 +64,11 @@ P2 Web 工作台可点击原型；本轮已生成 `18_P2原型评审纪要与修
 | `CURRENT` | [prototypes/p2/03_融合版原型决策与验收说明.md](prototypes/p2/03_融合版原型决策与验收说明.md) | Product Design A/B/C Web-only 决策和验收口径 |
 | `CURRENT` | [prototypes/p2/fusion-clickable/README.md](prototypes/p2/fusion-clickable/README.md) | P2 Web 工作台可点击原型入口 |
 | `CURRENT` | [18_P2原型评审纪要与修订清单.md](18_P2原型评审纪要与修订清单.md) | P2 Web 原型评审结论、修订清单和 P2/P3 分界 |
+| `CURRENT` | [19_P3技术详细设计总纲与扩展性原则.md](19_P3技术详细设计总纲与扩展性原则.md) | P3 总纲、通用 Agent OS 和扩展性原则 |
+| `CURRENT` | [20_P3核心数据模型与领域扩展设计.md](20_P3核心数据模型与领域扩展设计.md) | DomainPack、RoleProfile、Workflow、Run、Artifact、Attention 通用模型 |
+| `CURRENT` | [21_P3本地服务API与后端演进设计.md](21_P3本地服务API与后端演进设计.md) | Local Sidecar API、Cloud Control Plane 和 Worker 演进 |
+| `CURRENT` | [22_P3前端架构与工作台状态设计.md](22_P3前端架构与工作台状态设计.md) | 前端路由、页面状态、RoleProfile 和 DomainPack UI 扩展 |
+| `CURRENT` | [23_P3MVP任务拆解与验收计划.md](23_P3MVP任务拆解与验收计划.md) | MVPS01-MVPS10 工程任务、验收和测试计划 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明
@@ -85,6 +93,14 @@ P2 Web 工作台可点击原型；本轮已生成 `18_P2原型评审纪要与修
 [prototypes/p2/03_融合版原型决策与验收说明.md](prototypes/p2/03_融合版原型决策与验收说明.md)，
 再阅读 [18_P2原型评审纪要与修订清单.md](18_P2原型评审纪要与修订清单.md)，
 并运行 [prototypes/p2/fusion-clickable/](prototypes/p2/fusion-clickable/)。
+
+进入 P3 技术详细设计时，优先阅读：
+
+1. [19_P3技术详细设计总纲与扩展性原则.md](19_P3技术详细设计总纲与扩展性原则.md)
+2. [20_P3核心数据模型与领域扩展设计.md](20_P3核心数据模型与领域扩展设计.md)
+3. [21_P3本地服务API与后端演进设计.md](21_P3本地服务API与后端演进设计.md)
+4. [22_P3前端架构与工作台状态设计.md](22_P3前端架构与工作台状态设计.md)
+5. [23_P3MVP任务拆解与验收计划.md](23_P3MVP任务拆解与验收计划.md)
 
 当前融合原则：Product Design 主导最终界面的视觉方向、布局体验和交互重心；Pencil
 用于校验六页任务闭环、对象语义、状态归属和审核安全边界，不作为最终视觉主方案。
