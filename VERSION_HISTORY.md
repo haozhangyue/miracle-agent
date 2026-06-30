@@ -8,8 +8,8 @@
 | 项目 | 当前值 |
 |---|---|
 | 当前大版本 | `v0.5.1` |
-| 版本名称 | P4 MVP 第二轮交互增强 |
-| 当前阶段 | P4 第二轮已落地 React Flow DAG、Artifact 预览、Gate 投影和 Canvas 草稿态 |
+| 版本名称 | P4 MVP 第三轮测试与Runner协议 |
+| 当前阶段 | P4 第三轮已落地 Sidecar 集成测试、Runner/Adapter 最小协议和 Mock Runner 执行闭环 |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -71,7 +71,7 @@
 
 **目标版本：** `v0.6.0`
 **相对基线：** `1bd740f`
-**当前文件变化：** 新增 41，更新 8，删除 0；发布前重新统计最终行数。
+**当前文件变化：** 新增 112，更新 12，删除 0；发布前重新统计最终行数。
 
 ### 变更摘要
 
@@ -129,6 +129,17 @@
 - Sidecar 新增 `/runs/:id/dag`、`/workflows/:id/canvas-draft` 读写和增强后的
   Artifact/Gate Detail 响应；核心边界仍保持 Run/WorkflowSnapshot 只读、Canvas 草稿不
   影响执行依赖、Gate projection 不直接覆盖 Artifact。
+- P4 第三轮新增 Sidecar API 集成测试，使用临时 workspace 启动真实 Sidecar，覆盖 DAG、
+  Artifact 预览、Gate 决策幂等保护、Canvas 草稿保存和 Run 执行。
+- 新增 Runner/Adapter 最小协议：`AdapterInvocation`、`AdapterResult`、
+  `AdapterArtifactDescriptor`、`AdapterStatus` 和 Mock Runner 转换函数。
+- Sidecar 新增 `POST /runs/:runId/nodes/:nodeRunId/execute`，由 Orchestrator 将 mock
+  adapter 结果提交为 NodeAttempt、ArtifactManifest、GateInstance、TraceEvent 和
+  NodeRun 状态变更；Runner 本身不直接写 Event Journal。
+- 执行链路补充 selector-aware 下游推进和 NodeRun 本地 operation lock，避免未合格产物
+  推进下游或并发请求重复提交运行事实。
+- 新增 `26_P4第三轮_集成测试与Runner协议交付说明.md`，记录本轮接口、测试覆盖、
+  当前边界和 P4 第四轮建议。
 
 本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 

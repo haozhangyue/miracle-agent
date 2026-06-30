@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { buildCanvasDraftFromWorkflow, buildDagProjection, buildGateDecisionProjection, createDryRunPlan, createRunFromWorkflow, validateWorkflowSpec, type GateInstance, type NodeRun, type WorkflowSpec } from "../src";
+import {
+  buildCanvasDraftFromWorkflow,
+  buildDagProjection,
+  buildGateDecisionProjection,
+  createAdapterInvocation,
+  createArtifactManifestsFromAdapterResult,
+  createDryRunPlan,
+  createNodeAttemptFromAdapterResult,
+  createRunFromWorkflow,
+  executeMockAdapter,
+  validateWorkflowSpec,
+  type GateInstance,
+  type NodeRun,
+  type WorkflowSpec
+} from "../src";
 
 const workflow: WorkflowSpec = {
   id: "content-production-v0",
@@ -96,5 +110,20 @@ describe("workflow validation", () => {
     expect(buildDagProjection(workflow, nodeRuns).edges[0]).toMatchObject({ label: "required", from: "B_md_master", to: "G_distribution" });
     expect(buildGateDecisionProjection(gate, workflow, nodeRuns, "approve")).toMatchObject({ projected_artifact_review_status: "approved", mutates_artifact: false });
     expect(buildCanvasDraftFromWorkflow(workflow).objects.some((object) => object.ref_id === "B_md_master")).toBe(true);
+  });
+
+  it("creates a mock AdapterResult and converts it into attempts and artifact manifests", () => {
+    const created = createRunFromWorkflow(workflow, { runId: "run_test_runner", executionPolicy: "hybrid", roleProfile: "operator", createdAt: "2026-06-29T10:00:00.000Z" });
+    const nodeRun = created.nodeRuns[0];
+    const invocation = createAdapterInvocation({ runSpec: created.runSpec, workflow, nodeRun, createdAt: "2026-06-29T10:00:01.000Z" });
+    const result = executeMockAdapter({ invocation, workflow, receivedAt: "2026-06-29T10:00:02.000Z" });
+    const attempt = createNodeAttemptFromAdapterResult(result);
+    const artifacts = createArtifactManifestsFromAdapterResult({ result, runId: created.runSpec.run_id, nodeRun, producer: "content-agent" });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.operation_id).toBe(invocation.operation_id);
+    expect(result.artifact_descriptors[0]).toMatchObject({ type: "markdown", review_status: "pending_review" });
+    expect(attempt).toMatchObject({ node_run_id: nodeRun.node_run_id, status: "succeeded" });
+    expect(artifacts[0]).toMatchObject({ run_id: "run_test_runner", review_status: "pending_review", producer: "content-agent" });
   });
 });

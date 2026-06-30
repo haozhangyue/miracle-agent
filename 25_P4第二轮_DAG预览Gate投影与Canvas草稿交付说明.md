@@ -77,3 +77,14 @@ POST /api/v0/workflows/:workflowId/canvas-draft
 - Canvas 草稿不等于正式 WorkflowSpec 发布。
 - Gate projection 是推演视图，不代表 Orchestrator 已执行下游推进。
 - Artifact 预览只读取本地文本类文件，不提供媒体播放器。
+
+## 8. 第三轮进展
+
+以下能力已在 [26_P4第三轮_集成测试与Runner协议交付说明.md](26_P4第三轮_集成测试与Runner协议交付说明.md) 中落地：
+
+1. Sidecar API 集成测试。
+2. Runner/Adapter 最小协议。
+3. Mock Runner 单节点执行闭环。
+
+仍未完成：Canvas 草稿发布为 Workflow draft、Gate 决策后的 Orchestrator 实际推进和
+真实平台 Adapter 接入。

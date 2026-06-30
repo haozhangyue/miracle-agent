@@ -116,8 +116,13 @@ API smoke test 已覆盖：
 3. 将 Gate Review 决策后的下游状态投影补全。
 4. 开始 MVPS08 Infinite Canvas 的可编辑草稿态。
 
-尚未完成的后续项：
+以下建议已在 [26_P4第三轮_集成测试与Runner协议交付说明.md](26_P4第三轮_集成测试与Runner协议交付说明.md) 中落地：
 
 1. 增加 Sidecar API 集成测试。
-2. 接入真实 Runner 最小协议。
-3. 将 Canvas 草稿发布为 Workflow draft。
+2. 接入 Runner/Adapter 最小协议和 Mock Runner 执行闭环。
+
+尚未完成的后续项：
+
+1. 将 Canvas 草稿发布为 Workflow draft。
+2. Gate 决策后实际推进 Orchestrator 下游状态。
+3. 将 NodeAttempt 和执行按钮补到 Run 工作区 UI。

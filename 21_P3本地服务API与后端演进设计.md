@@ -105,6 +105,7 @@ React UI
 | `/runs/:id` | GET | 获取 Run 详情。 |
 | `/runs/:id/events` | GET | 获取事件。 |
 | `/runs/:id/nodes/:nodeRunId` | GET | 获取节点运行详情。 |
+| `/runs/:id/nodes/:nodeRunId/execute` | POST | 手动触发一个可执行 NodeRun，MVP 使用 `mock-local` Runner。 |
 | `/agents/health` | GET | 获取 AgentHealth 投影。 |
 | `/agents/collaboration` | GET | 获取 Agent 协作态势。 |
 | `/attention` | GET | 获取 Attention 队列。 |
@@ -316,6 +317,74 @@ Sidecar 必须执行：
   "attention": []
 }
 ```
+
+`GET /api/v0/runs/:id/nodes/:nodeRunId`
+
+返回：
+
+```json
+{
+  "node": {
+    "node_run_id": "nr_collect",
+    "status": "queued",
+    "output_artifacts": []
+  },
+  "attempts": []
+}
+```
+
+`POST /api/v0/runs/:id/nodes/:nodeRunId/execute`
+
+请求：
+
+```json
+{
+  "adapter_kind": "mock-local"
+}
+```
+
+返回：
+
+```json
+{
+  "accepted": true,
+  "invocation": {
+    "operation_id": "op_nr_collect_001",
+    "node_run_id": "nr_collect",
+    "adapter_kind": "mock-local",
+    "provider": "codex-local"
+  },
+  "adapter_result": {
+    "operation_id": "op_nr_collect_001",
+    "node_run_id": "nr_collect",
+    "status": "succeeded",
+    "provider_receipt": {
+      "provider": "codex-local",
+      "adapter_kind": "mock-local"
+    },
+    "artifact_descriptors": []
+  },
+  "committed": {
+    "node_run": {
+      "status": "done"
+    },
+    "attempt": {
+      "status": "succeeded"
+    },
+    "created_events": ["evt_op_nr_collect_001_committed"]
+  }
+}
+```
+
+约束：
+
+1. `execute` 只允许触发 `queued` 或 `running` 的 `NodeRun`。
+2. Adapter 只返回 `AdapterResult`；`NodeAttempt`、`ArtifactManifest`、`GateInstance`
+   和 `TraceEvent` 仍由 Sidecar Orchestrator 单写入。
+3. MVP 的 `mock-local` 只验证协议和状态提交，不代表真实 Codex/Hermes/OpenClaw 已接入。
+4. 同一 `NodeRun` 执行期间必须持有本地 operation lock，防止并发请求重复提交运行事实。
+5. Orchestrator 推进下游节点时必须校验 edge `artifact_selector`，只有匹配到 `created`
+   且审核状态满足要求的 `ArtifactManifest` 才允许下游进入 `queued`。
 
 ### 5.4 Agent Collaboration
 
@@ -635,7 +704,7 @@ P3 设计完成后必须能映射：
 | 首页 | `/runs`、`/attention`、`/registry/templates`、`/artifacts` |
 | 新任务 | `/domains`、`/registry/templates`、`/workflows/:id/dry-run`、`POST /runs` |
 | Dry-run | `/workflows/:id/validate`、`/workflows/:id/dry-run`、`POST /runs` |
-| Run 工作区 | `/runs/:id`、`/runs/:id/events`、`/runs/:id/nodes/:nodeRunId` |
+| Run 工作区 | `/runs/:id`、`/runs/:id/events`、`/runs/:id/nodes/:nodeRunId`、`POST /runs/:id/nodes/:nodeRunId/execute` |
 | Attention | `/attention`、`/attention/:id`、`/attention/:id/actions` |
 | Agent Collaboration | `/agents/health`、`/agents/collaboration` |
 | 审核抽屉 | `/artifacts/:id`、`/gates/:id`、`/gates/:id/decision` |

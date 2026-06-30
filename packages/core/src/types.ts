@@ -9,6 +9,7 @@ export type NodeRunStatus =
   | "skipped";
 
 export type AttemptStatus = "succeeded" | "failed" | "timed_out" | "cancelled" | "aborted" | "unknown";
+export type AdapterStatus = AttemptStatus;
 export type GateStatus = "pending_review" | "decided" | "invalidated";
 export type ArtifactReviewStatus = "none" | "pending_review" | "approved" | "rejected";
 export type AttentionStatus = "open" | "acknowledged" | "snoozed" | "resolved";
@@ -185,6 +186,57 @@ export interface NodeAttempt {
     message: string;
     recoverable: boolean;
   };
+}
+
+export interface AdapterInvocation {
+  operation_id: string;
+  run_id: string;
+  node_run_id: string;
+  node_id: string;
+  adapter_kind: "mock-local" | "codex" | "hermes" | "openclaw" | "official-api";
+  provider: string;
+  capability_requirements: string[];
+  input_artifacts: string[];
+  expected_outputs: Array<{
+    output_id: string;
+    artifact_type: string;
+    artifact_spec_ref?: string;
+    required: boolean;
+  }>;
+  dispatched_at: string;
+}
+
+export interface AdapterArtifactDescriptor {
+  artifact_id: string;
+  output_id: string;
+  artifact_spec_ref?: string;
+  type: string;
+  path: string;
+  hash: string;
+  status: ArtifactManifest["status"];
+  review_status: ArtifactReviewStatus;
+  content?: string;
+}
+
+export interface AdapterResult {
+  operation_id: string;
+  node_run_id: string;
+  status: AdapterStatus;
+  provider_receipt: {
+    provider: string;
+    adapter_kind: AdapterInvocation["adapter_kind"];
+    model?: string;
+    cost?: number;
+    latency_ms?: number;
+    raw_receipt_id?: string;
+  };
+  artifact_descriptors: AdapterArtifactDescriptor[];
+  error?: {
+    code: string;
+    message: string;
+    recoverable: boolean;
+  };
+  received_at: string;
 }
 
 export interface TraceEvent {
