@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Miracle MVP 任务基线</title>
+    <style>
+      :root {
+        color: #172033;
+        background: #f4f7fb;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #f4f7fb; }
+      .page { width: min(1440px, calc(100vw - 48px)); margin: 0 auto; padding: 28px 0 44px; display: grid; gap: 18px; }
+      .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+      .eyebrow { color: #1d64e8; font-size: 12px; font-weight: 800; text-transform: uppercase; }
+      h1 { margin: 4px 0; font-size: 30px; letter-spacing: 0; }
+      h2 { margin: 0; font-size: 16px; }
+      p { margin: 0; color: #63738b; line-height: 1.55; }
+      .panel { background: white; border: 1px solid #dfe7f3; border-radius: 8px; padding: 16px; box-shadow: 0 12px 30px rgba(32, 65, 110, .05); }
+      .panel > header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+      .hero { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: stretch; }
+      .hero h2 { margin: 6px 0; font-size: 26px; }
+      .git { display: grid; gap: 7px; align-content: start; }
+      .git strong { font-size: 16px; }
+      .git small { color: #64748b; line-height: 1.45; }
+      .pill { display: inline-flex; align-items: center; justify-content: center; min-height: 22px; border-radius: 5px; padding: 2px 7px; font-size: 12px; font-weight: 700; background: #eef2f8; color: #69778e; }
+      .pill.ok { background: #e7f8ef; color: #138044; }
+      .pill.warn { background: #fff3d7; color: #9a5b00; }
+      .pill.danger { background: #ffe9e9; color: #c72a2a; }
+      .line { display: grid; grid-template-columns: repeat(12, minmax(120px, 1fr)); gap: 0; overflow-x: auto; padding: 6px 0 4px; }
+      .phase { position: relative; display: grid; gap: 8px; align-content: start; min-width: 146px; padding: 0 12px 4px 0; }
+      .phase::before { content: ""; position: absolute; top: 16px; left: 20px; right: 0; height: 2px; background: #d8e1ef; }
+      .phase:last-child::before { display: none; }
+      .phase strong { font-size: 13px; line-height: 1.35; margin-top: 2px; }
+      .phase small { color: #68758c; line-height: 1.45; }
+      .dot { position: relative; z-index: 1; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: white; font-size: 11px; font-weight: 800; background: #9aa8bc; box-shadow: 0 0 0 4px white; }
+      .dot.completed { background: #19a957; }
+      .dot.current { width: 42px; height: 42px; background: #dc2626; box-shadow: 0 0 0 5px #ffe5e5, 0 10px 22px rgba(220, 38, 38, .28); }
+      .dot.planned, .dot.deferred { background: #9aa8bc; }
+      .grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(360px, .95fr); gap: 16px; align-items: start; }
+      .tasks, .tracks, .commits, .evidence { display: grid; gap: 8px; }
+      .task { display: grid; grid-template-columns: auto 1fr; gap: 12px; border: 1px solid #e1e8f3; border-radius: 8px; padding: 12px; background: #fbfdff; }
+      .task.current { border-color: #f0a6a6; background: #fff8f8; }
+      .task.completed { border-color: #bae7cb; background: #f5fff9; }
+      .task header { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 4px; }
+      .task small { color: #64748b; display: block; }
+      .track { border: 1px solid #dfe7f3; border-radius: 8px; padding: 12px; background: #fbfdff; }
+      .track header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+      .track span { display: block; border: 1px solid #e4ebf5; border-radius: 7px; padding: 8px; background: white; color: #475569; font-size: 12px; margin-top: 7px; }
+      .long { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+      .long article { border: 1px solid #dfe7f3; border-radius: 8px; padding: 12px; background: #fbfdff; display: grid; gap: 9px; align-content: start; }
+      .long article.current { border-color: #f0a6a6; background: #fff8f8; }
+      .commits div, .evidence div { display: grid; gap: 10px; align-items: center; border-bottom: 1px solid #eef2f7; padding: 8px 0; }
+      .commits div { grid-template-columns: 70px 1fr 150px; }
+      .commits strong { color: #075fe8; }
+      .commits small { color: #64748b; text-align: right; }
+      .evidence { max-height: 420px; overflow: auto; }
+      .evidence div { grid-template-columns: minmax(0, 1fr) auto 58px; }
+      .evidence span { overflow-wrap: anywhere; }
+      .evidence small { color: #64748b; text-align: right; }
+      .error { border: 1px solid #f2b4b4; background: #fff6f6; color: #b42323; border-radius: 8px; padding: 14px; }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="top">
+        <div>
+          <div class="eyebrow">Task Baseline</div>
+          <h1>MVP 执行计划与长期系统路线</h1>
+          <p>这是项目任务基线看板，不属于 Miracle 产品工作台页面。</p>
+        </div>
+        <span class="pill" id="apiStatus">loading</span>
+      </section>
+      <section id="app"></section>
+    </main>
+
+    <script>
+      const defaultApi = location.protocol.startsWith("http") ? `${location.origin}/api/v0/project/roadmap` : "http://127.0.0.1:4317/api/v0/project/roadmap";
+      const api = new URLSearchParams(location.search).get("api") || defaultApi;
+      const app = document.querySelector("#app");
+      const apiStatus = document.querySelector("#apiStatus");
+
+      const cls = (status) => status === "completed" ? "ok" : status === "current" ? "danger" : "warn";
+      const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" }[char]));
+      const pill = (value, extra = "") => `<span class="pill ${extra || cls(value)}">${esc(value)}</span>`;
+
+      function render(data) {
+        const git = data.sync_state?.git ?? {};
+        const evidence = data.sync_state?.evidence ?? [];
+        const current = data.phase_timeline.find((item) => item.id === data.current_node_id);
+        apiStatus.textContent = git.dirty ? `${git.uncommitted_count} uncommitted` : "git clean";
+        apiStatus.className = `pill ${git.dirty ? "danger" : "ok"}`;
+        app.innerHTML = `
+          <section class="hero">
+            <div class="panel">
+              <div class="eyebrow">当前执行焦点</div>
+              <h2>${esc(current?.label ?? data.current_node_id)}</h2>
+              <p>${esc(current?.summary)}</p>
+            </div>
+            <div class="panel git">
+              <strong>Git 同步</strong>
+              <span>${esc(git.branch)} · ${esc(git.latest_commit?.short_hash)}</span>
+              <small>${esc(git.latest_commit?.subject)}</small>
+              ${pill(git.dirty ? `${git.uncommitted_count} uncommitted` : "clean", git.dirty ? "danger" : "ok")}
+            </div>
+          </section>
+          <section class="panel">
+            <header><h2>总体阶段</h2></header>
+            <div class="line">
+              ${data.phase_timeline.map((phase, index) => `
+                <article class="phase">
+                  <span class="dot ${esc(phase.status)}">${phase.status === "current" ? "" : index + 1}</span>
+                  <strong>${esc(phase.label)}</strong>
+                  <small>${esc(phase.summary)}</small>
+                </article>
+              `).join("")}
+            </div>
+          </section>
+          <section class="grid">
+            <div class="panel">
+              <header><h2>D1-D10 MVP 执行计划</h2></header>
+              <div class="tasks">
+                ${data.mvp_execution_plan.map((task) => `
+                  <article class="task ${esc(task.status)}">
+                    <span class="dot ${esc(task.status)}">${esc(task.day)}</span>
+                    <div>
+                      <header><strong>${esc(task.title)}</strong>${pill(task.can_parallelize ? "可并行" : "串行")}</header>
+                      <small>${esc(task.recommended_agent)} · ${esc(task.parallel_group)} · depends: ${esc(task.depends_on.length ? task.depends_on.join(", ") : "无")}</small>
+                      <p>${esc(task.deliverables.join(" / "))}</p>
+                    </div>
+                  </article>
+                `).join("")}
+              </div>
+            </div>
+            <div class="panel">
+              <header><h2>并行任务泳道</h2></header>
+              <div class="tracks">
+                ${data.parallel_tracks.map((track) => `
+                  <article class="track">
+                    <header><strong>${esc(track.name)}</strong>${pill(track.parallelizable ? "parallel" : "serial")}</header>
+                    ${track.tasks.map((taskId) => {
+                      const task = data.mvp_execution_plan.find((item) => item.id === taskId);
+                      return `<span>${esc(task?.day ?? taskId)} · ${esc(task?.title ?? taskId)}</span>`;
+                    }).join("")}
+                  </article>
+                `).join("")}
+              </div>
+            </div>
+          </section>
+          <section class="panel">
+            <header><h2>长期系统构建</h2></header>
+            <div class="long">
+              ${data.long_term_plan.map((item) => `
+                <article class="${esc(item.status)}">
+                  <span class="dot ${esc(item.status)}">${esc(item.stage)}</span>
+                  <strong>${esc(item.title)}</strong>
+                  <p>${esc(item.summary)}</p>
+                </article>
+              `).join("")}
+            </div>
+          </section>
+          <section class="grid">
+            <div class="panel">
+              <header><h2>最近提交</h2></header>
+              <div class="commits">
+                ${(git.recent_commits ?? []).map((commit) => `
+                  <div><strong>${esc(commit.short_hash)}</strong><span>${esc(commit.subject)}</span><small>${new Date(commit.date).toLocaleString()}</small></div>
+                `).join("")}
+              </div>
+            </div>
+            <div class="panel">
+              <header><h2>证据文件同步</h2>${pill(evidence.length)}</header>
+              <div class="evidence">
+                ${evidence.map((item) => `
+                  <div><span>${esc(item.path)}</span>${pill(item.exists ? (item.tracked ? "tracked" : "untracked") : "missing", item.exists ? "ok" : "danger")}<small>${esc(item.last_commit?.short_hash ?? "-")}</small></div>
+                `).join("")}
+              </div>
+            </div>
+          </section>
+        `;
+      }
+
+      fetch(api)
+        .then((response) => {
+          if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+          return response.json();
+        })
+        .then(render)
+        .catch((error) => {
+          apiStatus.textContent = "offline";
+          apiStatus.className = "pill danger";
+          app.innerHTML = `<div class="error">无法读取 Roadmap API：${esc(error.message)}。请先运行 npm run dev，或使用 ?api= 指定 API 地址。</div>`;
+        });
+    </script>
+  </body>
+</html>

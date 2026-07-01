@@ -68,6 +68,20 @@ Web:     http://127.0.0.1:5174/
 Sidecar: http://127.0.0.1:4317/api/v0/health
 ```
 
+独立任务基线看板只依赖 Sidecar，可单独启动：
+
+```bash
+npm run dev:sidecar
+```
+
+访问地址：
+
+```text
+页面:    http://127.0.0.1:4317/task-baseline
+数据:    plans/mvp-task-baseline/roadmap.json
+API:     http://127.0.0.1:4317/api/v0/project/roadmap
+```
+
 ## 4. 验证结果
 
 已通过：

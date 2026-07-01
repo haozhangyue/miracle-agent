@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.5.1` |
 | 版本名称 | P4 MVP 第四轮Gate推进与执行UI |
-| 当前阶段 | P4 第四轮已落地 Gate 决策真实推进、Run 页面执行 UI、Canvas 发布 Workflow draft 和 Adapter 插件壳 |
+| 当前阶段 | P4 第四轮已落地 Gate 决策真实推进、Run 页面执行 UI、Canvas 发布 Workflow draft 和 Adapter 插件壳；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -151,6 +151,16 @@
   和官方 API adapter 预留扩展入口。
 - 新增 `27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md`，记录本轮接口、状态
   写入规则、测试覆盖、当前边界和 P4 第五轮建议。
+- 新增独立任务基线目录 `plans/mvp-task-baseline/`，梳理 P4 第五轮 MVP 十日计划、长期
+  系统建设路线、串并行任务边界和任务基线看板验收规则；该目录不属于 Miracle 系统设计
+  文档序列，也不进入系统 Web 工作台导航。
+- 新增 `plans/mvp-task-baseline/roadmap.json`，作为独立任务基线页面的结构化计划数据源，
+  登记阶段节点、D1-D10 执行计划、长期路线、并行泳道和同步规则。
+- Sidecar 新增 `GET /api/v0/project/roadmap`，每次请求动态合并当前 Git HEAD、最近
+  提交、未提交修改数量和证据文件存在/跟踪/最后提交状态。
+- Sidecar 新增独立页面入口 `/task-baseline`，展示绿色完成点、大红当前点、灰色计划点、
+  Git 同步状态、证据文件列表、MVP 日计划和长期系统构建路线。
+- 新增任务基线页面截图证据 `plans/mvp-task-baseline/roadmap-page.png`。
 
 本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 

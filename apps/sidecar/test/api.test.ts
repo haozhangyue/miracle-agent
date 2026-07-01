@@ -240,6 +240,36 @@ describe("sidecar api", () => {
     expect(body.adapters.map((adapter) => adapter.kind)).toEqual(expect.arrayContaining(["mock-local", "codex", "hermes", "openclaw", "official-api"]));
   });
 
+  it("returns the project roadmap with git and evidence sync state", async () => {
+    const body = await fetchJson<{
+      current_node_id: string;
+      phase_timeline: Array<{ id: string; status: string }>;
+      mvp_execution_plan: Array<{ id: string; day: string }>;
+      sync_state: {
+        git: { available: boolean; head: string; recent_commits: Array<{ short_hash: string; subject: string }> };
+        evidence: Array<{ path: string; exists: boolean; tracked: boolean }>;
+      };
+    }>("/api/v0/project/roadmap");
+
+    expect(body.current_node_id).toBe("p4-05");
+    expect(body.phase_timeline.some((phase) => phase.id === "p4-05" && phase.status === "current")).toBe(true);
+    expect(body.mvp_execution_plan.some((task) => task.day === "D10")).toBe(true);
+    expect(body.sync_state.git.available).toBe(true);
+    expect(body.sync_state.git.head).toMatch(/[0-9a-f]{40}/);
+    expect(body.sync_state.git.recent_commits.length).toBeGreaterThan(0);
+    expect(body.sync_state.evidence.some((item) => item.path === "27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md" && item.exists)).toBe(true);
+  });
+
+  it("serves the standalone task baseline page outside the web workspace", async () => {
+    const response = await fetch(`${baseUrl}/task-baseline`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(html).toContain("MVP 执行计划与长期系统路线");
+    expect(html).toContain("不属于 Miracle 产品工作台页面");
+  });
+
   it("starts a run and executes the first queued node through the mock runner protocol", async () => {
     const created = await fetchJson<{
       run_id: string;

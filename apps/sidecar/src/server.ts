@@ -21,14 +21,17 @@ import {
   type RunSpec,
   type WorkflowSpec
 } from "@miracle/core";
+import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
 const port = Number(process.env.MIRACLE_SIDECAR_PORT ?? 4317);
+const execGit = promisify(execFile);
 
 type JsonValue = Record<string, unknown> | unknown[];
 
@@ -45,6 +48,14 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
 
 function sendError(res: ServerResponse, status: number, code: string, message: string) {
   sendJson(res, status, { error: { code, message, recoverable: status < 500 } });
+}
+
+function sendHtml(res: ServerResponse, status: number, body: string) {
+  res.writeHead(status, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store"
+  });
+  res.end(body);
 }
 
 async function readJson<T>(relativePath: string): Promise<T> {
@@ -64,6 +75,109 @@ async function writeJson(relativePath: string, value: unknown) {
   const target = path.join(workspaceDir, relativePath);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function gitText(args: string[]) {
+  const { stdout } = await execGit("/usr/bin/git", ["-C", rootDir, ...args], { encoding: "utf8" });
+  return String(stdout).trim();
+}
+
+async function gitTextOptional(args: string[]) {
+  try {
+    return await gitText(args);
+  } catch {
+    return "";
+  }
+}
+
+function parseCommitLine(line: string) {
+  const [hash, short_hash, author, date, subject] = line.split("\u001f");
+  return { hash, short_hash, author, date, subject };
+}
+
+async function getGitSyncState() {
+  const [branch, head, latestRaw, statusRaw, recentRaw] = await Promise.all([
+    gitTextOptional(["rev-parse", "--abbrev-ref", "HEAD"]),
+    gitTextOptional(["rev-parse", "HEAD"]),
+    gitTextOptional(["log", "-1", "--format=%H%x1f%h%x1f%an%x1f%cI%x1f%s"]),
+    gitTextOptional(["status", "--porcelain"]),
+    gitTextOptional(["log", "-5", "--format=%H%x1f%h%x1f%an%x1f%cI%x1f%s"])
+  ]);
+  const statusLines = statusRaw.split("\n").filter(Boolean);
+  return {
+    available: Boolean(head),
+    branch,
+    head,
+    dirty: statusLines.length > 0,
+    uncommitted_count: statusLines.length,
+    latest_commit: latestRaw ? parseCommitLine(latestRaw) : undefined,
+    recent_commits: recentRaw.split("\n").filter(Boolean).map(parseCommitLine),
+    refreshed_at: new Date().toISOString()
+  };
+}
+
+function collectEvidencePaths(input: unknown) {
+  const paths = new Set<string>();
+  const visit = (value: unknown) => {
+    if (Array.isArray(value)) return value.forEach(visit);
+    if (!value || typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    if (Array.isArray(record.evidence_paths)) {
+      for (const item of record.evidence_paths) {
+        if (typeof item === "string") paths.add(item);
+      }
+    }
+    for (const item of Object.values(record)) visit(item);
+  };
+  visit(input);
+  return Array.from(paths).sort();
+}
+
+async function getEvidenceState(relativePath: string) {
+  const target = path.resolve(rootDir, relativePath);
+  const insideRepo = target === rootDir || target.startsWith(`${rootDir}${path.sep}`);
+  if (!insideRepo) {
+    return { path: relativePath, exists: false, tracked: false, last_commit: undefined, reason: "path_outside_repo" };
+  }
+  let exists = false;
+  let kind = "missing";
+  try {
+    const info = await stat(target);
+    exists = true;
+    kind = info.isDirectory() ? "directory" : "file";
+  } catch {
+    exists = false;
+  }
+  const tracked = Boolean(await gitTextOptional(["ls-files", "--error-unmatch", "--", relativePath]));
+  const lastCommitRaw = await gitTextOptional(["log", "-1", "--format=%H%x1f%h%x1f%an%x1f%cI%x1f%s", "--", relativePath]);
+  return {
+    path: relativePath,
+    exists,
+    kind,
+    tracked,
+    last_commit: lastCommitRaw ? parseCommitLine(lastCommitRaw) : undefined
+  };
+}
+
+async function buildProjectRoadmap() {
+  const raw = await readFile(path.join(rootDir, "plans/mvp-task-baseline/roadmap.json"), "utf8");
+  const roadmap = JSON.parse(raw) as Record<string, unknown>;
+  const evidencePaths = collectEvidencePaths(roadmap);
+  const [git, evidence] = await Promise.all([
+    getGitSyncState(),
+    Promise.all(evidencePaths.map(getEvidenceState))
+  ]);
+  return {
+    ...roadmap,
+    sync_state: {
+      git,
+      evidence,
+      evidence_total: evidence.length,
+      evidence_existing: evidence.filter((item) => item.exists).length,
+      evidence_missing: evidence.filter((item) => !item.exists).map((item) => item.path),
+      refreshed_at: new Date().toISOString()
+    }
+  };
 }
 
 async function appendEvent(runId: string, event: unknown) {
@@ -299,6 +413,11 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const parts = url.pathname.split("/").filter(Boolean);
 
+  if (req.method === "GET" && (url.pathname === "/task-baseline" || url.pathname === "/task-baseline/")) {
+    const html = await readFile(path.join(rootDir, "plans/mvp-task-baseline/index.html"), "utf8");
+    return sendHtml(res, 200, html);
+  }
+
   if (url.pathname === "/api/v0/health") {
     return sendJson(res, 200, { status: "ok", mode: "local-sidecar", workspace: workspaceDir });
   }
@@ -317,6 +436,10 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
   if (req.method === "GET" && url.pathname === "/api/v0/adapters") {
     return sendJson(res, 200, { adapters: adapterPluginShells });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/v0/project/roadmap") {
+    return sendJson(res, 200, await buildProjectRoadmap());
   }
 
   if (req.method === "GET" && url.pathname === "/api/v0/workflows") {

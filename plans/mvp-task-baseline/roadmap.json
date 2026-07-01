@@ -1,0 +1,297 @@
+{
+  "roadmap_id": "miracle-system-roadmap-v0",
+  "name": "Miracle MVP 执行计划与长期系统路线图",
+  "current_node_id": "p4-05",
+  "generated_from": [
+    "07_后续对接路线图与任务拆解.md",
+    "23_P3MVP任务拆解与验收计划.md",
+    "24_P4_MVP可运行主链路交付说明.md",
+    "25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md",
+    "26_P4第三轮_集成测试与Runner协议交付说明.md",
+    "27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md",
+    "VERSION_HISTORY.md"
+  ],
+  "sync_contract": {
+    "mode": "sidecar_runtime_git_enrichment",
+    "rule": "独立任务基线页面通过 /api/v0/project/roadmap 读取计划数据；Sidecar 每次请求动态读取 Git HEAD、最近提交、工作区状态和证据文件状态。",
+    "commit_expectation": "每次提交后刷新页面即可看到最新 Git HEAD、最近提交摘要和受影响证据文件的最后提交信息；新增阶段或任务时应同步更新本 roadmap.json。",
+    "drift_guard": "页面显示证据文件和 Git 状态，避免计划进度脱离当前仓库实际内容。"
+  },
+  "status_legend": {
+    "completed": "绿色点，已经完成并有证据文件",
+    "current": "大红点，当前执行焦点",
+    "planned": "灰色点，后续计划",
+    "deferred": "灰色虚线点，暂不进入当前 MVP"
+  },
+  "phase_timeline": [
+    {
+      "id": "p0",
+      "label": "P0 架构评审",
+      "status": "completed",
+      "summary": "确认系统边界、核心对象、双视图编排、多 Agent 可视化和 Adapter 方向。",
+      "evidence_paths": ["13_P0架构评审纪要与决策清单.md"]
+    },
+    {
+      "id": "p1",
+      "label": "P1 Spec 与接口方案",
+      "status": "completed",
+      "summary": "形成 WorkflowSpec、Registry、AgentHealth、VisualBuilder 和 MVP 原型规划。",
+      "evidence_paths": ["09_WorkflowSpec与Registry技术草案.md", "10_AgentHealth与多Agent状态机设计.md", "11_VisualBuilder与Spec双向同步设计.md"]
+    },
+    {
+      "id": "p1-5",
+      "label": "P1.5 技术架构选型",
+      "status": "completed",
+      "summary": "明确本地优先、Local Sidecar、Orchestrator 单写入、Adapter 隔离和商业化后端演进边界。",
+      "evidence_paths": ["14_技术架构选型与系统架构图.md"]
+    },
+    {
+      "id": "p2",
+      "label": "P2 原型评审",
+      "status": "completed",
+      "summary": "完成任务型首页、Run 工作区、Attention、Agent Collaboration 的 Web 原型评审。",
+      "evidence_paths": ["18_P2原型评审纪要与修订清单.md", "prototypes/p2/fusion-clickable"]
+    },
+    {
+      "id": "p3",
+      "label": "P3 技术详细设计",
+      "status": "completed",
+      "summary": "完成 19-23 五份详细设计文档，并收口 Run、Gate、Adapter、Edge 和 API 一致性。",
+      "evidence_paths": ["19_P3技术详细设计总纲与扩展性原则.md", "20_P3核心数据模型与领域扩展设计.md", "21_P3本地服务API与后端演进设计.md", "22_P3前端架构与工作台状态设计.md", "23_P3MVP任务拆解与验收计划.md"]
+    },
+    {
+      "id": "p4-01",
+      "label": "P4 第一轮 MVP 主链路",
+      "status": "completed",
+      "summary": "完成 Web、Sidecar、core、fixtures 和 MVPS01-MVPS07 可运行闭环。",
+      "evidence_paths": ["24_P4_MVP可运行主链路交付说明.md", "apps/web/src/App.tsx", "apps/sidecar/src/server.ts", "packages/core/src/index.ts"]
+    },
+    {
+      "id": "p4-02",
+      "label": "P4 第二轮 DAG/Artifact/Gate/Canvas",
+      "status": "completed",
+      "summary": "补齐 React Flow DAG、Artifact 预览、Gate projection 和 Canvas 草稿态。",
+      "evidence_paths": ["25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md"]
+    },
+    {
+      "id": "p4-03",
+      "label": "P4 第三轮 Runner 协议",
+      "status": "completed",
+      "summary": "补齐 Sidecar 集成测试、Runner/Adapter 最小协议和 Mock Runner 单节点执行闭环。",
+      "evidence_paths": ["26_P4第三轮_集成测试与Runner协议交付说明.md", "apps/sidecar/test/api.test.ts", "packages/core/src/runner.ts"]
+    },
+    {
+      "id": "p4-04",
+      "label": "P4 第四轮 执行闭环",
+      "status": "completed",
+      "summary": "完成 Gate 决策真实推进、Run 执行 UI、Canvas 发布 Workflow draft 和 Adapter 插件壳。",
+      "evidence_paths": ["27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md", "packages/core/src/adapters.ts"]
+    },
+    {
+      "id": "p4-05",
+      "label": "P4 第五轮 MVP 执行能力补齐",
+      "status": "current",
+      "summary": "当前焦点：返工链路、最小 scheduler、Adapter 目录实体化、Canvas 生成 NodeSpec draft、Web 运行刷新。",
+      "evidence_paths": ["plans/mvp-task-baseline/README.md", "plans/mvp-task-baseline/roadmap.json", "plans/mvp-task-baseline/roadmap-page.png", "plans/mvp-task-baseline/index.html"]
+    },
+    {
+      "id": "p4-06",
+      "label": "P4 MVP 验收与版本发布",
+      "status": "planned",
+      "summary": "完成回归测试、截图证据、版本历史收口，并形成可验收 MVP 基线。",
+      "evidence_paths": ["VERSION_HISTORY.md"]
+    },
+    {
+      "id": "p5",
+      "label": "P5 真实工作流接入",
+      "status": "planned",
+      "summary": "接入真实热点工具更新 Flow A-G，从历史 run 展示推进到半自动控制。",
+      "evidence_paths": ["07_后续对接路线图与任务拆解.md"]
+    }
+  ],
+  "mvp_execution_plan": [
+    {
+      "id": "d1-roadmap-data",
+      "day": "D1",
+      "title": "Roadmap 数据源与 Sidecar API",
+      "status": "completed",
+      "serial_group": "roadmap-foundation",
+      "parallel_group": "roadmap",
+      "depends_on": [],
+      "can_parallelize": true,
+      "recommended_agent": "Agent A",
+      "deliverables": ["plans/mvp-task-baseline/roadmap.json", "GET /api/v0/project/roadmap", "Git HEAD/dirty/evidence 动态同步"]
+    },
+    {
+      "id": "d2-roadmap-ui",
+      "day": "D2",
+      "title": "独立任务基线可视化页面",
+      "status": "completed",
+      "serial_group": "roadmap-foundation",
+      "parallel_group": "roadmap",
+      "depends_on": ["d1-roadmap-data"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent B",
+      "deliverables": ["红绿灰节点", "串并行泳道", "Git 同步状态", "证据文件列表", "不进入 apps/web 侧边栏"]
+    },
+    {
+      "id": "d3-rework-model",
+      "day": "D3",
+      "title": "Gate reject 返工模型",
+      "status": "current",
+      "serial_group": "rework",
+      "parallel_group": "execution",
+      "depends_on": ["d1-roadmap-data"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent C",
+      "deliverables": ["rework attempt", "new Artifact version", "Gate required_before 恢复规则"]
+    },
+    {
+      "id": "d4-rework-ui",
+      "day": "D4",
+      "title": "Gate reject 返工 UI 与事件审计",
+      "status": "planned",
+      "serial_group": "rework",
+      "parallel_group": "execution",
+      "depends_on": ["d3-rework-model"],
+      "can_parallelize": false,
+      "recommended_agent": "Agent C",
+      "deliverables": ["返工动作按钮", "新 attempt receipt", "TraceEvent 审计"]
+    },
+    {
+      "id": "d5-scheduler-design",
+      "day": "D5",
+      "title": "最小 scheduler 设计",
+      "status": "planned",
+      "serial_group": "scheduler",
+      "parallel_group": "execution",
+      "depends_on": ["d1-roadmap-data"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent D",
+      "deliverables": ["queued 节点扫描", "Gate 停在人审", "operation lock 复用"]
+    },
+    {
+      "id": "d6-scheduler-run",
+      "day": "D6",
+      "title": "最小 scheduler 执行闭环",
+      "status": "planned",
+      "serial_group": "scheduler",
+      "parallel_group": "execution",
+      "depends_on": ["d5-scheduler-design"],
+      "can_parallelize": false,
+      "recommended_agent": "Agent D",
+      "deliverables": ["自动执行 queued 节点", "失败进入 Attention", "人工 Gate 暂停"]
+    },
+    {
+      "id": "d7-adapter-directory",
+      "day": "D7",
+      "title": "Adapter 插件目录实体化",
+      "status": "planned",
+      "serial_group": "adapter",
+      "parallel_group": "platform",
+      "depends_on": ["d1-roadmap-data"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent D",
+      "deliverables": ["adapter manifests", "Codex mock-compatible adapter", "credential check"]
+    },
+    {
+      "id": "d8-canvas-node-draft",
+      "day": "D8",
+      "title": "Canvas 新增节点生成 NodeSpec draft",
+      "status": "planned",
+      "serial_group": "visual-spec",
+      "parallel_group": "builder",
+      "depends_on": ["d1-roadmap-data"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent B",
+      "deliverables": ["新增 node card", "生成 NodeSpec draft", "validate-before-save"]
+    },
+    {
+      "id": "d9-run-refresh",
+      "day": "D9",
+      "title": "Web run refresh/polling 与执行反馈",
+      "status": "planned",
+      "serial_group": "web-feedback",
+      "parallel_group": "experience",
+      "depends_on": ["d2-roadmap-ui"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent B",
+      "deliverables": ["run polling", "执行中状态", "错误恢复提示"]
+    },
+    {
+      "id": "d10-mvp-acceptance",
+      "day": "D10",
+      "title": "MVP 回归验收与版本收口",
+      "status": "planned",
+      "serial_group": "acceptance",
+      "parallel_group": "release",
+      "depends_on": ["d4-rework-ui", "d6-scheduler-run", "d7-adapter-directory", "d8-canvas-node-draft", "d9-run-refresh"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["npm run typecheck/test/build", "截图证据", "VERSION_HISTORY 发布记录"]
+    }
+  ],
+  "long_term_plan": [
+    {
+      "id": "l1-local-mvp",
+      "stage": "L1",
+      "title": "本地 MVP 完整闭环",
+      "status": "current",
+      "summary": "以本地 Web + Local Sidecar 打通 Run、Gate、Artifact、Agent、Canvas 和 scheduler 最小闭环。"
+    },
+    {
+      "id": "l2-real-workflow",
+      "stage": "L2",
+      "title": "真实工作流接入",
+      "status": "planned",
+      "summary": "接入真实内容生产流程和历史 run，再用新 run 做半自动控制。"
+    },
+    {
+      "id": "l3-real-adapters",
+      "stage": "L3",
+      "title": "真实 Adapter 接入",
+      "status": "planned",
+      "summary": "从 Codex 或官方 API 开始接入真实执行，再扩展 Hermes/OpenClaw。"
+    },
+    {
+      "id": "l4-stable-runtime",
+      "stage": "L4",
+      "title": "稳定运行系统",
+      "status": "planned",
+      "summary": "补齐队列、失败恢复、重试、资源池、凭证治理和运行审计。"
+    },
+    {
+      "id": "l5-commercial-platform",
+      "stage": "L5",
+      "title": "商业化系统",
+      "status": "planned",
+      "summary": "建设 Java/Kotlin 云端控制平面、多租户、权限、计费、团队协作和云同步。"
+    }
+  ],
+  "parallel_tracks": [
+    {
+      "id": "track-roadmap",
+      "name": "计划与可视化",
+      "parallelizable": true,
+      "tasks": ["d1-roadmap-data", "d2-roadmap-ui"]
+    },
+    {
+      "id": "track-execution",
+      "name": "执行闭环",
+      "parallelizable": true,
+      "tasks": ["d3-rework-model", "d4-rework-ui", "d5-scheduler-design", "d6-scheduler-run"]
+    },
+    {
+      "id": "track-platform",
+      "name": "平台扩展",
+      "parallelizable": true,
+      "tasks": ["d7-adapter-directory", "d8-canvas-node-draft", "d9-run-refresh"]
+    },
+    {
+      "id": "track-release",
+      "name": "验收发布",
+      "parallelizable": false,
+      "tasks": ["d10-mvp-acceptance"]
+    }
+  ]
+}

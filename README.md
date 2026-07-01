@@ -122,11 +122,25 @@ npm_config_cache=.npm-cache npm install
 npm run dev
 ```
 
+如只需要访问独立任务基线看板，可只启动 Sidecar：
+
+```bash
+npm run dev:sidecar
+```
+
 默认地址：
 
 ```text
 Web:     http://127.0.0.1:5174/
 Sidecar: http://127.0.0.1:4317/api/v0/health
+```
+
+独立任务基线看板：
+
+```text
+页面:    http://127.0.0.1:4317/task-baseline
+数据:    plans/mvp-task-baseline/roadmap.json
+API:     http://127.0.0.1:4317/api/v0/project/roadmap
 ```
 
 ## 版本记录要求
