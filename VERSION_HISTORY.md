@@ -8,8 +8,8 @@
 | 项目 | 当前值 |
 |---|---|
 | 当前大版本 | `v0.5.1` |
-| 版本名称 | P4 MVP 第四轮Gate推进与执行UI |
-| 当前阶段 | P4 第四轮已落地 Gate 决策真实推进、Run 页面执行 UI、Canvas 发布 Workflow draft 和 Adapter 插件壳；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 版本名称 | P4 MVP 第五轮执行能力补齐 |
+| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型，支持返工 attempt、新 Artifact version、新 GateInstance 和下游恢复规则；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -161,6 +161,14 @@
 - Sidecar 新增独立页面入口 `/task-baseline`，展示绿色完成点、大红当前点、灰色计划点、
   Git 同步状态、证据文件列表、MVP 日计划和长期系统构建路线。
 - 新增任务基线页面截图证据 `plans/mvp-task-baseline/roadmap-page.png`。
+- P4 第五轮 D3 新增 Gate reject 返工模型：`POST /api/v0/gates/:gateId/rework`
+  会在 Gate 被 `reject` 或 `request_changes` 后创建 rework NodeAttempt、新
+  ArtifactManifest version、新 GateInstance pending_review，并保留旧产物和旧 Gate 决策。
+- 审核恢复规则补齐：返工 Gate 通过后，producer NodeRun 进入 `done`，被 Gate 阻塞的
+  `required_before` 下游节点重新按 Edge selector 判断输入，满足条件后恢复为 `queued`，
+  且 `upstream_artifacts` 指向新的返工产物版本。
+- 新增 `28_P4第五轮_D3_Gate返工模型交付说明.md`，记录接口、状态写入规则、测试覆盖、
+  当前边界和 D4/D5/D7/D8/D9 并行建议。
 
 本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 

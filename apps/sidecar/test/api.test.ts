@@ -163,6 +163,75 @@ describe("sidecar api", () => {
     expect(afterGate.artifacts.some((artifact) => artifact.type === "markdown" && artifact.review_status === "approved")).toBe(true);
   });
 
+  it("creates a rework attempt with a new artifact version after gate reject", async () => {
+    const created = await fetchJson<{
+      run_id: string;
+      initial_node_runs: string[];
+    }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+
+    await fetchJson(`/api/v0/runs/${created.run_id}/nodes/${created.initial_node_runs[0]}/execute`, { method: "POST", body: JSON.stringify({}) });
+    const afterCollect = await fetchJson<{ nodes: Array<{ node_run_id: string; node_id: string }> }>(`/api/v0/runs/${created.run_id}`);
+    const mdNode = afterCollect.nodes.find((node) => node.node_id === "B_md_master");
+    if (!mdNode) throw new Error("Expected B_md_master node");
+
+    const mdExecution = await fetchJson<{
+      committed: { gates: Array<{ gate_instance_id: string }>; artifacts: Array<{ artifact_id: string; version: number }> };
+    }>(`/api/v0/runs/${created.run_id}/nodes/${mdNode.node_run_id}/execute`, { method: "POST", body: JSON.stringify({}) });
+    const rejectedGateId = mdExecution.committed.gates[0]?.gate_instance_id;
+    const rejectedArtifactId = mdExecution.committed.artifacts[0]?.artifact_id;
+    if (!rejectedGateId || !rejectedArtifactId) throw new Error("Expected generated gate and artifact");
+
+    await fetchJson(`/api/v0/gates/${rejectedGateId}/decision?run_id=${created.run_id}`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "reject", actor: "api-test", comment: "需要补充事实来源" })
+    });
+
+    const rework = await fetchJson<{
+      accepted: boolean;
+      rework_attempt_id: string;
+      artifact: { artifact_id: string; version: number; review_status: string; supersedes_artifact_id: string };
+      gate: { gate_instance_id: string; status: string; target: { id: string } };
+    }>(`/api/v0/gates/${rejectedGateId}/rework?run_id=${created.run_id}`, {
+      method: "POST",
+      body: JSON.stringify({ actor: "api-test", comment: "返工后重新提交" })
+    });
+
+    expect(rework.accepted).toBe(true);
+    expect(rework.artifact.version).toBe(2);
+    expect(rework.artifact.review_status).toBe("pending_review");
+    expect(rework.artifact.supersedes_artifact_id).toBe(rejectedArtifactId);
+    expect(rework.gate.status).toBe("pending_review");
+    expect(rework.gate.target.id).toBe(rework.artifact.artifact_id);
+
+    const afterRework = await fetchJson<{
+      nodes: Array<{ node_id: string; status: string; blocked_reason?: string; output_artifacts: string[] }>;
+      artifacts: Array<{ artifact_id: string; review_status: string }>;
+      gates: Array<{ gate_instance_id: string; status: string }>;
+    }>(`/api/v0/runs/${created.run_id}`);
+    expect(afterRework.artifacts.find((artifact) => artifact.artifact_id === rejectedArtifactId)?.review_status).toBe("rejected");
+    expect(afterRework.nodes.find((node) => node.node_id === "B_md_master")?.status).toBe("reviewing");
+    expect(afterRework.nodes.find((node) => node.node_id === "B_md_master")?.output_artifacts).toContain(rework.artifact.artifact_id);
+    expect(afterRework.nodes.find((node) => node.node_id === "C_script")?.status).toBe("blocked");
+    expect(afterRework.nodes.find((node) => node.node_id === "G_distribution")?.blocked_reason).toContain(rework.gate.gate_instance_id);
+
+    await fetchJson(`/api/v0/gates/${rework.gate.gate_instance_id}/decision?run_id=${created.run_id}`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "approve", actor: "api-test", comment: "返工通过" })
+    });
+
+    const afterApprove = await fetchJson<{
+      nodes: Array<{ node_id: string; status: string; upstream_artifacts: string[] }>;
+      artifacts: Array<{ artifact_id: string; review_status: string }>;
+    }>(`/api/v0/runs/${created.run_id}`);
+    expect(afterApprove.artifacts.find((artifact) => artifact.artifact_id === rework.artifact.artifact_id)?.review_status).toBe("approved");
+    expect(afterApprove.nodes.find((node) => node.node_id === "C_script")?.status).toBe("queued");
+    expect(afterApprove.nodes.find((node) => node.node_id === "G_distribution")?.status).toBe("queued");
+    expect(afterApprove.nodes.find((node) => node.node_id === "C_script")?.upstream_artifacts).toContain(rework.artifact.artifact_id);
+  });
+
   it("rejects gate decisions while a gate operation lock exists", async () => {
     const created = await fetchJson<{
       run_id: string;

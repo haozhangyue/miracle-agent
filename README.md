@@ -11,6 +11,8 @@ Gate Detail API 的一致性修订。P4 第一轮已落地可运行 MVP 主链�
 React Flow DAG、Artifact Detail 预览、Gate 决策投影和 Infinite Canvas 草稿态，第三轮已补充
 Sidecar API 集成测试、Runner/Adapter 最小协议和 Mock Runner 单节点执行闭环，第四轮已补充
 Gate 决策真实推进、Run 页面执行 UI、Canvas 发布 Workflow draft 和 Adapter 插件壳。
+P4 第五轮已开始执行能力补齐，D3 Gate reject 返工模型已落地，支持返工 attempt、
+新 Artifact version、新 GateInstance 和下游恢复规则。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -78,6 +80,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md](25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md) | P4 第二轮 DAG、Artifact、Gate projection 和 Canvas draft 交付说明 |
 | `CURRENT` | [26_P4第三轮_集成测试与Runner协议交付说明.md](26_P4第三轮_集成测试与Runner协议交付说明.md) | P4 第三轮 Sidecar 集成测试、Runner 协议和 Mock Runner 执行闭环 |
 | `CURRENT` | [27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md](27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md) | P4 第四轮 Gate 推进、Canvas 发布、执行 UI 和 Adapter 壳 |
+| `CURRENT` | [28_P4第五轮_D3_Gate返工模型交付说明.md](28_P4第五轮_D3_Gate返工模型交付说明.md) | P4 第五轮 D3 Gate reject 返工模型、返工产物版本和恢复规则 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明

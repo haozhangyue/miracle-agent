@@ -9,6 +9,7 @@
     "25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md",
     "26_P4第三轮_集成测试与Runner协议交付说明.md",
     "27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md",
+    "28_P4第五轮_D3_Gate返工模型交付说明.md",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -91,8 +92,8 @@
       "id": "p4-05",
       "label": "P4 第五轮 MVP 执行能力补齐",
       "status": "current",
-      "summary": "当前焦点：返工链路、最小 scheduler、Adapter 目录实体化、Canvas 生成 NodeSpec draft、Web 运行刷新。",
-      "evidence_paths": ["plans/mvp-task-baseline/README.md", "plans/mvp-task-baseline/roadmap.json", "plans/mvp-task-baseline/roadmap-page.png", "plans/mvp-task-baseline/index.html"]
+      "summary": "D3 Gate reject 返工模型已完成；当前焦点切到 D4 返工 UI，同时可并行准备 D5 scheduler 设计、D7 Adapter 目录、D8 Canvas NodeSpec draft 和 D9 Web refresh。",
+      "evidence_paths": ["plans/mvp-task-baseline/README.md", "plans/mvp-task-baseline/roadmap.json", "plans/mvp-task-baseline/roadmap-page.png", "plans/mvp-task-baseline/index.html", "28_P4第五轮_D3_Gate返工模型交付说明.md"]
     },
     {
       "id": "p4-06",
@@ -138,19 +139,19 @@
       "id": "d3-rework-model",
       "day": "D3",
       "title": "Gate reject 返工模型",
-      "status": "current",
+      "status": "completed",
       "serial_group": "rework",
       "parallel_group": "execution",
       "depends_on": ["d1-roadmap-data"],
       "can_parallelize": true,
       "recommended_agent": "Agent C",
-      "deliverables": ["rework attempt", "new Artifact version", "Gate required_before 恢复规则"]
+      "deliverables": ["rework attempt", "new Artifact version", "Gate required_before 恢复规则", "POST /api/v0/gates/:gateId/rework", "28_P4第五轮_D3_Gate返工模型交付说明.md"]
     },
     {
       "id": "d4-rework-ui",
       "day": "D4",
       "title": "Gate reject 返工 UI 与事件审计",
-      "status": "planned",
+      "status": "current",
       "serial_group": "rework",
       "parallel_group": "execution",
       "depends_on": ["d3-rework-model"],

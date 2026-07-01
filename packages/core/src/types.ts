@@ -179,6 +179,7 @@ export interface NodeAttempt {
   attempt_id: string;
   node_run_id: string;
   operation_id: string;
+  attempt_kind?: "execute" | "rework";
   status: AttemptStatus;
   provider_receipt?: Record<string, unknown>;
   error?: {
@@ -186,6 +187,7 @@ export interface NodeAttempt {
     message: string;
     recoverable: boolean;
   };
+  created_at?: string;
 }
 
 export interface AdapterInvocation {
@@ -263,6 +265,8 @@ export interface ArtifactManifest {
   review_status: ArtifactReviewStatus;
   producer: string;
   created_at: string;
+  supersedes_artifact_id?: string;
+  rework_of_gate_instance_id?: string;
 }
 
 export interface GateInstance {

@@ -315,16 +315,23 @@ function buildGateInstancesForArtifacts(input: { workflow: WorkflowSpec; runId: 
   return gates;
 }
 
-function artifactQualifiesForEdge(edge: WorkflowSpec["edges"][number], sourceNode: NodeRun | undefined, artifacts: ArtifactManifest[]) {
-  if (!sourceNode || sourceNode.status !== "done") return false;
-  if (!edge.artifact_selector) return true;
-  return artifacts.some((artifact) => {
+function qualifiedArtifactsForEdge(edge: WorkflowSpec["edges"][number], sourceNode: NodeRun | undefined, artifacts: ArtifactManifest[]) {
+  if (!sourceNode || sourceNode.status !== "done") return [];
+  const sourceArtifacts = artifacts.filter((artifact) => {
     if (!sourceNode.output_artifacts.includes(artifact.artifact_id)) return false;
     if (artifact.status !== "created") return false;
     if (edge.artifact_selector?.artifact_type && artifact.type !== edge.artifact_selector.artifact_type) return false;
     if (edge.artifact_selector?.review_status && artifact.review_status !== edge.artifact_selector.review_status) return false;
     return true;
   });
+  if (!edge.artifact_selector) return sourceArtifacts;
+  return sourceArtifacts;
+}
+
+function artifactQualifiesForEdge(edge: WorkflowSpec["edges"][number], sourceNode: NodeRun | undefined, artifacts: ArtifactManifest[]) {
+  if (!sourceNode || sourceNode.status !== "done") return false;
+  if (!edge.artifact_selector) return true;
+  return qualifiedArtifactsForEdge(edge, sourceNode, artifacts).length > 0;
 }
 
 function shouldQueueDownstream(workflow: WorkflowSpec, nodes: NodeRun[], artifacts: ArtifactManifest[], nodeId: string, triggeringEdge: WorkflowSpec["edges"][number]) {
@@ -338,9 +345,14 @@ function advanceDownstreamNodes(workflow: WorkflowSpec, nodes: NodeRun[], artifa
   const downstreamById = new Map(downstreamEdges.map((edge) => [edge.to, edge]));
   for (const node of nodes) {
     const triggeringEdge = downstreamById.get(node.node_id);
-    if (!triggeringEdge || node.status !== "waiting") continue;
+    const canAdvance = node.status === "waiting" || (node.status === "blocked" && node.blocked_reason?.includes("Gate "));
+    if (!triggeringEdge || !canAdvance) continue;
     if (shouldQueueDownstream(workflow, nodes, artifacts, node.node_id, triggeringEdge)) {
+      const incomingEdges = workflow.edges.filter((edge) => edge.to === node.node_id);
+      const upstreamArtifacts = incomingEdges.flatMap((edge) => qualifiedArtifactsForEdge(edge, nodes.find((source) => source.node_id === edge.from), artifacts));
+      node.upstream_artifacts = Array.from(new Set([...node.upstream_artifacts, ...upstreamArtifacts.map((artifact) => artifact.artifact_id)]));
       node.status = "queued";
+      delete node.blocked_reason;
       node.updated_at = updatedAt;
     }
   }
@@ -367,6 +379,70 @@ function refreshAttentionAfterGateDecision(attention: JsonValue, gateId: string,
       status: decision === "approve" ? "resolved" : "acknowledged"
     };
   });
+}
+
+function safeId(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function nextArtifactVersion(artifacts: ArtifactManifest[], targetArtifact: ArtifactManifest) {
+  const versions = artifacts
+    .filter((artifact) => artifact.node_run_id === targetArtifact.node_run_id && artifact.type === targetArtifact.type)
+    .map((artifact) => artifact.version);
+  return Math.max(targetArtifact.version, ...versions) + 1;
+}
+
+function nextReworkArtifactId(targetArtifact: ArtifactManifest, version: number) {
+  if (/_v\d+$/.test(targetArtifact.artifact_id)) return targetArtifact.artifact_id.replace(/_v\d+$/, `_v${version}`);
+  return `${safeId(targetArtifact.artifact_id)}_rework_v${version}`;
+}
+
+function nextReworkArtifactPath(targetArtifact: ArtifactManifest, artifactId: string, version: number) {
+  const ext = path.extname(targetArtifact.path);
+  if (ext) {
+    const withoutExt = targetArtifact.path.slice(0, -ext.length);
+    if (/_v\d+$/.test(withoutExt)) return `${withoutExt.replace(/_v\d+$/, `_v${version}`)}${ext}`;
+    return `${withoutExt}_rework_v${version}${ext}`;
+  }
+  return `artifacts/${artifactId}.txt`;
+}
+
+async function writeReworkArtifactFile(input: {
+  targetArtifact: ArtifactManifest;
+  nextArtifact: ArtifactManifest;
+  content?: string;
+  comment: string;
+}) {
+  const mode = previewMode(input.nextArtifact.path, input.nextArtifact.type);
+  if (mode === "binary") return;
+  const targetPath = resolveWorkspacePath(input.nextArtifact.path);
+  if (!targetPath) throw new Error(`Artifact path escapes workspace: ${input.nextArtifact.path}`);
+  const previousPreview = await readArtifactPreview(input.targetArtifact);
+  const previousContent = previousPreview.available && "content" in previousPreview ? String(previousPreview.content ?? "") : "";
+  const content =
+    input.content ??
+    `${previousContent}\n\n---\n\n## 返工版本\n\n- supersedes: ${input.targetArtifact.artifact_id}\n- reason: ${input.comment || "Gate 驳回后创建返工版本"}\n`;
+  await mkdir(path.dirname(targetPath), { recursive: true });
+  await writeFile(targetPath, content, "utf8");
+}
+
+function addGatePendingAttention(attention: JsonValue, gate: GateInstance) {
+  const items = Array.isArray(attention) ? attention.filter((item) => item && typeof item === "object") : [];
+  const nextItem = {
+    attention_id: `att_${gate.gate_instance_id}`,
+    root_cause_key: `gate:${gate.gate_instance_id}:pending_review`,
+    title: "返工产物待审核",
+    severity: "P0",
+    status: "open",
+    related_objects: [{ type: "GateInstance", id: gate.gate_instance_id }, gate.target],
+    impact: {
+      blocked_nodes: gate.required_before,
+      waiting_agents: [],
+      unaffected_paths: []
+    },
+    safe_actions: ["approve_gate", "reject_gate", "request_changes"]
+  };
+  return [...items.filter((item) => (item as Record<string, unknown>).root_cause_key !== nextItem.root_cause_key), nextItem];
 }
 
 async function publishCanvasDraftAsWorkflow(workflowId: string, draft: CanvasLayout) {
@@ -712,10 +788,148 @@ async function route(req: IncomingMessage, res: ServerResponse) {
         projection: buildGateDecisionProjection(gate, bundle.workflow, bundle.nodes as NodeRun[])
       });
     }
+    if (req.method === "POST" && parts[4] === "rework") {
+      const body = await parseBody(req);
+      const lockName = safeId(gateId);
+      const lockDir = path.join(workspaceDir, "runs", runId, "locks", `${lockName}.rework.lock`);
+      await mkdir(path.dirname(lockDir), { recursive: true });
+      try {
+        await mkdir(lockDir, { recursive: false });
+      } catch {
+        return sendError(res, 409, "operation_in_progress", "GateInstance already has a rework operation in progress.");
+      }
+
+      try {
+        const lockedBundle = await readRunBundle(runId);
+        const runSpec = lockedBundle.run as unknown as RunSpec;
+        const lockedGates = lockedBundle.gates as GateInstance[];
+        const lockedGate = lockedGates.find((item) => item.gate_instance_id === gateId);
+        if (!lockedGate) return sendError(res, 404, "not_found", "Gate not found");
+        const latestDecision = lockedGate.decisions.at(-1);
+        if (lockedGate.status !== "decided" || !latestDecision || !["reject", "request_changes"].includes(latestDecision.decision)) {
+          return sendError(res, 409, "gate_not_reworkable", "Only a rejected or request_changes GateInstance can create a rework attempt.");
+        }
+
+        const lockedArtifacts = lockedBundle.artifacts as ArtifactManifest[];
+        const nodes = lockedBundle.nodes as NodeRun[];
+        const targetArtifact = lockedArtifacts.find((artifact) => artifact.artifact_id === lockedGate.target.id);
+        if (!targetArtifact) return sendError(res, 404, "not_found", "Target ArtifactManifest not found");
+        const producerNode = nodes.find((node) => node.node_run_id === targetArtifact.node_run_id);
+        if (!producerNode) return sendError(res, 404, "not_found", "Producer NodeRun not found");
+
+        const createdAt = new Date().toISOString();
+        const version = nextArtifactVersion(lockedArtifacts, targetArtifact);
+        const artifactId = nextReworkArtifactId(targetArtifact, version);
+        const artifactPath = nextReworkArtifactPath(targetArtifact, artifactId, version);
+        const operationId = `op_rework_${safeId(producerNode.node_run_id)}_${Date.parse(createdAt)}`;
+        const attempt: NodeAttempt = {
+          attempt_id: `attempt_${safeId(operationId)}`,
+          node_run_id: producerNode.node_run_id,
+          operation_id: operationId,
+          attempt_kind: "rework",
+          status: "succeeded",
+          provider_receipt: {
+            provider: producerNode.provider ?? runSpec.resolved_provider_policy.default_provider,
+            adapter_kind: "mock-local",
+            raw_receipt_id: `receipt_${operationId}`
+          },
+          created_at: createdAt
+        };
+        const nextArtifact: ArtifactManifest = {
+          artifact_id: artifactId,
+          run_id: runId,
+          node_run_id: producerNode.node_run_id,
+          type: targetArtifact.type,
+          version,
+          path: artifactPath,
+          hash: `sha256:rework-${safeId(operationId)}`,
+          status: "created",
+          review_status: "pending_review",
+          producer: producerNode.agent_id ?? targetArtifact.producer,
+          created_at: createdAt,
+          supersedes_artifact_id: targetArtifact.artifact_id,
+          rework_of_gate_instance_id: lockedGate.gate_instance_id
+        };
+        const nextGate: GateInstance = {
+          gate_instance_id: `gate_${nextArtifact.artifact_id}`,
+          run_id: runId,
+          gate_spec_id: lockedGate.gate_spec_id,
+          target: { type: "ArtifactManifest", id: nextArtifact.artifact_id },
+          status: "pending_review",
+          required_before: lockedGate.required_before,
+          decisions: []
+        };
+
+        await writeReworkArtifactFile({
+          targetArtifact,
+          nextArtifact,
+          content: typeof body.content === "string" ? body.content : undefined,
+          comment: String(body.comment ?? latestDecision.comment ?? "")
+        });
+
+        targetArtifact.review_status = "rejected";
+        producerNode.status = "reviewing";
+        producerNode.updated_at = createdAt;
+        producerNode.output_artifacts = Array.from(new Set([...producerNode.output_artifacts, nextArtifact.artifact_id]));
+        blockGateRequiredNodes(nodes, lockedGate.required_before, `Gate ${nextGate.gate_instance_id} pending_review，等待返工审核通过`, createdAt);
+
+        const attempts = (await readJsonOptional<NodeAttempt[]>(`runs/${runId}/attempts.json`)) ?? [];
+        const nextArtifacts = [...lockedArtifacts, nextArtifact];
+        const nextGates = [...lockedGates, nextGate];
+        const nextAttention = addGatePendingAttention(lockedBundle.attention, nextGate);
+        runSpec.status = "running";
+
+        await writeJson(`runs/${runId}/run_spec.json`, runSpec);
+        await writeJson(`runs/${runId}/nodes.json`, nodes);
+        await writeJson(`runs/${runId}/attempts.json`, [...attempts, attempt]);
+        await writeJson(`runs/${runId}/artifacts.json`, nextArtifacts);
+        await writeJson(`runs/${runId}/gates.json`, nextGates);
+        await writeJson(`runs/${runId}/attention.json`, nextAttention);
+
+        const events = [
+          {
+            event_id: `evt_${operationId}_rework_attempt`,
+            run_id: runId,
+            type: "rework_attempt_created",
+            subject: { type: "NodeRun", id: producerNode.node_run_id },
+            message: `Rework attempt created from GateInstance ${lockedGate.gate_instance_id}`,
+            created_at: createdAt
+          },
+          {
+            event_id: `evt_${nextArtifact.artifact_id}_created`,
+            run_id: runId,
+            type: "artifact_manifest_created",
+            subject: { type: "ArtifactManifest", id: nextArtifact.artifact_id },
+            message: `ArtifactManifest ${nextArtifact.artifact_id} created as rework version`,
+            created_at: createdAt
+          },
+          {
+            event_id: `evt_${nextGate.gate_instance_id}_pending`,
+            run_id: runId,
+            type: "gate_pending_review",
+            subject: { type: "GateInstance", id: nextGate.gate_instance_id },
+            message: `GateInstance ${nextGate.gate_instance_id} pending review for rework artifact`,
+            created_at: createdAt
+          }
+        ];
+        for (const event of events) await appendEvent(runId, event);
+
+        return sendJson(res, 201, {
+          accepted: true,
+          rework_attempt_id: attempt.attempt_id,
+          artifact: nextArtifact,
+          gate: nextGate,
+          created_events: events.map((event) => event.event_id),
+          next_suggested_actions: ["review_rework_gate"]
+        });
+      } finally {
+        await rm(lockDir, { recursive: true, force: true });
+      }
+    }
     if (req.method === "POST" && parts[4] === "decision") {
       const body = await parseBody(req);
       const decisionValue = body.decision === "reject" || body.decision === "request_changes" ? body.decision : "approve";
-      const lockName = gateId.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const lockName = safeId(gateId);
       const lockDir = path.join(workspaceDir, "runs", runId, "locks", `${lockName}.gate.lock`);
       await mkdir(path.dirname(lockDir), { recursive: true });
       try {

@@ -137,9 +137,11 @@ export function createNodeAttemptFromAdapterResult(result: AdapterResult): NodeA
     attempt_id: `attempt_${normalizeId(result.operation_id)}`,
     node_run_id: result.node_run_id,
     operation_id: result.operation_id,
+    attempt_kind: "execute",
     status: result.status,
     provider_receipt: result.provider_receipt,
-    error: result.error
+    error: result.error,
+    created_at: result.received_at
   };
 }
 
