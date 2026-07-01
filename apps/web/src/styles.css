@@ -99,9 +99,16 @@ progress { width: 100%; height: 8px; accent-color: #1264e8; }
 .dot.warn { background: #f59e0b; }
 .dot.danger { background: #e23b3b; }
 .jsonBlock { overflow: auto; max-height: 420px; background: #0d1729; color: #dce8ff; border-radius: 8px; padding: 14px; font-size: 12px; }
-.eventRow span { color: #718097; width: 210px; font-size: 12px; }
-.eventRow strong { width: 170px; }
-.eventRow em { color: #4b5b73; font-style: normal; }
+.eventRow { display: grid; grid-template-columns: 190px 150px minmax(0, 1fr) 220px; align-items: center; padding: 8px 0; }
+.eventRow span { color: #718097; font-size: 12px; }
+.eventRow strong { width: auto; }
+.eventRow em { color: #4b5b73; font-style: normal; overflow-wrap: anywhere; }
+.eventRow small { color: #718097; overflow-wrap: anywhere; }
+.eventRow.audit { box-shadow: inset 3px 0 0 #7c5cff; padding-left: 10px; background: #fbfaff; }
+.eventRow.gate { box-shadow: inset 3px 0 0 #f59e0b; padding-left: 10px; background: #fffdf7; }
+.eventRow.runner { box-shadow: inset 3px 0 0 #1d64e8; padding-left: 10px; background: #f8fbff; }
+.eventRow.danger { box-shadow: inset 3px 0 0 #e23b3b; padding-left: 10px; background: #fff8f8; }
+.eventRow.ok { box-shadow: inset 3px 0 0 #19a957; padding-left: 10px; background: #f8fffb; }
 
 .attentionGrid { display: grid; grid-template-columns: minmax(360px, .8fr) minmax(0, 1.2fr); gap: 16px; }
 .attentionItem { grid-template-columns: auto 1fr; }
@@ -114,6 +121,7 @@ progress { width: 100%; height: 8px; accent-color: #1264e8; }
 .objectList span { border: 1px solid #dfe7f3; border-radius: 7px; padding: 10px; background: #fbfdff; }
 .safeActions { display: flex; gap: 10px; flex-wrap: wrap; }
 .safeActions button { border: 1px solid #bed2f3; color: #075fe8; background: #f6f9ff; border-radius: 7px; min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.safeActions .dangerAction { border-color: #f5b8b8; color: #bd2727; background: #fff7f7; }
 .nodeContext { display: grid; gap: 12px; }
 .nodeContext h3 { margin: 4px 0 0; font-size: 14px; color: #4c5f7a; }
 .jsonBlock.compact { max-height: 240px; }
@@ -136,6 +144,12 @@ td small { display: block; color: #718097; margin-top: 3px; }
 .previewBlock { margin: 0; min-height: 240px; max-height: 520px; overflow: auto; border: 1px solid #dfe7f3; border-radius: 8px; background: #0d1729; color: #dce8ff; padding: 14px; font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
 .markdownPreview { background: #fbfdff; color: #172033; }
 .previewEmpty { min-height: 240px; border: 1px dashed #cbd6e7; border-radius: 8px; display: grid; place-items: center; align-content: center; gap: 8px; color: #64748b; text-align: center; padding: 22px; }
+.reviewGrid { display: grid; grid-template-columns: minmax(360px, .75fr) minmax(0, 1.25fr); gap: 16px; align-items: start; }
+.gateList { display: grid; gap: 8px; }
+.gateSelector { width: 100%; border: 1px solid #dfe7f3; background: white; border-radius: 8px; padding: 11px; display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; text-align: left; cursor: pointer; }
+.gateSelector.active { border-color: #075fe8; box-shadow: inset 3px 0 0 #075fe8; background: #f7fbff; }
+.gateSelector span, .gateSelector strong, .gateSelector small { display: block; }
+.gateSelector small { color: #718097; margin-top: 3px; }
 .reviewBox { display: grid; gap: 12px; }
 .projectionPanel { border: 1px solid #dfe7f3; border-radius: 8px; padding: 12px; background: #fbfdff; display: grid; gap: 10px; }
 .projectionPanel header { display: flex; justify-content: space-between; align-items: center; }
@@ -145,6 +159,16 @@ td small { display: block; color: #718097; margin-top: 3px; }
 .projectionList div { border: 1px solid #e4ebf5; border-radius: 7px; background: white; padding: 10px; display: grid; gap: 4px; }
 .projectionList span { color: #075fe8; font-weight: 700; }
 .projectionList small { color: #64748b; }
+.reworkPanel { border: 1px solid #d8cffd; border-radius: 8px; padding: 12px; background: #fbfaff; display: grid; gap: 10px; }
+.reworkPanel header { display: flex; align-items: center; justify-content: space-between; }
+.reworkPanel p { margin: 0; color: #64748b; }
+.auditTrail { display: grid; gap: 6px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.auditTrail span { border: 1px solid #e2dafe; border-radius: 6px; padding: 7px; color: #5b3dd8; background: white; font-size: 12px; overflow-wrap: anywhere; }
+.decisionHistory { display: grid; gap: 8px; }
+.decisionHistory h3 { margin: 4px 0 0; font-size: 14px; color: #4c5f7a; }
+.decisionRow { border: 1px solid #e4ebf5; border-radius: 7px; background: white; padding: 10px; display: grid; grid-template-columns: auto 120px minmax(0, 1fr) 190px; gap: 10px; align-items: center; }
+.decisionRow span, .decisionRow small { color: #64748b; overflow-wrap: anywhere; }
+.compactEmpty { min-height: 118px; }
 .canvasToolbar { display: flex; justify-content: space-between; align-items: center; }
 .toolbarActions { display: flex; gap: 10px; align-items: center; }
 .toolbarActions button { border: 1px solid #dbe4f2; background: white; border-radius: 7px; min-height: 40px; padding: 0 14px; display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }

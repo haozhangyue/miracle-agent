@@ -59,11 +59,32 @@ function useApi<T>(path: string, deps: unknown[] = []): ApiState<T> {
 }
 
 function statusClass(status: string) {
-  if (["done", "completed", "approved"].includes(status)) return "ok";
+  if (["done", "completed", "approved", "succeeded"].includes(status)) return "ok";
   if (["running", "reviewing"].includes(status)) return "info";
-  if (["blocked", "failed", "rejected", "missing"].includes(status)) return "danger";
+  if (["blocked", "failed", "rejected", "missing", "reject", "request_changes"].includes(status)) return "danger";
   if (["pending_review", "waiting"].includes(status)) return "warn";
   return "muted";
+}
+
+function latestDecision(gate?: any) {
+  const decisions = gate?.decisions ?? [];
+  return decisions.length > 0 ? decisions[decisions.length - 1] : undefined;
+}
+
+function eventAuditMeta(type: string) {
+  const map: Record<string, { label: string; className: string }> = {
+    rework_attempt_created: { label: "返工 attempt", className: "audit" },
+    artifact_manifest_created: { label: "产物版本创建", className: "audit" },
+    gate_pending_review: { label: "Gate 待审核", className: "gate" },
+    gate_decision_created: { label: "Gate 决策", className: "gate" },
+    runner_operation_dispatched: { label: "Runner 派发", className: "runner" },
+    adapter_result_received: { label: "Adapter 回执", className: "runner" },
+    node_run_committed: { label: "NodeRun 提交", className: "runner" },
+    node_blocked: { label: "节点阻塞", className: "danger" },
+    node_done: { label: "节点完成", className: "ok" },
+    run_created: { label: "Run 创建", className: "muted" }
+  };
+  return map[type] ?? { label: type, className: "muted" };
 }
 
 export function App() {
@@ -116,10 +137,10 @@ export function App() {
         {page === "new" && <NewTaskPage workflowId={workflowId} setWorkflowId={setWorkflowId} go={setPage} />}
         {page === "dryrun" && <DryRunPage workflowId={workflowId} setRunId={setRunId} go={setPage} />}
         {page === "run" && <RunPage runId={runId} selectedNode={selectedNode} setSelectedNode={setSelectedNode} go={setPage} />}
-        {page === "attention" && <AttentionPage selected={selectedAttention} setSelected={setSelectedAttention} go={setPage} />}
+        {page === "attention" && <AttentionPage selected={selectedAttention} setSelected={setSelectedAttention} setSelectedGate={setSelectedGate} go={setPage} />}
         {page === "agents" && <AgentsPage />}
         {page === "artifacts" && <ArtifactsPage selectedArtifact={selectedArtifact} setSelectedArtifact={setSelectedArtifact} />}
-        {page === "review" && <ReviewPage selectedGate={selectedGate} setSelectedGate={setSelectedGate} />}
+        {page === "review" && <ReviewPage runId={runId} selectedGate={selectedGate} setSelectedGate={setSelectedGate} />}
         {page === "canvas" && <CanvasPage workflowId={workflowId} />}
         {page === "sync" && <Placeholder title="Visual / Spec Sync" description="MVPS09 第一轮只保留入口和 spec diff 概念。文件 watcher 和冲突合并在后续实现。" />}
         {page === "evolution" && <Placeholder title="Evolution Board v0" description="MVPS10 第一轮只保留入口和 EvolutionCandidate 类型。进化建议算法在真实运行数据积累后实现。" />}
@@ -394,18 +415,31 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
       </div>
       <Panel title="事件与审计">
         <DataState state={events}>
-          {events.data?.events.map((event: any) => (
-            <div className="eventRow" key={event.event_id}><span>{event.created_at}</span><strong>{event.type}</strong><em>{event.message}</em></div>
-          ))}
+          {events.data?.events.map((event: any) => {
+            const meta = eventAuditMeta(event.type);
+            return (
+              <div className={`eventRow ${meta.className}`} key={event.event_id}>
+                <span>{event.created_at}</span>
+                <strong>{meta.label}</strong>
+                <em>{event.message}</em>
+                <small>{event.subject?.type ?? "-"} · {event.subject?.id ?? "-"}</small>
+              </div>
+            );
+          })}
         </DataState>
       </Panel>
     </section>
   );
 }
 
-function AttentionPage({ selected, setSelected, go }: { selected: string; setSelected: (id: string) => void; go: (page: Page) => void }) {
+function AttentionPage({ selected, setSelected, setSelectedGate, go }: { selected: string; setSelected: (id: string) => void; setSelectedGate: (id: string) => void; go: (page: Page) => void }) {
   const attention = useApi<{ attention: any[] }>("/attention", []);
   const current = attention.data?.attention.find((item) => item.attention_id === selected) ?? attention.data?.attention[0];
+  function openReviewFromAttention() {
+    const gateObject = current?.related_objects.find((object: any) => object.type === "GateInstance");
+    if (gateObject?.id) setSelectedGate(gateObject.id);
+    go("review");
+  }
   return (
     <section className="page">
       <PageTitle eyebrow="Attention Queue" title="根因联动处置" subtitle="一个根因对应一个主 Attention Item，关联对象展开显示。" />
@@ -427,7 +461,13 @@ function AttentionPage({ selected, setSelected, go }: { selected: string; setSel
               <h3>{current.title}</h3>
               <p>{current.root_cause_key}</p>
               <div className="objectList">{current.related_objects.map((object: any) => <span key={`${object.type}-${object.id}`}>{object.type} · {object.label ?? object.id}</span>)}</div>
-              <div className="safeActions">{current.safe_actions.map((action: string) => <button key={action} onClick={() => action.includes("gate") && go("review")}>{action}</button>)}</div>
+              <div className="safeActions">
+                {current.safe_actions.map((action: string) => (
+                  <button key={action} onClick={() => action.includes("gate") && openReviewFromAttention()} disabled={!action.includes("gate")}>
+                    {action}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </Panel>
@@ -523,30 +563,113 @@ function ArtifactPreviewBox({ detail }: { detail: any }) {
   return <pre className={preview.mode === "markdown" ? "previewBlock markdownPreview" : "previewBlock"}>{preview.content}</pre>;
 }
 
-function ReviewPage({ selectedGate }: { selectedGate: string; setSelectedGate: (id: string) => void }) {
+function ReviewPage({ runId, selectedGate, setSelectedGate }: { runId: string; selectedGate: string; setSelectedGate: (id: string) => void }) {
   const [refresh, setRefresh] = useState(0);
   const [decisionResult, setDecisionResult] = useState<any>();
-  const gate = useApi<any>(`/gates/${selectedGate}?run_id=run-demo-001`, [selectedGate, refresh]);
-  async function decide(decision: "approve" | "reject") {
-    const result = await api<any>(`/gates/${selectedGate}/decision?run_id=run-demo-001`, { method: "POST", body: JSON.stringify({ decision, actor: "local_user", comment: decision === "approve" ? "审核通过" : "需要返工" }) });
+  const [reworkResult, setReworkResult] = useState<any>();
+  const [actionState, setActionState] = useState("");
+  const run = useApi<any>(`/runs/${runId}`, [runId, refresh]);
+  const gate = useApi<any>(`/gates/${selectedGate}?run_id=${runId}`, [runId, selectedGate, refresh]);
+  const currentGate = gate.data?.gate;
+  const currentDecision = latestDecision(currentGate);
+  const canDecide = currentGate?.status === "pending_review";
+  const canCreateRework = currentGate?.status === "decided" && ["reject", "request_changes"].includes(currentDecision?.decision ?? "");
+
+  function clearGateActionState() {
+    setDecisionResult(undefined);
+    setReworkResult(undefined);
+    setActionState("");
+  }
+
+  function selectGateForReview(gateId: string) {
+    if (gateId === selectedGate) return;
+    clearGateActionState();
+    setSelectedGate(gateId);
+  }
+
+  async function decide(decision: "approve" | "reject" | "request_changes") {
+    setActionState("提交 GateDecision 中");
+    const result = await api<any>(`/gates/${selectedGate}/decision?run_id=${runId}`, {
+      method: "POST",
+      body: JSON.stringify({
+        decision,
+        actor: "local_user",
+        comment: decision === "approve" ? "审核通过" : "需要创建返工版本"
+      })
+    });
     setDecisionResult(result);
+    setReworkResult(undefined);
+    setActionState(`已写入 GateDecision · ${result.gate_decision_id}`);
     setRefresh((value) => value + 1);
   }
+
+  async function createRework() {
+    setActionState("创建返工版本中");
+    const result = await api<any>(`/gates/${selectedGate}/rework?run_id=${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ actor: "local_user", comment: currentDecision?.comment ?? "审核驳回后创建返工版本" })
+    });
+    setReworkResult(result);
+    setDecisionResult(undefined);
+    setSelectedGate(result.gate.gate_instance_id);
+    setActionState(`已创建返工版本 · ${result.artifact.artifact_id}`);
+    setRefresh((value) => value + 1);
+  }
+
   return (
     <section className="page">
-      <PageTitle eyebrow="Gate Review" title="审核抽屉" subtitle="决策写入事件和 GateDecision，不覆盖 Artifact。" />
-      <Panel title="Gate Detail">
-        <DataState state={gate}>
-          <div className="reviewBox">
-            <ClipboardCheck size={24} />
-            <h3>{gate.data?.gate.gate_spec_id}</h3>
-            <Pill value={gate.data?.gate.status} />
-            <pre className="jsonBlock">{JSON.stringify(gate.data?.target_artifact, null, 2)}</pre>
-            <div className="safeActions"><button onClick={() => decide("approve")}><CheckCircle2 size={16} /> 批准</button><button onClick={() => decide("reject")}><XCircle size={16} /> 驳回</button></div>
-            <ProjectionPanel projection={decisionResult?.projection ?? gate.data?.projection} receipt={decisionResult} />
-          </div>
-        </DataState>
-      </Panel>
+      <PageTitle eyebrow="Gate Review" title="审核抽屉" subtitle="GateDecision、返工 attempt 和 TraceEvent 由 Sidecar Orchestrator 单写入。" />
+      <div className="reviewGrid">
+        <Panel title="Gate 列表" count={run.data?.gates?.length}>
+          <DataState state={run}>
+            <div className="gateList">
+              {run.data?.gates.map((item: any) => {
+                const decision = latestDecision(item);
+                return (
+                  <button className={item.gate_instance_id === selectedGate ? "gateSelector active" : "gateSelector"} key={item.gate_instance_id} onClick={() => selectGateForReview(item.gate_instance_id)}>
+                    <ClipboardCheck size={16} />
+                    <span>
+                      <strong>{item.gate_instance_id}</strong>
+                      <small>{item.gate_spec_id} · {decision?.decision ?? "等待决策"}</small>
+                    </span>
+                    <Pill value={item.status} />
+                  </button>
+                );
+              })}
+            </div>
+          </DataState>
+        </Panel>
+        <Panel title="Gate Detail">
+          <DataState state={gate}>
+            <div className="reviewBox">
+              <div className="detailHeader">
+                <ClipboardCheck size={24} />
+                <div>
+                  <strong>{currentGate?.gate_instance_id}</strong>
+                  <span>{currentGate?.gate_spec_id} · target {currentGate?.target?.id}</span>
+                </div>
+                <Pill value={currentGate?.status} />
+              </div>
+              <div className="manifestGrid">
+                <Metric label="最新决策" value={currentDecision?.decision ?? "pending"} />
+                <Metric label="阻塞下游" value={String(currentGate?.required_before?.length ?? 0)} />
+                <Metric label="目标版本" value={`v${gate.data?.target_artifact?.version ?? "-"}`} />
+              </div>
+              <pre className="jsonBlock compact">{JSON.stringify(gate.data?.target_artifact, null, 2)}</pre>
+              <div className="safeActions">
+                <button onClick={() => decide("approve")} disabled={!canDecide}><CheckCircle2 size={16} /> 批准</button>
+                <button className="dangerAction" onClick={() => decide("reject")} disabled={!canDecide}><XCircle size={16} /> 驳回</button>
+                <button className="dangerAction" onClick={() => decide("request_changes")} disabled={!canDecide}><AlertTriangle size={16} /> 要求修改</button>
+                <button onClick={createRework} disabled={!canCreateRework}><GitBranch size={16} /> 创建返工版本</button>
+              </div>
+              {actionState && <div className="receiptLine">{actionState}</div>}
+              <ProjectionPanel projection={decisionResult?.projection ?? gate.data?.projection} receipt={decisionResult} />
+              <ReworkReceipt receipt={reworkResult} />
+              <DecisionHistory decisions={gate.data?.history_decisions ?? []} />
+            </div>
+          </DataState>
+        </Panel>
+      </div>
     </section>
   );
 }
@@ -570,6 +693,47 @@ function ProjectionPanel({ projection, receipt }: { projection?: any; receipt?: 
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ReworkReceipt({ receipt }: { receipt?: any }) {
+  if (!receipt) return null;
+  return (
+    <div className="reworkPanel">
+      <header>
+        <strong>返工创建回执</strong>
+        <Pill value={receipt.accepted ? "accepted" : "failed"} />
+      </header>
+      <div className="manifestGrid">
+        <Metric label="Attempt" value={receipt.rework_attempt_id} />
+        <Metric label="新产物" value={`${receipt.artifact.artifact_id} · v${receipt.artifact.version}`} />
+        <Metric label="新 Gate" value={receipt.gate.gate_instance_id} />
+      </div>
+      <div className="auditTrail">
+        {receipt.created_events?.map((eventId: string) => <span key={eventId}>{eventId}</span>)}
+      </div>
+      <p>旧 Artifact 和旧 GateDecision 保留；新 ArtifactManifest 进入 pending_review，并创建新的 GateInstance 等待审核。</p>
+    </div>
+  );
+}
+
+function DecisionHistory({ decisions }: { decisions: any[] }) {
+  return (
+    <div className="decisionHistory">
+      <h3>GateDecision 历史</h3>
+      {decisions.length === 0 ? (
+        <div className="previewEmpty compactEmpty"><ClipboardCheck size={20} /><strong>等待人工审核</strong><span>批准、驳回或要求修改后会写入 GateDecision。</span></div>
+      ) : (
+        decisions.map((decision) => (
+          <div className="decisionRow" key={decision.decision_id}>
+            <Pill value={decision.decision} />
+            <strong>{decision.actor}</strong>
+            <span>{decision.comment ?? "-"}</span>
+            <small>{decision.created_at}</small>
+          </div>
+        ))
+      )}
     </div>
   );
 }

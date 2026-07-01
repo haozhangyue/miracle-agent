@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.5.1` |
 | 版本名称 | P4 MVP 第五轮执行能力补齐 |
-| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型，支持返工 attempt、新 Artifact version、新 GateInstance 和下游恢复规则；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型和 D4 Gate 返工 UI 与事件审计；当前主线进入 D5 最小 scheduler 设计；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -169,6 +169,13 @@
   且 `upstream_artifacts` 指向新的返工产物版本。
 - 新增 `28_P4第五轮_D3_Gate返工模型交付说明.md`，记录接口、状态写入规则、测试覆盖、
   当前边界和 D4/D5/D7/D8/D9 并行建议。
+- P4 第五轮 D4 新增 Gate 返工 UI：Attention 可按关联 Gate 进入审核页，审核页支持
+  Gate 列表切换、approve/reject/request_changes 决策、reject 后创建返工版本和返工 receipt。
+- Run 工作区事件与审计新增语义高亮，明确展示 `rework_attempt_created`、
+  `artifact_manifest_created`、`gate_pending_review` 和 `gate_decision_created` 等事件的
+  subject 对象，便于反查 NodeRun、ArtifactManifest 和 GateInstance。
+- 新增 `29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md`，记录 D4 的页面入口、审计
+  表达、当前边界和 D5 scheduler 主线建议。
 
 本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 
