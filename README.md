@@ -9,7 +9,8 @@ P0/P1.5 和四轮架构评审已经完成；P2 产品信息架构、Web 工作�
 Run 冻结对象、审核真相、AdapterResult、EdgeSpec join_policy、启动 Run API 和
 Gate Detail API 的一致性修订。P4 第一轮已落地可运行 MVP 主链路，第二轮已补充
 React Flow DAG、Artifact Detail 预览、Gate 决策投影和 Infinite Canvas 草稿态，第三轮已补充
-Sidecar API 集成测试、Runner/Adapter 最小协议和 Mock Runner 单节点执行闭环。
+Sidecar API 集成测试、Runner/Adapter 最小协议和 Mock Runner 单节点执行闭环，第四轮已补充
+Gate 决策真实推进、Run 页面执行 UI、Canvas 发布 Workflow draft 和 Adapter 插件壳。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -76,6 +77,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [24_P4_MVP可运行主链路交付说明.md](24_P4_MVP可运行主链路交付说明.md) | P4 第一轮 MVP 工程、启动方式、验证结果和后续建议 |
 | `CURRENT` | [25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md](25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md) | P4 第二轮 DAG、Artifact、Gate projection 和 Canvas draft 交付说明 |
 | `CURRENT` | [26_P4第三轮_集成测试与Runner协议交付说明.md](26_P4第三轮_集成测试与Runner协议交付说明.md) | P4 第三轮 Sidecar 集成测试、Runner 协议和 Mock Runner 执行闭环 |
+| `CURRENT` | [27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md](27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md) | P4 第四轮 Gate 推进、Canvas 发布、执行 UI 和 Adapter 壳 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明

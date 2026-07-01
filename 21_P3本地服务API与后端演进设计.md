@@ -528,9 +528,22 @@ Sidecar 必须执行：
   "accepted": true,
   "gate_decision_id": "gd_001",
   "created_events": ["evt_gate_rejected"],
+  "projection": {
+    "projected_artifact_review_status": "rejected",
+    "mutates_artifact": true
+  },
   "next_suggested_actions": ["create_rework_attempt"]
 }
 ```
+
+提交语义：
+
+- `approve` 会将目标 ArtifactManifest 的 `review_status` 更新为 `approved`，并按
+  Edge selector 判断是否推进下游 NodeRun。
+- `reject/request_changes` 会将目标 ArtifactManifest 的 `review_status` 更新为
+  `rejected`，并阻塞 Gate `required_before` 中尚未完成的下游 NodeRun。
+- Gate 决策不覆盖产物文件内容，不覆盖旧 Artifact version；返工必须通过新 Attempt 和
+  新 Artifact version 表达。
 
 ## 6. 本地文件边界
 

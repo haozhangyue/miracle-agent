@@ -8,8 +8,8 @@
 | 项目 | 当前值 |
 |---|---|
 | 当前大版本 | `v0.5.1` |
-| 版本名称 | P4 MVP 第三轮测试与Runner协议 |
-| 当前阶段 | P4 第三轮已落地 Sidecar 集成测试、Runner/Adapter 最小协议和 Mock Runner 执行闭环 |
+| 版本名称 | P4 MVP 第四轮Gate推进与执行UI |
+| 当前阶段 | P4 第四轮已落地 Gate 决策真实推进、Run 页面执行 UI、Canvas 发布 Workflow draft 和 Adapter 插件壳 |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -140,6 +140,17 @@
   推进下游或并发请求重复提交运行事实。
 - 新增 `26_P4第三轮_集成测试与Runner协议交付说明.md`，记录本轮接口、测试覆盖、
   当前边界和 P4 第四轮建议。
+- P4 第四轮新增 Gate 决策真实推进：审核通过会更新目标 ArtifactManifest
+  `review_status=approved`，生产节点从 `reviewing` 进入 `done`，并按 Edge selector
+  推进下游；驳回会将目标产物标记为 `rejected` 并阻塞声明的下游节点。
+- Run 工作区新增 NodeAttempt 展示和“执行当前节点”按钮，对接
+  `POST /runs/:runId/nodes/:nodeRunId/execute`。
+- Infinite Canvas 草稿新增发布能力，可生成新的 draft WorkflowSpec，并在写入前执行
+  validate；stable WorkflowSpec 不被原地覆盖。
+- 新增 Adapter 插件壳和 `/api/v0/adapters`，为 mock-local、Codex、Hermes、OpenClaw
+  和官方 API adapter 预留扩展入口。
+- 新增 `27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md`，记录本轮接口、状态
+  写入规则、测试覆盖、当前边界和 P4 第五轮建议。
 
 本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 

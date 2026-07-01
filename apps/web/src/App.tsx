@@ -265,10 +265,12 @@ function DryRunPage({ workflowId, setRunId, go }: { workflowId: string; setRunId
 }
 
 function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; selectedNode: string; setSelectedNode: (id: string) => void; go: (page: Page) => void }) {
-  const run = useApi<any>(`/runs/${runId}`, [runId]);
-  const dag = useApi<any>(`/runs/${runId}/dag`, [runId]);
-  const events = useApi<any>(`/runs/${runId}/events`, [runId]);
-  const node = selectedNode ? useApi<any>(`/runs/${runId}/nodes/${selectedNode}`, [runId, selectedNode]) : { loading: false } as ApiState<any>;
+  const [refresh, setRefresh] = useState(0);
+  const [executeState, setExecuteState] = useState<string>("");
+  const run = useApi<any>(`/runs/${runId}`, [runId, refresh]);
+  const dag = useApi<any>(`/runs/${runId}/dag`, [runId, refresh]);
+  const events = useApi<any>(`/runs/${runId}/events`, [runId, refresh]);
+  const node = selectedNode ? useApi<any>(`/runs/${runId}/nodes/${selectedNode}`, [runId, selectedNode, refresh]) : { loading: false } as ApiState<any>;
   const stages = useMemo(() => {
     const workflow = run.data?.workflow;
     if (!workflow) return [];
@@ -304,6 +306,25 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
       labelStyle: { fill: item.required ? "#1d64e8" : "#9a5b00", fontWeight: 700 }
     }));
   }, [dag.data]);
+  useEffect(() => {
+    const firstNodeRunId = dag.data?.dag.nodes[0]?.node_run_id;
+    const selectedExists = dag.data?.dag.nodes.some((item: any) => item.node_run_id === selectedNode);
+    if (firstNodeRunId && !selectedExists) setSelectedNode(firstNodeRunId);
+  }, [dag.data, selectedNode, setSelectedNode]);
+
+  async function executeSelectedNode() {
+    if (!selectedNode) return;
+    setExecuteState("执行中");
+    try {
+      const result = await api<any>(`/runs/${runId}/nodes/${selectedNode}/execute`, { method: "POST", body: JSON.stringify({}) });
+      setExecuteState(`已提交 · ${result.adapter_result.status}`);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setExecuteState(error instanceof Error ? error.message : "执行失败");
+    }
+  }
+  const selectedStatus = String(node.data?.node?.status ?? "");
+  const executable = ["queued", "running"].includes(selectedStatus);
 
   return (
     <section className="page">
@@ -337,7 +358,37 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
         </Panel>
         <Panel title="所选节点上下文">
           <DataState state={node}>
-            <pre className="jsonBlock">{JSON.stringify(node.data?.node, null, 2)}</pre>
+            <div className="nodeContext">
+              <div className="detailHeader">
+                <Workflow size={22} />
+                <div>
+                  <strong>{node.data?.node?.node_id ?? selectedNode}</strong>
+                  <span>{node.data?.node?.node_run_id}</span>
+                </div>
+                <Pill value={selectedStatus} />
+              </div>
+              <div className="safeActions">
+                <button onClick={executeSelectedNode} disabled={!executable}><Play size={16} /> 执行当前节点</button>
+                <button onClick={() => setRefresh((value) => value + 1)}>刷新</button>
+              </div>
+              {executeState && <div className="receiptLine">{executeState}</div>}
+              <h3>NodeRun</h3>
+              <pre className="jsonBlock compact">{JSON.stringify(node.data?.node, null, 2)}</pre>
+              <h3>NodeAttempt</h3>
+              {(node.data?.attempts ?? []).length === 0 ? (
+                <div className="previewEmpty"><Archive size={24} /><strong>暂无 Attempt</strong><span>执行当前节点后会显示 AdapterResult 对账记录。</span></div>
+              ) : (
+                <div className="attemptList">
+                  {node.data.attempts.map((attempt: any) => (
+                    <div key={attempt.attempt_id}>
+                      <strong>{attempt.attempt_id}</strong>
+                      <Pill value={attempt.status} />
+                      <small>{attempt.operation_id}</small>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </DataState>
         </Panel>
       </div>
@@ -527,6 +578,7 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
   const draftState = useApi<any>(`/workflows/${workflowId}/canvas-draft`, [workflowId]);
   const [objects, setObjects] = useState<any[]>([]);
   const [saveState, setSaveState] = useState<string>("未保存");
+  const [publishState, setPublishState] = useState<any>();
 
   useEffect(() => {
     if (draftState.data?.draft.objects) {
@@ -549,12 +601,26 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
     setSaveState(`已保存 · ${new Date(result.draft.updated_at).toLocaleTimeString()}`);
   }
 
+  async function publishDraft() {
+    setPublishState({ status: "发布中" });
+    try {
+      await saveDraft();
+      const result = await api<any>(`/workflows/${workflowId}/canvas-draft/publish`, { method: "POST", body: JSON.stringify({}) });
+      setPublishState(result);
+    } catch (error) {
+      setPublishState({ status: "失败", error: error instanceof Error ? error.message : "发布失败" });
+    }
+  }
+
   return (
     <section className="page">
       <PageTitle eyebrow="Infinite Canvas Draft" title="无限画布草稿态" subtitle="草稿只保存 layout/spec diff，不改变 WorkflowSpec 执行依赖。" />
       <div className="canvasToolbar">
         <Pill value={saveState} />
-        <button className="primary" onClick={saveDraft}><Save size={16} /> 保存草稿</button>
+        <div className="toolbarActions">
+          <button onClick={saveDraft}><Save size={16} /> 保存草稿</button>
+          <button className="primary" onClick={publishDraft}><GitBranch size={16} /> 发布 Workflow draft</button>
+        </div>
       </div>
       <Panel title="Canvas Draft Board">
         <DataState state={draftState}>
@@ -589,6 +655,12 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
             workflow_id: workflowId,
             operations: objects.map((object) => ({ op: "replace", path: `/layouts/canvas/objects/${object.id}`, value: { x: object.x, y: object.y, zone_id: object.zone_id } }))
           }, null, 2)}</pre>
+          {publishState && (
+            <div className="publishReceipt">
+              <strong>Publish Receipt</strong>
+              <pre className="jsonBlock compact">{JSON.stringify(publishState, null, 2)}</pre>
+            </div>
+          )}
         </DataState>
       </Panel>
     </section>

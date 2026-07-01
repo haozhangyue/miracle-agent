@@ -2,6 +2,7 @@ import {
   buildCanvasDraftFromWorkflow,
   buildDagProjection,
   buildGateDecisionProjection,
+  adapterPluginShells,
   createAdapterInvocation,
   createArtifactManifestsFromAdapterResult,
   createDryRunPlan,
@@ -141,7 +142,7 @@ function previewMode(filePath: string, artifactType: string): "markdown" | "json
   return "binary";
 }
 
-async function readArtifactPreview(artifact: Record<string, unknown>) {
+async function readArtifactPreview(artifact: ArtifactManifest) {
   const artifactPath = String(artifact.path ?? "");
   const type = String(artifact.type ?? "");
   const mode = previewMode(artifactPath, type);
@@ -231,6 +232,64 @@ function advanceDownstreamNodes(workflow: WorkflowSpec, nodes: NodeRun[], artifa
   }
 }
 
+function blockGateRequiredNodes(nodes: NodeRun[], requiredBefore: string[], reason: string, updatedAt: string) {
+  for (const node of nodes) {
+    if (!requiredBefore.includes(node.node_id)) continue;
+    if (["done", "running"].includes(node.status)) continue;
+    node.status = "blocked";
+    node.blocked_reason = reason;
+    node.updated_at = updatedAt;
+  }
+}
+
+function refreshAttentionAfterGateDecision(attention: JsonValue, gateId: string, decision: GateDecision["decision"]) {
+  if (!Array.isArray(attention)) return [];
+  return attention.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const entry = item as Record<string, unknown>;
+    if (entry.root_cause_key !== `gate:${gateId}:pending_review`) return item;
+    return {
+      ...entry,
+      status: decision === "approve" ? "resolved" : "acknowledged"
+    };
+  });
+}
+
+async function publishCanvasDraftAsWorkflow(workflowId: string, draft: CanvasLayout) {
+  const workflow = await readWorkflow(workflowId);
+  const nodeIds = new Set(workflow.nodes.map((node) => node.id));
+  const zoneObjects = draft.objects.filter((object) => object.type === "zone");
+  const nodeObjects = draft.objects.filter((object) => object.type === "node" && object.ref_id && nodeIds.has(object.ref_id));
+  const zones = zoneObjects.map((zone) => ({
+    id: zone.ref_id ?? zone.id.replace(/^zone_/, ""),
+    name: zone.title ?? zone.ref_id ?? zone.id,
+    node_ids: nodeObjects.filter((object) => object.zone_id === (zone.ref_id ?? zone.id.replace(/^zone_/, ""))).map((object) => String(object.ref_id))
+  }));
+  const draftId = `${workflow.id}-canvas-draft-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${Math.random().toString(36).slice(2, 6)}`;
+  const nextWorkflow: WorkflowSpec = {
+    ...workflow,
+    id: draftId,
+    name: `${workflow.name} · Canvas Draft`,
+    registry_meta: {
+      ...workflow.registry_meta,
+      status: "draft"
+    },
+    layouts: {
+      ...workflow.layouts,
+      canvas: { zones }
+    }
+  };
+  const validation = validateWorkflowSpec(nextWorkflow);
+  if (!validation.valid) return { accepted: false, validation };
+  await writeJson(`workflows/${draftId}.json`, nextWorkflow);
+  return {
+    accepted: true,
+    workflow_id: draftId,
+    workflow_path: `workflows/${draftId}.json`,
+    validation
+  };
+}
+
 function getId(parts: string[], index: number) {
   return decodeURIComponent(parts[index] ?? "");
 }
@@ -256,6 +315,10 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return sendJson(res, 200, { templates: await readJson("registry/templates.json") });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/v0/adapters") {
+    return sendJson(res, 200, { adapters: adapterPluginShells });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/v0/workflows") {
     const workflows = await listJsonFiles<WorkflowSpec>("workflows");
     return sendJson(res, 200, {
@@ -271,6 +334,11 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     if (req.method === "POST" && parts[4] === "dry-run") return sendJson(res, 200, createDryRunPlan(workflow, []));
     if (parts[4] === "canvas-draft") {
       const draftPath = `drafts/canvas-${workflowId}.json`;
+      if (req.method === "POST" && parts[5] === "publish") {
+        const draft = (await readJsonOptional<CanvasLayout>(draftPath)) ?? buildCanvasDraftFromWorkflow(workflow);
+        const result = await publishCanvasDraftAsWorkflow(workflowId, draft);
+        return sendJson(res, result.accepted ? 201 : 422, result);
+      }
       if (req.method === "GET") {
         const draft = (await readJsonOptional<CanvasLayout>(draftPath)) ?? buildCanvasDraftFromWorkflow(workflow);
         return sendJson(res, 200, {
@@ -499,7 +567,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
   if (parts[0] === "api" && parts[1] === "v0" && parts[2] === "artifacts" && parts[3] && req.method === "GET") {
     const runId = url.searchParams.get("run_id") ?? "run-demo-001";
-    const artifacts = await readJson<Array<Record<string, unknown>>>(`runs/${runId}/artifacts.json`);
+    const artifacts = await readJson<ArtifactManifest[]>(`runs/${runId}/artifacts.json`);
     const artifact = artifacts.find((item) => item.artifact_id === getId(parts, 3));
     if (!artifact) return sendError(res, 404, "not_found", "Artifact not found");
     return sendJson(res, 200, { artifact, preview: await readArtifactPreview(artifact) });
@@ -509,7 +577,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const gateId = getId(parts, 3);
     const runId = url.searchParams.get("run_id") ?? "run-demo-001";
     const gates = await readJson<GateInstance[]>(`runs/${runId}/gates.json`);
-    const artifacts = await readJson<Array<Record<string, unknown>>>(`runs/${runId}/artifacts.json`);
+    const artifacts = await readJson<ArtifactManifest[]>(`runs/${runId}/artifacts.json`);
     const gate = gates.find((item) => item.gate_instance_id === gateId);
     if (!gate) return sendError(res, 404, "not_found", "Gate not found");
     if (req.method === "GET") {
@@ -522,38 +590,77 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       });
     }
     if (req.method === "POST" && parts[4] === "decision") {
-      if (gate.status !== "pending_review") {
-        return sendError(res, 409, "gate_already_decided", "GateInstance is already decided. Create a new review cycle before adding another decision.");
-      }
       const body = await parseBody(req);
       const decisionValue = body.decision === "reject" || body.decision === "request_changes" ? body.decision : "approve";
-      const decision: GateDecision = {
-        decision_id: `gd_${Date.now()}`,
-        actor: String(body.actor ?? "local_user"),
-        decision: decisionValue,
-        comment: String(body.comment ?? ""),
-        created_at: new Date().toISOString()
-      };
-      gate.decisions.push(decision);
-      gate.status = "decided";
-      await writeJson(`runs/${runId}/gates.json`, gates);
-      const event = {
-        event_id: `evt_gate_${decision.decision_id}`,
-        run_id: runId,
-        type: "gate_decision_created",
-        subject: { type: "GateInstance", id: gate.gate_instance_id },
-        message: `Gate decision ${decision.decision} by ${decision.actor}`,
-        created_at: decision.created_at
-      };
-      await appendEvent(runId, event);
-      const bundle = await readRunBundle(runId);
-      return sendJson(res, 200, {
-        accepted: true,
-        gate_decision_id: decision.decision_id,
-        created_events: [event.event_id],
-        projection: buildGateDecisionProjection(gate, bundle.workflow, bundle.nodes as NodeRun[], decision.decision),
-        next_suggested_actions: decision.decision === "approve" ? ["continue_downstream"] : ["create_rework_attempt"]
-      });
+      const lockName = gateId.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const lockDir = path.join(workspaceDir, "runs", runId, "locks", `${lockName}.gate.lock`);
+      await mkdir(path.dirname(lockDir), { recursive: true });
+      try {
+        await mkdir(lockDir, { recursive: false });
+      } catch {
+        return sendError(res, 409, "operation_in_progress", "GateInstance already has a decision operation in progress.");
+      }
+
+      try {
+        const lockedBundle = await readRunBundle(runId);
+        const lockedGates = lockedBundle.gates as GateInstance[];
+        const lockedGate = lockedGates.find((item) => item.gate_instance_id === gateId);
+        if (!lockedGate) return sendError(res, 404, "not_found", "Gate not found");
+        if (lockedGate.status !== "pending_review") {
+          return sendError(res, 409, "gate_already_decided", "GateInstance is already decided. Create a new review cycle before adding another decision.");
+        }
+
+        const decision: GateDecision = {
+          decision_id: `gd_${Date.now()}`,
+          actor: String(body.actor ?? "local_user"),
+          decision: decisionValue,
+          comment: String(body.comment ?? ""),
+          created_at: new Date().toISOString()
+        };
+        lockedGate.decisions.push(decision);
+        lockedGate.status = "decided";
+
+        const lockedArtifacts = lockedBundle.artifacts as ArtifactManifest[];
+        const nodes = lockedBundle.nodes as NodeRun[];
+        const targetArtifact = lockedArtifacts.find((artifact) => artifact.artifact_id === lockedGate.target.id);
+        const producerNode = targetArtifact ? nodes.find((node) => node.node_run_id === targetArtifact.node_run_id) : undefined;
+        if (targetArtifact) {
+          targetArtifact.review_status = decision.decision === "approve" ? "approved" : "rejected";
+        }
+        if (decision.decision === "approve" && producerNode) {
+          producerNode.status = "done";
+          producerNode.updated_at = decision.created_at;
+          advanceDownstreamNodes(lockedBundle.workflow, nodes, lockedArtifacts, producerNode.node_id, decision.created_at);
+        }
+        if (decision.decision !== "approve") {
+          blockGateRequiredNodes(nodes, lockedGate.required_before, `Gate ${lockedGate.gate_instance_id} ${decision.decision}，等待返工产物`, decision.created_at);
+        }
+
+        const nextAttention = refreshAttentionAfterGateDecision(lockedBundle.attention, lockedGate.gate_instance_id, decision.decision);
+        await writeJson(`runs/${runId}/gates.json`, lockedGates);
+        await writeJson(`runs/${runId}/artifacts.json`, lockedArtifacts);
+        await writeJson(`runs/${runId}/nodes.json`, nodes);
+        await writeJson(`runs/${runId}/attention.json`, nextAttention);
+        const event = {
+          event_id: `evt_gate_${decision.decision_id}`,
+          run_id: runId,
+          type: "gate_decision_created",
+          subject: { type: "GateInstance", id: lockedGate.gate_instance_id },
+          message: `Gate decision ${decision.decision} by ${decision.actor}`,
+          created_at: decision.created_at
+        };
+        await appendEvent(runId, event);
+        const bundle = await readRunBundle(runId);
+        return sendJson(res, 200, {
+          accepted: true,
+          gate_decision_id: decision.decision_id,
+          created_events: [event.event_id],
+          projection: buildGateDecisionProjection(lockedGate, bundle.workflow, bundle.nodes as NodeRun[], decision.decision, true),
+          next_suggested_actions: decision.decision === "approve" ? ["continue_downstream"] : ["create_rework_attempt"]
+        });
+      } finally {
+        await rm(lockDir, { recursive: true, force: true });
+      }
     }
   }
 

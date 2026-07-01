@@ -95,7 +95,7 @@ export function buildDagProjection(workflow: WorkflowSpec, nodes: NodeRun[]): Da
   };
 }
 
-export function buildGateDecisionProjection(gate: GateInstance, workflow: WorkflowSpec, nodes: NodeRun[], decision?: GateDecision["decision"]): GateDecisionProjection {
+export function buildGateDecisionProjection(gate: GateInstance, workflow: WorkflowSpec, nodes: NodeRun[], decision?: GateDecision["decision"], mutatesArtifact = false): GateDecisionProjection {
   const approved = decision === "approve" || (!decision && gate.decisions.at(-1)?.decision === "approve");
   const rejected = decision === "reject" || decision === "request_changes" || (!decision && ["reject", "request_changes"].includes(gate.decisions.at(-1)?.decision ?? ""));
   return {
@@ -119,7 +119,7 @@ export function buildGateDecisionProjection(gate: GateInstance, workflow: Workfl
       };
     }),
     event_types: decision ? ["gate_decision_created", "gate_projection_refreshed"] : ["gate_projection_refreshed"],
-    mutates_artifact: false
+    mutates_artifact: mutatesArtifact
   };
 }
 

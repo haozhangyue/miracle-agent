@@ -109,12 +109,12 @@ apps/sidecar/test/api.test.ts
 - Runner 仍是 `mock-local`，不调用真实模型、CLI 或 MCP。
 - 节点执行只支持单节点手动触发，不做后台调度循环。
 - 下游推进只实现最小 required 边规则，不处理复杂分支、取消、重试和并发资源池。
-- Gate 通过后的真实下游推进仍未完整实现；当前只有 Gate decision projection。
-- Canvas 草稿仍不能发布为正式 Workflow draft。
+- Gate 通过后的真实下游推进已在 P4 第四轮实现，本轮文档只保留第三轮交付边界。
+- Canvas 草稿发布 Workflow draft 已在 P4 第四轮实现，本轮文档只保留第三轮交付边界。
 
 ## 6. 后续建议
 
-下一轮建议进入 P4 第四轮：
+下一轮建议已在 P4 第四轮处理：
 
 1. 将 Canvas 草稿发布为 `Workflow draft`，保存前执行 validate。
 2. 实现 Gate 决策后的实际 Orchestrator 推进。

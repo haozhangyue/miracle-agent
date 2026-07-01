@@ -424,5 +424,5 @@ export interface GateDecisionProjection {
     reason: string;
   }>;
   event_types: string[];
-  mutates_artifact: false;
+  mutates_artifact: boolean;
 }

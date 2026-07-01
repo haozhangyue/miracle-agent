@@ -211,7 +211,7 @@ P3D-01 文档与模型基线
 | UI-04 | Run 工作区 | Run header、阶段过滤、节点详情、事件抽屉可由数据驱动。 |
 | UI-05 | Attention | 根因聚合、关联对象、安全动作、生命周期可展示。 |
 | UI-06 | Agent Collaboration | AgentHealth、交接合同、阻塞传播可展示。 |
-| UI-07 | Gate Review | 审核决策保留历史，不覆盖 artifact。 |
+| UI-07 | Gate Review | 审核决策保留历史，只更新 artifact review_status，不覆盖产物内容或版本。 |
 | UI-08 | Artifact Board | 按类型、运行、状态查看产物。 |
 
 ## 6. 扩展性验收场景
