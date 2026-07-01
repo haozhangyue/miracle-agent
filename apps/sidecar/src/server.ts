@@ -34,6 +34,32 @@ const port = Number(process.env.MIRACLE_SIDECAR_PORT ?? 4317);
 const execGit = promisify(execFile);
 
 type JsonValue = Record<string, unknown> | unknown[];
+type SchedulerDecision = {
+  node_run_id: string;
+  node_id: string;
+  status: NodeRun["status"];
+  decision: "execute" | "pause_for_gate" | "skip";
+  reason: string;
+  gate_instance_id?: string;
+};
+type NodeExecutionResult =
+  | {
+      accepted: false;
+      status_code: number;
+      error: { code: string; message: string };
+    }
+  | {
+      accepted: true;
+      invocation: ReturnType<typeof createAdapterInvocation>;
+      adapter_result: ReturnType<typeof executeMockAdapter>;
+      committed: {
+        node_run: NodeRun;
+        attempt: NodeAttempt;
+        artifacts: ArtifactManifest[];
+        gates: GateInstance[];
+        created_events: string[];
+      };
+    };
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
@@ -445,6 +471,162 @@ function addGatePendingAttention(attention: JsonValue, gate: GateInstance) {
   return [...items.filter((item) => (item as Record<string, unknown>).root_cause_key !== nextItem.root_cause_key), nextItem];
 }
 
+async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<NodeExecutionResult> {
+  const lockName = safeId(nodeRunId);
+  const lockDir = path.join(workspaceDir, "runs", runId, "locks", `${lockName}.lock`);
+  await mkdir(path.dirname(lockDir), { recursive: true });
+  try {
+    await mkdir(lockDir, { recursive: false });
+  } catch {
+    return {
+      accepted: false,
+      status_code: 409,
+      error: { code: "operation_in_progress", message: "NodeRun already has an execute operation in progress." }
+    };
+  }
+
+  try {
+    const lockedBundle = await readRunBundle(runId);
+    const runSpec = lockedBundle.run as unknown as RunSpec;
+    const nodeRuns = lockedBundle.nodes as NodeRun[];
+    const targetNodeRun = nodeRuns.find((item) => item.node_run_id === nodeRunId);
+    if (!targetNodeRun) {
+      return {
+        accepted: false,
+        status_code: 404,
+        error: { code: "not_found", message: "NodeRun not found" }
+      };
+    }
+    if (!["queued", "running"].includes(targetNodeRun.status)) {
+      return {
+        accepted: false,
+        status_code: 409,
+        error: { code: "node_not_executable", message: `Only queued or running NodeRun can be executed. Current status: ${targetNodeRun.status}` }
+      };
+    }
+
+    const dispatchedAt = new Date().toISOString();
+    targetNodeRun.status = "running";
+    targetNodeRun.started_at = targetNodeRun.started_at ?? dispatchedAt;
+    targetNodeRun.updated_at = dispatchedAt;
+    await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
+
+    const invocation = createAdapterInvocation({ runSpec, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, createdAt: dispatchedAt });
+    const result = executeMockAdapter({ invocation, workflow: lockedBundle.workflow, receivedAt: new Date().toISOString() });
+    const attempt = createNodeAttemptFromAdapterResult(result);
+    const createdArtifacts = createArtifactManifestsFromAdapterResult({
+      result,
+      runId,
+      nodeRun: targetNodeRun,
+      producer: targetNodeRun.agent_id ?? "mock-runner",
+      createdAt: result.received_at
+    });
+    for (const descriptor of result.artifact_descriptors) await writeArtifactDescriptorFile(descriptor);
+
+    const attempts = (await readJsonOptional<NodeAttempt[]>(`runs/${runId}/attempts.json`)) ?? [];
+    const artifacts = lockedBundle.artifacts as ArtifactManifest[];
+    const gates = lockedBundle.gates as GateInstance[];
+    const createdGates = buildGateInstancesForArtifacts({ workflow: lockedBundle.workflow, runId, artifacts: createdArtifacts, descriptors: result.artifact_descriptors });
+    const committedStatus: NodeRun["status"] = result.status === "succeeded" ? (createdGates.length > 0 ? "reviewing" : "done") : "failed";
+    targetNodeRun.status = committedStatus;
+    targetNodeRun.updated_at = result.received_at;
+    targetNodeRun.output_artifacts = Array.from(new Set([...targetNodeRun.output_artifacts, ...createdArtifacts.map((artifact) => artifact.artifact_id)]));
+
+    const nextAttempts = [...attempts, attempt];
+    const nextArtifacts = [...artifacts, ...createdArtifacts];
+    const nextGates = [...gates, ...createdGates];
+    if (committedStatus === "done") advanceDownstreamNodes(lockedBundle.workflow, nodeRuns, nextArtifacts, targetNodeRun.node_id, result.received_at);
+    runSpec.status = "running";
+
+    await writeJson(`runs/${runId}/run_spec.json`, runSpec);
+    await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
+    await writeJson(`runs/${runId}/attempts.json`, nextAttempts);
+    await writeJson(`runs/${runId}/artifacts.json`, nextArtifacts);
+    await writeJson(`runs/${runId}/gates.json`, nextGates);
+
+    const runnerEvents = createRunnerTraceEvents({ invocation, result, committedNodeStatus: committedStatus });
+    const artifactEvents = createdArtifacts.map((artifact) => ({
+      event_id: `evt_${artifact.artifact_id}_created`,
+      run_id: runId,
+      type: "artifact_manifest_created",
+      subject: { type: "ArtifactManifest", id: artifact.artifact_id },
+      message: `ArtifactManifest ${artifact.artifact_id} created by Orchestrator`,
+      created_at: artifact.created_at
+    }));
+    const gateEvents = createdGates.map((gate) => ({
+      event_id: `evt_${gate.gate_instance_id}_pending`,
+      run_id: runId,
+      type: "gate_pending_review",
+      subject: { type: "GateInstance", id: gate.gate_instance_id },
+      message: `GateInstance ${gate.gate_instance_id} pending review`,
+      created_at: result.received_at
+    }));
+    const events = [...runnerEvents, ...artifactEvents, ...gateEvents];
+    for (const event of events) await appendEvent(runId, event);
+
+    return {
+      accepted: true,
+      invocation,
+      adapter_result: result,
+      committed: {
+        node_run: targetNodeRun,
+        attempt,
+        artifacts: createdArtifacts,
+        gates: createdGates,
+        created_events: events.map((event) => event.event_id)
+      }
+    };
+  } finally {
+    await rm(lockDir, { recursive: true, force: true });
+  }
+}
+
+function buildSchedulerDecisions(workflow: WorkflowSpec, nodes: NodeRun[], gates: GateInstance[]): SchedulerDecision[] {
+  const pendingGateByNode = new Map<string, GateInstance>();
+  for (const gate of gates.filter((item) => item.status === "pending_review")) {
+    for (const nodeId of gate.required_before) pendingGateByNode.set(nodeId, gate);
+  }
+  const nodeOrder = new Map(workflow.nodes.map((node, index) => [node.id, index]));
+  return nodes
+    .filter((node) => ["queued", "blocked", "reviewing", "waiting"].includes(node.status))
+    .sort((a, b) => (nodeOrder.get(a.node_id) ?? 9999) - (nodeOrder.get(b.node_id) ?? 9999))
+    .map((node): SchedulerDecision => {
+      const gate = pendingGateByNode.get(node.node_id);
+      if (gate) {
+        return {
+          node_run_id: node.node_run_id,
+          node_id: node.node_id,
+          status: node.status,
+          decision: "pause_for_gate",
+          reason: `GateInstance ${gate.gate_instance_id} pending_review`,
+          gate_instance_id: gate.gate_instance_id
+        };
+      }
+      if (node.status === "queued") {
+        return {
+          node_run_id: node.node_run_id,
+          node_id: node.node_id,
+          status: node.status,
+          decision: "execute",
+          reason: "queued NodeRun is executable"
+        };
+      }
+      return {
+        node_run_id: node.node_run_id,
+        node_id: node.node_id,
+        status: node.status,
+        decision: "skip",
+        reason: `NodeRun status ${node.status} is not executable by scheduler`
+      };
+    });
+}
+
+function schedulerLimits(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.min(5, Math.floor(parsed)));
+}
+
 async function publishCanvasDraftAsWorkflow(workflowId: string, draft: CanvasLayout) {
   const workflow = await readWorkflow(workflowId);
   const nodeIds = new Set(workflow.nodes.map((node) => node.id));
@@ -619,6 +801,76 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       const bundle = await readRunBundle(runId);
       return sendJson(res, 200, { dag: buildDagProjection(bundle.workflow, bundle.nodes as NodeRun[]) });
     }
+    if (req.method === "POST" && parts[4] === "scheduler" && parts[5] === "tick") {
+      const body = await parseBody(req);
+      const dryRun = body.dry_run === true;
+      const maxNodes = schedulerLimits(body.max_nodes);
+      const bundle = await readRunBundle(runId);
+      const decisions = buildSchedulerDecisions(bundle.workflow, bundle.nodes as NodeRun[], bundle.gates as GateInstance[]);
+      const executable = decisions.filter((decision) => decision.decision === "execute").slice(0, maxNodes);
+      const paused = decisions.filter((decision) => decision.decision === "pause_for_gate");
+      const skipped = decisions.filter((decision) => decision.decision === "skip");
+      const tickId = `sched_${safeId(runId)}_${Date.now()}`;
+
+      if (dryRun) {
+        return sendJson(res, 200, {
+          accepted: true,
+          mode: "dry_run",
+          tick_id: tickId,
+          run_id: runId,
+          max_nodes: maxNodes,
+          decisions,
+          executable,
+          paused,
+          skipped,
+          next_suggested_actions: executable.length > 0 ? ["run_scheduler_tick"] : paused.length > 0 ? ["review_pending_gates"] : ["wait_for_new_queued_nodes"]
+        });
+      }
+
+      const startedAt = new Date().toISOString();
+      const startedEvent = {
+        event_id: `evt_${tickId}_started`,
+        run_id: runId,
+        type: "scheduler_tick_started",
+        subject: { type: "RunSpec", id: runId },
+        message: `Scheduler tick started with ${executable.length} executable NodeRun(s)`,
+        created_at: startedAt
+      };
+      await appendEvent(runId, startedEvent);
+
+      const executed = [];
+      const failed = [];
+      for (const decision of executable) {
+        const result = await executeNodeRunOnce(runId, decision.node_run_id);
+        if (result.accepted) executed.push({ decision, result });
+        else failed.push({ decision, error: result.error });
+      }
+
+      const completedAt = new Date().toISOString();
+      const completedEvent = {
+        event_id: `evt_${tickId}_completed`,
+        run_id: runId,
+        type: "scheduler_tick_completed",
+        subject: { type: "RunSpec", id: runId },
+        message: `Scheduler tick completed: executed ${executed.length}, failed ${failed.length}, paused ${paused.length}`,
+        created_at: completedAt
+      };
+      await appendEvent(runId, completedEvent);
+
+      return sendJson(res, 200, {
+        accepted: true,
+        mode: "commit",
+        tick_id: tickId,
+        run_id: runId,
+        max_nodes: maxNodes,
+        executed,
+        failed,
+        paused,
+        skipped,
+        created_events: [startedEvent.event_id, completedEvent.event_id],
+        next_suggested_actions: failed.length > 0 ? ["inspect_failed_node_runs"] : paused.length > 0 ? ["review_pending_gates"] : ["refresh_run"]
+      });
+    }
     if (parts[4] === "nodes" && parts[5]) {
       const bundle = await readRunBundle(runId);
       const nodeRunId = getId(parts, 5);
@@ -628,98 +880,9 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       const attempts = (await readJsonOptional<NodeAttempt[]>(`runs/${runId}/attempts.json`)) ?? [];
       if (parts.length === 6) return sendJson(res, 200, { node, attempts: attempts.filter((attempt) => attempt.node_run_id === nodeRunId) });
       if (req.method === "POST" && parts[6] === "execute") {
-        const lockName = nodeRunId.replace(/[^a-zA-Z0-9._-]/g, "_");
-        const lockDir = path.join(workspaceDir, "runs", runId, "locks", `${lockName}.lock`);
-        await mkdir(path.dirname(lockDir), { recursive: true });
-        try {
-          await mkdir(lockDir, { recursive: false });
-        } catch {
-          return sendError(res, 409, "operation_in_progress", "NodeRun already has an execute operation in progress.");
-        }
-
-        try {
-          const lockedBundle = await readRunBundle(runId);
-          const runSpec = lockedBundle.run as unknown as RunSpec;
-          const nodeRuns = lockedBundle.nodes as NodeRun[];
-          const targetNodeRun = nodeRuns.find((item) => item.node_run_id === nodeRunId);
-          if (!targetNodeRun) return sendError(res, 404, "not_found", "NodeRun not found");
-          if (!["queued", "running"].includes(targetNodeRun.status)) {
-            return sendError(res, 409, "node_not_executable", `Only queued or running NodeRun can be executed. Current status: ${targetNodeRun.status}`);
-          }
-
-          const dispatchedAt = new Date().toISOString();
-          targetNodeRun.status = "running";
-          targetNodeRun.started_at = targetNodeRun.started_at ?? dispatchedAt;
-          targetNodeRun.updated_at = dispatchedAt;
-          await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
-
-          const invocation = createAdapterInvocation({ runSpec, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, createdAt: dispatchedAt });
-          const result = executeMockAdapter({ invocation, workflow: lockedBundle.workflow, receivedAt: new Date().toISOString() });
-          const attempt = createNodeAttemptFromAdapterResult(result);
-          const createdArtifacts = createArtifactManifestsFromAdapterResult({
-            result,
-            runId,
-            nodeRun: targetNodeRun,
-            producer: targetNodeRun.agent_id ?? "mock-runner",
-            createdAt: result.received_at
-          });
-          for (const descriptor of result.artifact_descriptors) await writeArtifactDescriptorFile(descriptor);
-
-          const artifacts = lockedBundle.artifacts as ArtifactManifest[];
-          const gates = lockedBundle.gates as GateInstance[];
-          const createdGates = buildGateInstancesForArtifacts({ workflow: lockedBundle.workflow, runId, artifacts: createdArtifacts, descriptors: result.artifact_descriptors });
-          const committedStatus: NodeRun["status"] = result.status === "succeeded" ? (createdGates.length > 0 ? "reviewing" : "done") : "failed";
-          targetNodeRun.status = committedStatus;
-          targetNodeRun.updated_at = result.received_at;
-          targetNodeRun.output_artifacts = Array.from(new Set([...targetNodeRun.output_artifacts, ...createdArtifacts.map((artifact) => artifact.artifact_id)]));
-
-          const nextAttempts = [...attempts, attempt];
-          const nextArtifacts = [...artifacts, ...createdArtifacts];
-          const nextGates = [...gates, ...createdGates];
-          if (committedStatus === "done") advanceDownstreamNodes(lockedBundle.workflow, nodeRuns, nextArtifacts, targetNodeRun.node_id, result.received_at);
-          runSpec.status = "running";
-
-          await writeJson(`runs/${runId}/run_spec.json`, runSpec);
-          await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
-          await writeJson(`runs/${runId}/attempts.json`, nextAttempts);
-          await writeJson(`runs/${runId}/artifacts.json`, nextArtifacts);
-          await writeJson(`runs/${runId}/gates.json`, nextGates);
-
-          const runnerEvents = createRunnerTraceEvents({ invocation, result, committedNodeStatus: committedStatus });
-          const artifactEvents = createdArtifacts.map((artifact) => ({
-            event_id: `evt_${artifact.artifact_id}_created`,
-            run_id: runId,
-            type: "artifact_manifest_created",
-            subject: { type: "ArtifactManifest", id: artifact.artifact_id },
-            message: `ArtifactManifest ${artifact.artifact_id} created by Orchestrator`,
-            created_at: artifact.created_at
-          }));
-          const gateEvents = createdGates.map((gate) => ({
-            event_id: `evt_${gate.gate_instance_id}_pending`,
-            run_id: runId,
-            type: "gate_pending_review",
-            subject: { type: "GateInstance", id: gate.gate_instance_id },
-            message: `GateInstance ${gate.gate_instance_id} pending review`,
-            created_at: result.received_at
-          }));
-          const events = [...runnerEvents, ...artifactEvents, ...gateEvents];
-          for (const event of events) await appendEvent(runId, event);
-
-          return sendJson(res, 200, {
-            accepted: true,
-            invocation,
-            adapter_result: result,
-            committed: {
-              node_run: targetNodeRun,
-              attempt,
-              artifacts: createdArtifacts,
-              gates: createdGates,
-              created_events: events.map((event) => event.event_id)
-            }
-          });
-        } finally {
-          await rm(lockDir, { recursive: true, force: true });
-        }
+        const result = await executeNodeRunOnce(runId, nodeRunId);
+        if (!result.accepted) return sendError(res, result.status_code, result.error.code, result.error.message);
+        return sendJson(res, 200, result);
       }
     }
   }

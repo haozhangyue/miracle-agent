@@ -376,6 +376,94 @@ describe("sidecar api", () => {
     expect(duplicate.status).toBe(409);
   });
 
+  it("dry-runs scheduler decisions without writing scheduler events", async () => {
+    const created = await fetchJson<{
+      run_id: string;
+      initial_node_runs: string[];
+    }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+
+    const planned = await fetchJson<{
+      mode: string;
+      executable: Array<{ node_run_id: string; node_id: string; decision: string }>;
+      paused: unknown[];
+    }>(`/api/v0/runs/${created.run_id}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 2 })
+    });
+
+    expect(planned.mode).toBe("dry_run");
+    expect(planned.executable).toEqual([{ node_run_id: created.initial_node_runs[0], node_id: "A_collect", decision: "execute", reason: "queued NodeRun is executable", status: "queued" }]);
+    expect(planned.paused).toEqual([]);
+
+    const events = await fetchJson<{ events: Array<{ type: string }> }>(`/api/v0/runs/${created.run_id}/events`);
+    expect(events.events.some((event) => event.type.startsWith("scheduler_tick_"))).toBe(false);
+  });
+
+  it("runs one scheduler tick and commits the next queued node", async () => {
+    const created = await fetchJson<{
+      run_id: string;
+      initial_node_runs: string[];
+    }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+
+    const tick = await fetchJson<{
+      mode: string;
+      executed: Array<{ decision: { node_id: string }; result: { accepted: boolean; committed: { node_run: { status: string } } } }>;
+      paused: unknown[];
+      created_events: string[];
+    }>(`/api/v0/runs/${created.run_id}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ max_nodes: 1 })
+    });
+
+    expect(tick.mode).toBe("commit");
+    expect(tick.executed.length).toBe(1);
+    expect(tick.executed[0]?.decision.node_id).toBe("A_collect");
+    expect(tick.executed[0]?.result.accepted).toBe(true);
+    expect(tick.executed[0]?.result.committed.node_run.status).toBe("done");
+    expect(tick.paused).toEqual([]);
+    expect(tick.created_events.length).toBe(2);
+
+    const run = await fetchJson<{ nodes: Array<{ node_id: string; status: string }> }>(`/api/v0/runs/${created.run_id}`);
+    expect(run.nodes.find((node) => node.node_id === "B_md_master")?.status).toBe("queued");
+
+    const events = await fetchJson<{ events: Array<{ type: string }> }>(`/api/v0/runs/${created.run_id}/events`);
+    expect(events.events.map((event) => event.type)).toEqual(expect.arrayContaining(["scheduler_tick_started", "scheduler_tick_completed"]));
+  });
+
+  it("pauses scheduler decisions on pending review gates", async () => {
+    const created = await fetchJson<{
+      run_id: string;
+      initial_node_runs: string[];
+    }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+
+    await fetchJson(`/api/v0/runs/${created.run_id}/nodes/${created.initial_node_runs[0]}/execute`, { method: "POST", body: JSON.stringify({}) });
+    const afterCollect = await fetchJson<{ nodes: Array<{ node_run_id: string; node_id: string }> }>(`/api/v0/runs/${created.run_id}`);
+    const mdNode = afterCollect.nodes.find((node) => node.node_id === "B_md_master");
+    if (!mdNode) throw new Error("Expected B_md_master node");
+
+    await fetchJson(`/api/v0/runs/${created.run_id}/nodes/${mdNode.node_run_id}/execute`, { method: "POST", body: JSON.stringify({}) });
+    const planned = await fetchJson<{
+      executable: unknown[];
+      paused: Array<{ node_id: string; decision: string; gate_instance_id?: string }>;
+    }>(`/api/v0/runs/${created.run_id}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 3 })
+    });
+
+    expect(planned.executable).toEqual([]);
+    expect(planned.paused.some((item) => item.node_id === "C_script" && item.decision === "pause_for_gate" && item.gate_instance_id)).toBe(true);
+    expect(planned.paused.some((item) => item.node_id === "G_distribution" && item.decision === "pause_for_gate" && item.gate_instance_id)).toBe(true);
+  });
+
   it("does not queue downstream optional media nodes when the artifact selector is not qualified", async () => {
     const created = await fetchJson<{
       run_id: string;

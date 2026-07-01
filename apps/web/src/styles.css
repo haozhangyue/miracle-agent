@@ -74,7 +74,7 @@ progress { width: 100%; height: 8px; accent-color: #1264e8; }
 .metric span { display: block; color: #758399; font-size: 12px; }
 .metric strong { font-size: 20px; }
 .riskCard { display: grid; gap: 6px; }
-.runHeader { display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: 12px; align-items: stretch; }
+.runHeader { display: grid; grid-template-columns: repeat(3, 1fr) auto auto; gap: 12px; align-items: stretch; }
 .runHeader button { border: 1px solid #dbe4f2; background: white; border-radius: 8px; padding: 0 16px; }
 .stageTabs { display: flex; gap: 8px; flex-wrap: wrap; }
 .stageTabs span { background: white; border: 1px solid #dfe7f3; border-radius: 99px; padding: 7px 12px; font-size: 13px; color: #50627c; }

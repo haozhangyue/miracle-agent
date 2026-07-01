@@ -13,7 +13,8 @@ Sidecar API 集成测试、Runner/Adapter 最小协议和 Mock Runner 单节点�
 Gate 决策真实推进、Run 页面执行 UI、Canvas 发布 Workflow draft 和 Adapter 插件壳。
 P4 第五轮已开始执行能力补齐，D3 Gate reject 返工模型已落地，支持返工 attempt、
 新 Artifact version、新 GateInstance 和下游恢复规则；D4 Gate 返工 UI 与事件审计已接入
-Web 工作台，当前主线切到 D5 最小 scheduler 设计。
+Web 工作台；D5 最小 scheduler 设计与 tick 接口已完成，当前主线切到 D6 最小 scheduler
+执行闭环。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -83,6 +84,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md](27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md) | P4 第四轮 Gate 推进、Canvas 发布、执行 UI 和 Adapter 壳 |
 | `CURRENT` | [28_P4第五轮_D3_Gate返工模型交付说明.md](28_P4第五轮_D3_Gate返工模型交付说明.md) | P4 第五轮 D3 Gate reject 返工模型、返工产物版本和恢复规则 |
 | `CURRENT` | [29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md](29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md) | P4 第五轮 D4 Gate 返工 UI、返工 receipt 和 TraceEvent 审计 |
+| `CURRENT` | [30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md](30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md) | P4 第五轮 D5 scheduler tick、Gate 人审暂停和 Run 手动调度入口 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明

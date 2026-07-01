@@ -11,6 +11,7 @@
     "27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md",
     "28_P4第五轮_D3_Gate返工模型交付说明.md",
     "29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md",
+    "30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -93,8 +94,8 @@
       "id": "p4-05",
       "label": "P4 第五轮 MVP 执行能力补齐",
       "status": "current",
-      "summary": "D3 Gate reject 返工模型和 D4 Gate 返工 UI 与事件审计已完成；当前焦点切到 D5 scheduler 设计，同时可并行准备 D7 Adapter 目录、D8 Canvas NodeSpec draft 和 D9 Web refresh。",
-      "evidence_paths": ["plans/mvp-task-baseline/README.md", "plans/mvp-task-baseline/roadmap.json", "plans/mvp-task-baseline/roadmap-page.png", "plans/mvp-task-baseline/index.html", "28_P4第五轮_D3_Gate返工模型交付说明.md", "29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md"]
+      "summary": "D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 scheduler tick 已完成；当前焦点切到 D6 scheduler 执行闭环，同时可并行准备 D7 Adapter 目录、D8 Canvas NodeSpec draft 和 D9 Web refresh。",
+      "evidence_paths": ["plans/mvp-task-baseline/README.md", "plans/mvp-task-baseline/roadmap.json", "plans/mvp-task-baseline/roadmap-page.png", "plans/mvp-task-baseline/index.html", "28_P4第五轮_D3_Gate返工模型交付说明.md", "29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md", "30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md"]
     },
     {
       "id": "p4-06",
@@ -164,19 +165,19 @@
       "id": "d5-scheduler-design",
       "day": "D5",
       "title": "最小 scheduler 设计",
-      "status": "current",
+      "status": "completed",
       "serial_group": "scheduler",
       "parallel_group": "execution",
       "depends_on": ["d1-roadmap-data"],
       "can_parallelize": true,
       "recommended_agent": "Agent D",
-      "deliverables": ["queued 节点扫描", "Gate 停在人审", "operation lock 复用"]
+      "deliverables": ["queued 节点扫描", "Gate 停在人审", "operation lock 复用", "POST /api/v0/runs/:runId/scheduler/tick", "30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md"]
     },
     {
       "id": "d6-scheduler-run",
       "day": "D6",
       "title": "最小 scheduler 执行闭环",
-      "status": "planned",
+      "status": "current",
       "serial_group": "scheduler",
       "parallel_group": "execution",
       "depends_on": ["d5-scheduler-design"],

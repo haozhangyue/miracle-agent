@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.5.1` |
 | 版本名称 | P4 MVP 第五轮执行能力补齐 |
-| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型和 D4 Gate 返工 UI 与事件审计；当前主线进入 D5 最小 scheduler 设计；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 最小 scheduler 设计与 tick 接口；当前主线进入 D6 scheduler 执行闭环；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -176,6 +176,16 @@
   subject 对象，便于反查 NodeRun、ArtifactManifest 和 GateInstance。
 - 新增 `29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md`，记录 D4 的页面入口、审计
   表达、当前边界和 D5 scheduler 主线建议。
+- P4 第五轮 D5 新增最小 scheduler tick：`POST /api/v0/runs/:runId/scheduler/tick`
+  支持 dry-run 决策和 commit 执行，扫描 queued NodeRun，遇到 pending_review Gate 的
+  `required_before` 节点时只 pause，不越过人工审核门。
+- Sidecar 抽出 `executeNodeRunOnce`，手动执行和 scheduler tick 共用同一套 Orchestrator
+  写入路径，避免 NodeRun、NodeAttempt、ArtifactManifest、GateInstance 和 TraceEvent
+  出现双写实现。
+- Run 工作区新增“调度一次”按钮，事件审计新增 `scheduler_tick_started` 和
+  `scheduler_tick_completed` 的中文标签。
+- 新增 `30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md`，记录 scheduler
+  tick API、Gate 暂停规则、测试覆盖和 D6 执行闭环建议。
 
 本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 

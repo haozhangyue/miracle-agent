@@ -80,6 +80,8 @@ function eventAuditMeta(type: string) {
     runner_operation_dispatched: { label: "Runner 派发", className: "runner" },
     adapter_result_received: { label: "Adapter 回执", className: "runner" },
     node_run_committed: { label: "NodeRun 提交", className: "runner" },
+    scheduler_tick_started: { label: "Scheduler 启动", className: "runner" },
+    scheduler_tick_completed: { label: "Scheduler 完成", className: "runner" },
     node_blocked: { label: "节点阻塞", className: "danger" },
     node_done: { label: "节点完成", className: "ok" },
     run_created: { label: "Run 创建", className: "muted" }
@@ -288,6 +290,7 @@ function DryRunPage({ workflowId, setRunId, go }: { workflowId: string; setRunId
 function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; selectedNode: string; setSelectedNode: (id: string) => void; go: (page: Page) => void }) {
   const [refresh, setRefresh] = useState(0);
   const [executeState, setExecuteState] = useState<string>("");
+  const [schedulerState, setSchedulerState] = useState<string>("");
   const run = useApi<any>(`/runs/${runId}`, [runId, refresh]);
   const dag = useApi<any>(`/runs/${runId}/dag`, [runId, refresh]);
   const events = useApi<any>(`/runs/${runId}/events`, [runId, refresh]);
@@ -344,6 +347,16 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
       setExecuteState(error instanceof Error ? error.message : "执行失败");
     }
   }
+  async function runSchedulerTick() {
+    setSchedulerState("Scheduler tick 执行中");
+    try {
+      const result = await api<any>(`/runs/${runId}/scheduler/tick`, { method: "POST", body: JSON.stringify({ max_nodes: 1 }) });
+      setSchedulerState(`Scheduler 完成 · executed ${result.executed?.length ?? 0} · paused ${result.paused?.length ?? 0}`);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setSchedulerState(error instanceof Error ? error.message : "Scheduler 执行失败");
+    }
+  }
   const selectedStatus = String(node.data?.node?.status ?? "");
   const executable = ["queued", "running"].includes(selectedStatus);
 
@@ -355,7 +368,9 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
         <Metric label="节点" value={String((run.data?.nodes ?? []).length)} />
         <Metric label="Attention" value={String((run.data?.attention ?? []).length)} />
         <button onClick={() => go("attention")}>查看 Attention</button>
+        <button onClick={runSchedulerTick}>调度一次</button>
       </div>
+      {schedulerState && <div className="receiptLine">{schedulerState}</div>}
       <div className="stageTabs">{stages.map((stage) => <span key={String(stage)}>{String(stage)}</span>)}</div>
       <div className="runGrid">
         <Panel title="执行流程视图">
