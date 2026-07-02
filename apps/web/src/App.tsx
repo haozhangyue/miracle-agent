@@ -324,7 +324,17 @@ function NewTaskPage({ workflowId, setWorkflowId, go }: { workflowId: string; se
 }
 
 function DryRunPage({ workflowId, setRunId, go }: { workflowId: string; setRunId: (id: string) => void; go: (page: Page) => void }) {
-  const plan = useApi<any>(`/workflows/${workflowId}/dry-run`, [workflowId]);
+  const [plan, setPlan] = useState<ApiState<any>>({ loading: true });
+  useEffect(() => {
+    let alive = true;
+    setPlan((current) => current.data ? { ...current, loading: false, refreshing: true, error: undefined } : { loading: true });
+    api<any>(`/workflows/${workflowId}/dry-run`, { method: "POST", body: JSON.stringify({}) })
+      .then((data) => alive && setPlan({ loading: false, refreshing: false, data, updatedAt: Date.now() }))
+      .catch((error: Error) => alive && setPlan((current) => ({ ...current, loading: false, refreshing: false, error: error.message })));
+    return () => {
+      alive = false;
+    };
+  }, [workflowId]);
   async function startRun() {
     const result = await api<any>("/runs", { method: "POST", body: JSON.stringify({ workflow_id: workflowId, execution_policy: "hybrid", role_profile: "operator" }) });
     setRunId(result.run_id);
@@ -928,17 +938,16 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
   }
 
   async function addNodeDraft() {
-    setSaveState("正在保存当前画布");
+    if (objects.length === 0) {
+      setSaveState("生成已取消 · 画布尚未加载");
+      return;
+    }
+    setSaveState("正在生成 NodeSpec draft");
     try {
-      const saved = await saveDraft();
-      if (!saved.ok) {
-        setSaveState(`生成已取消 · ${saved.error}`);
-        return;
-      }
-      setSaveState("正在生成 NodeSpec draft");
       const result = await api<any>(`/workflows/${workflowId}/canvas-draft/nodes`, {
         method: "POST",
         body: JSON.stringify({
+          objects,
           title: nodeTitle,
           capability: nodeCapability,
           zone_id: nodeZone,
@@ -948,7 +957,8 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
       });
       setObjects(result.draft.objects);
       setDraftMeta(result);
-      setSaveState(`已生成草稿节点 · ${result.node_object?.ref_id}`);
+      const nodeId = result.node_object?.node_spec_draft?.node_spec?.id ?? result.node_object?.ref_id;
+      setSaveState(`已生成草稿节点 · ${nodeId}`);
     } catch (error) {
       setSaveState(`生成失败 · ${error instanceof Error ? error.message : "NodeSpec draft invalid"}`);
     }

@@ -282,14 +282,20 @@ describe("sidecar api", () => {
   });
 
   it("creates a Canvas NodeSpec draft with validate-before-save", async () => {
+    const current = await fetchJson<{
+      draft: { objects: Array<{ id: string; x: number; y: number }> };
+    }>("/api/v0/workflows/content-production-v0/canvas-draft");
+    const moved = current.draft.objects.map((object, index) => (index === 0 ? { ...object, x: object.x + 24, y: object.y + 16 } : object));
     const created = await fetchJson<{
       accepted: boolean;
+      draft: { objects: Array<{ id: string; x: number; y: number }> };
       node_object: { ref_id: string; node_spec_draft: { status: string; node_spec: { id: string; capability_requirements: string[] } } };
       validation: { valid: boolean; errors: unknown[] };
       spec_diff_preview: { operations: Array<{ op: string; path: string }> };
     }>("/api/v0/workflows/content-production-v0/canvas-draft/nodes", {
       method: "POST",
       body: JSON.stringify({
+        objects: moved,
         title: "Pencil 原型设计",
         capability: "prototype.pencil",
         zone_id: "content"
@@ -300,6 +306,7 @@ describe("sidecar api", () => {
     expect(created.validation.valid).toBe(true);
     expect(created.node_object.node_spec_draft.status).toBe("ready");
     expect(created.node_object.node_spec_draft.node_spec.capability_requirements).toEqual(["prototype.pencil"]);
+    expect(created.draft.objects.find((object) => object.id === moved[0]?.id)?.x).toBe(moved[0]?.x);
     expect(created.spec_diff_preview.operations.some((operation) => operation.op === "add" && operation.path === "/nodes/-")).toBe(true);
 
     const draft = await fetchJson<{
@@ -398,8 +405,8 @@ describe("sidecar api", () => {
       };
     }>("/api/v0/project/roadmap");
 
-    expect(body.current_node_id).toBe("p4-05");
-    expect(body.phase_timeline.some((phase) => phase.id === "p4-05" && phase.status === "current")).toBe(true);
+    expect(body.current_node_id).toBe("p4-06");
+    expect(body.phase_timeline.some((phase) => phase.id === "p4-06" && phase.status === "current")).toBe(true);
     expect(body.mvp_execution_plan.some((task) => task.day === "D10")).toBe(true);
     expect(body.sync_state.git.available).toBe(true);
     expect(body.sync_state.git.head).toMatch(/[0-9a-f]{40}/);

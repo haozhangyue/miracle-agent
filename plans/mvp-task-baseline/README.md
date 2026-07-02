@@ -22,12 +22,12 @@
 | P4 第四轮 | Gate 决策真实推进、Run 执行 UI、Canvas 发布 Workflow draft、Adapter 插件壳落地 | `27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md` |
 | P4 第五轮 D7 | Adapter manifest、Codex mock-compatible adapter、credential check 落地 | `32_P4第五轮_D7_Adapter插件目录实体化交付说明.md` |
 | P4 第五轮 D8/D9 | Canvas NodeSpec draft、validate-before-save、Run polling 和执行反馈落地 | `34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md` |
-| D10 预备 | MVP 回归验收预备清单已生成，等待执行最终收口 | `33_P4_MVP回归验收预备清单.md` |
+| D10 验收 | MVP 回归验收与版本收口已通过，形成 v0.7.0 本地 MVP 验收基线 | `35_P4_MVP回归验收与版本收口报告.md` |
 
 当前红点：
 
 ```text
-P4 第五轮 MVP 执行能力补齐：D8/D9 已完成，D10 MVP 回归验收与版本收口为当前主线
+P4 MVP 验收与版本发布：D10 已完成，下一主线建议进入 P5 真实工作流接入
 ```
 
 ## 2. 可视化实现方式
@@ -64,7 +64,7 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 | D7 | Adapter 插件目录实体化 | 已完成，可并行 | Agent D | adapter manifests、Codex mock-compatible adapter、credential check |
 | D8 | Canvas 新增节点生成 NodeSpec draft | 已完成，可并行 | Agent B | 新增 node card、NodeSpec draft、validate-before-save |
 | D9 | Web run refresh/polling 与执行反馈 | 已完成，可并行 | Agent B | run polling、执行中状态、错误恢复提示 |
-| D10 | MVP 回归验收与版本收口 | 当前主线，串行收口 | Lead | typecheck/test/build、截图证据、版本记录 |
+| D10 | MVP 回归验收与版本收口 | 已完成，串行收口 | Lead | typecheck/test/build、API smoke、截图证据、版本记录、`35` |
 
 ## 4. 串行与并行边界
 
@@ -96,8 +96,8 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 
 | 阶段 | 目标 | 判断标准 |
 |---|---|---|
-| L1 本地 MVP 完整闭环 | 本地 Web + Local Sidecar 打通 Run、Gate、Artifact、Agent、Canvas、scheduler | 能本地启动、执行、审核、返工、查看审计 |
-| L2 真实工作流接入 | 接入真实“热点工具更新”流程 | 能导入历史 run，并启动一个半自动新 run |
+| L1 本地 MVP 完整闭环 | 本地 Web + Local Sidecar 打通 Run、Gate、Artifact、Agent、Canvas、scheduler | 已通过 D10 回归验收 |
+| L2 真实工作流接入 | 接入真实“热点工具更新”流程 | 下一阶段：能导入历史 run，并启动一个半自动新 run |
 | L3 真实 Adapter 接入 | 至少接入 Codex 或官方 API 的真实执行 | AdapterResult、ArtifactManifest、TraceEvent 可对账 |
 | L4 稳定运行系统 | 队列、重试、失败恢复、资源池、凭证治理 | 长任务可恢复，失败不丢审计 |
 | L5 商业化平台 | 云端控制平面、多租户、权限、计费、团队协作 | 可以支持团队和商业化部署 |
@@ -108,7 +108,7 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 
 1. 通过 Sidecar 独立地址 `/task-baseline` 访问，不进入 `apps/web` 侧边栏。
 2. 总体阶段用绿色、红色、灰色展示完成、当前和计划。
-3. 当前红点指向 `P4 第五轮 MVP 执行能力补齐`。
+3. 当前红点指向 `P4 MVP 验收与版本发布`。
 4. D1-D10 能区分串行和可并行任务。
 5. 能看到最近 Git 提交。
 6. 能看到工作区是否有未提交修改。
@@ -132,6 +132,7 @@ API:  http://127.0.0.1:4317/api/v0/project/roadmap
 
 ```text
 plans/mvp-task-baseline/roadmap-page.png
+assets/reviews/p4-mvp/
 ```
 
 ## 7. 后续维护规则

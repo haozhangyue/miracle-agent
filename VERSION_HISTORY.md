@@ -7,9 +7,9 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 当前大版本 | `v0.5.1` |
-| 版本名称 | P4 MVP 第五轮执行能力补齐 |
-| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续执行闭环、D7 Adapter 插件目录实体化、D8 Canvas NodeSpec draft 和 D9 Web run refresh/polling；当前主线进入 D10 MVP 回归验收与版本收口；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 当前大版本 | `v0.7.0` |
+| 版本名称 | P4 MVP 本地闭环验收基线 |
+| 当前阶段 | D10 MVP 回归验收与版本收口已通过；当前形成本地 Web + Local Sidecar + core + fixture workspace 的可运行、可演示、可回归 MVP 基线；下一主线建议进入 P5 真实工作流接入；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -66,12 +66,14 @@
 | `v0.4.0` | 2026-06-18 | 运行模型与执行协议收口 | 3 | 18 | 0 | M4 运行模型定型 |
 | `v0.5.0` | 2026-06-18 | 架构最终评审基线 | 7 | 13 | 0 | M5 架构评审通过 |
 | `v0.5.1` | 2026-06-18 | 版本演进记录机制 | 1 | 1 | 0 | - |
+| `v0.7.0` | 2026-07-02 | P4 MVP 本地闭环验收基线 | 待统计 | 待统计 | 0 | M6 本地 MVP 验收通过 |
 
-## 4. 未发布变更
+## 4. v0.7.0 发布记录
 
-**目标版本：** `v0.6.0`
+**版本：** `v0.7.0`
+**发布日期：** 2026-07-02
 **相对基线：** `1bd740f`
-**当前文件变化：** 新增 112，更新 12，删除 0；发布前重新统计最终行数。
+**当前文件变化：** 以最终 Git diff 统计为准。
 
 ### 变更摘要
 
@@ -220,8 +222,18 @@
   同步检查的预备资产，不代表 D10 已完成。
 - 新增 `34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md`，记录 D8/D9 的接口、
   UI、写入边界、验收场景和下一步 D10 建议。
+- D10 MVP 回归验收通过：`npm run typecheck`、`npm run test`、`npm run build` 和
+  `git diff --check` 均通过。
+- API smoke 覆盖只读端点、临时 workspace 写入端点、Scheduler、Gate reject/rework
+  和 Canvas draft/publish。
+- 新增 `assets/reviews/p4-mvp/` 截图证据，覆盖首页、新任务、Dry-run、Run、Attention、
+  Gate、Artifact、Agent、Canvas 和 task-baseline。
+- 修复 Web Dry-run 页面请求方法，改为使用 Sidecar 定义的 POST dry-run。
+- 修复 Canvas NodeSpec draft 生成链路，生成请求直接携带当前画布 `objects`，避免空
+  状态覆盖服务端草稿，并补充 Sidecar 测试保护未保存 layout。
+- 新增 `35_P4_MVP回归验收与版本收口报告.md`，作为 D10 通过结论和 `v0.7.0` 收口资产。
 
-本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
+本节已作为 P4 MVP 工程验收后的 `v0.7.0` 版本记录收口。
 
 ## 5. 里程碑
 
@@ -251,6 +263,12 @@ ArtifactManifest、GateInstance、GateDecision、selector 和 Event Journal 的�
 第四轮评审及最终复核完成外部副作用提交协议、operation 生命周期、可选分支 join、
 审核动作与决定枚举、产物审核策略和投影重建规则的收口。当前架构允许进入产品信息
 架构、原型设计和 P3 实现。
+
+### M6 本地 MVP 验收通过
+
+P4 D10 完成回归验收与版本收口，确认本地 Web、Local Sidecar、core、fixtures、Run、
+Gate、Artifact、Attention、Agent、Canvas、Scheduler、Adapter manifest 和 task-baseline
+形成可运行、可演示、可回归的 MVP 基线。
 
 ## 6. 详细版本记录
 

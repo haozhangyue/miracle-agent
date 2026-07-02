@@ -1340,8 +1340,15 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     if (parts[4] === "canvas-draft") {
       const draftPath = `drafts/canvas-${workflowId}.json`;
       if (req.method === "POST" && parts[5] === "nodes") {
-        const currentDraft = (await readJsonOptional<CanvasLayout>(draftPath)) ?? buildCanvasDraftFromWorkflow(workflow);
         const body = await parseBody(req);
+        const currentDraft: CanvasLayout = Array.isArray(body.objects) && body.objects.length > 0
+          ? {
+              workflow_id: workflowId,
+              status: "draft",
+              updated_at: new Date().toISOString(),
+              objects: body.objects.map((object) => object as CanvasLayout["objects"][number])
+            }
+          : (await readJsonOptional<CanvasLayout>(draftPath)) ?? buildCanvasDraftFromWorkflow(workflow);
         const nodeObject = buildCanvasNodeSpecDraft({
           workflow,
           draft: currentDraft,

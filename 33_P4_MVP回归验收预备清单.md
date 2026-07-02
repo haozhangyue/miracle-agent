@@ -1,10 +1,12 @@
 # 33_P4_MVP回归验收预备清单
 
-> 文档状态：D10 MVP 回归验收与版本收口预备清单。
+> 文档状态：D10 MVP 回归验收与版本收口预备清单，已由
+> `35_P4_MVP回归验收与版本收口报告.md` 执行并收口。
 >
 > 适用阶段：D8 Canvas 新增节点生成 NodeSpec draft、D9 Web run refresh/polling 完成后执行最终验收。
 >
-> 写入边界：本文件只作为验收预备资产，不代表 D10 已完成；README、VERSION_HISTORY、roadmap.json 和 task-baseline 由主线程统一收口。
+> 写入边界：本文件保留为验收预备资产；D10 的实际执行结果、截图证据和修复项以
+> `35_P4_MVP回归验收与版本收口报告.md` 为准。
 
 ## 1. 验收目标
 
