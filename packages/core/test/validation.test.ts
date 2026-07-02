@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCanvasDraftFromWorkflow,
+  buildAdapterRegistry,
   buildDagProjection,
   buildGateDecisionProjection,
   createAdapterInvocation,
@@ -8,7 +9,9 @@ import {
   createDryRunPlan,
   createNodeAttemptFromAdapterResult,
   createRunFromWorkflow,
+  defaultAdapterManifests,
   executeMockAdapter,
+  selectAdapterManifest,
   validateWorkflowSpec,
   type GateInstance,
   type NodeRun,
@@ -125,5 +128,21 @@ describe("workflow validation", () => {
     expect(result.artifact_descriptors[0]).toMatchObject({ type: "markdown", review_status: "pending_review" });
     expect(attempt).toMatchObject({ node_run_id: nodeRun.node_run_id, status: "succeeded" });
     expect(artifacts[0]).toMatchObject({ run_id: "run_test_runner", review_status: "pending_review", producer: "content-agent" });
+  });
+
+  it("builds adapter registry with credential status and selects Codex mock-compatible adapter", () => {
+    const registry = buildAdapterRegistry({ manifests: defaultAdapterManifests, availableCredentials: [] });
+    const officialApi = registry.find((adapter) => adapter.id === "official-api-adapter-shell");
+    const selected = selectAdapterManifest({
+      manifests: defaultAdapterManifests,
+      capabilityRequirements: ["content.longform_draft", "fact.safe_writing"],
+      provider: "codex-local",
+      preferredKinds: ["codex"],
+      availableCredentials: []
+    });
+
+    expect(officialApi?.credential_status.some((credential) => credential.key === "PROVIDER_API_KEY" && !credential.configured)).toBe(true);
+    expect(officialApi?.executable).toBe(false);
+    expect(selected).toMatchObject({ id: "codex-mock-compatible-adapter", kind: "codex", execution_mode: "mock-compatible", executable: true });
   });
 });

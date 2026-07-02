@@ -1,0 +1,17 @@
+{
+  "id": "openclaw-adapter-shell",
+  "kind": "openclaw",
+  "display_name": "OpenClaw Adapter Shell",
+  "version": "0.1.0",
+  "status": "draft",
+  "description": "OpenClaw adapter 占位 manifest，仅进入目录和路由评估，不在 MVP 执行。",
+  "execution_mode": "shell",
+  "capabilities": ["agent.collaborate", "tool.use"],
+  "supported_providers": ["openclaw-local"],
+  "default_provider": "openclaw-local",
+  "required_credentials": [],
+  "runtime": {
+    "local_executor": "not-implemented",
+    "can_execute": false
+  }
+}

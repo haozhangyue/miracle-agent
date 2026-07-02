@@ -1,0 +1,17 @@
+{
+  "id": "mock-local-adapter",
+  "kind": "mock-local",
+  "display_name": "Mock Local Adapter",
+  "version": "0.1.0",
+  "status": "stable",
+  "description": "MVP 本地 Mock Runner，用于无外部依赖地验证 Orchestrator、Artifact、Gate 和 Trace 写入闭环。",
+  "execution_mode": "mock-compatible",
+  "capabilities": ["source.collect", "fact.verify", "content.longform_draft", "fact.safe_writing", "script.write", "storyboard.plan", "tts.generate", "subtitle.generate", "video.render", "publish.package", "retro.collect"],
+  "supported_providers": ["mock-provider", "mock-tts", "mock-failure"],
+  "default_provider": "mock-provider",
+  "required_credentials": [],
+  "runtime": {
+    "local_executor": "mock-runner",
+    "can_execute": true
+  }
+}

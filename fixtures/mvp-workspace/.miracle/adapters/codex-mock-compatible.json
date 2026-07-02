@@ -1,0 +1,18 @@
+{
+  "id": "codex-mock-compatible-adapter",
+  "kind": "codex",
+  "display_name": "Codex Mock-Compatible Adapter",
+  "version": "0.1.0",
+  "status": "experimental",
+  "description": "Codex 平台 adapter 的 MVP manifest。当前使用 Mock Runner 兼容执行，保留后续替换为 Codex CLI/官方能力的边界。",
+  "execution_mode": "mock-compatible",
+  "capabilities": ["code.generate", "source.collect", "fact.verify", "content.longform_draft", "fact.safe_writing", "workflow.operate", "script.write", "storyboard.plan", "publish.package", "retro.collect"],
+  "supported_providers": ["codex-local", "mock-provider", "mock-failure"],
+  "default_provider": "codex-local",
+  "required_credentials": [],
+  "runtime": {
+    "local_executor": "mock-runner",
+    "can_execute": true,
+    "entrypoint": "mock://codex-compatible"
+  }
+}

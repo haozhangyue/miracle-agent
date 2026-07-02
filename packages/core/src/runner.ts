@@ -53,6 +53,7 @@ export function createAdapterInvocation(input: {
   nodeRun: NodeRun;
   createdAt?: string;
   adapterKind?: AdapterInvocation["adapter_kind"];
+  adapterId?: string;
 }): AdapterInvocation {
   const nodeSpec = input.workflow.nodes.find((node) => node.id === input.nodeRun.node_id);
   if (!nodeSpec) throw new Error(`NodeSpec not found: ${input.nodeRun.node_id}`);
@@ -63,6 +64,7 @@ export function createAdapterInvocation(input: {
     node_run_id: input.nodeRun.node_run_id,
     node_id: input.nodeRun.node_id,
     adapter_kind: input.adapterKind ?? "mock-local",
+    adapter_id: input.adapterId,
     provider: input.nodeRun.provider ?? input.runSpec.resolved_provider_policy.default_provider,
     capability_requirements: nodeSpec.capability_requirements,
     input_artifacts: input.nodeRun.upstream_artifacts,

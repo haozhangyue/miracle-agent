@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.5.1` |
 | 版本名称 | P4 MVP 第五轮执行能力补齐 |
-| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续执行闭环；当前主线进入 D7 Adapter 插件目录实体化；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续执行闭环、D7 Adapter 插件目录实体化；当前主线进入 D8 Canvas 新增节点生成 NodeSpec draft；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -194,6 +194,19 @@
   `scheduler_run_completed` 和 `attention_item_created` 的中文标签。
 - 新增 `31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md`，记录连续推进 API、
   stop reason、失败 Attention、测试覆盖和 D7 Adapter 目录建议。
+- P4 第五轮 D7 新增 Adapter 插件目录实体化：`.miracle/adapters/*.json` 成为本地
+  Adapter manifest 数据源，覆盖 `mock-local`、`codex`、`hermes`、`openclaw` 和
+  `official-api` 五类 adapter。
+- 核心包新增 `AdapterManifest`、`AdapterCredentialRequirement`、`AdapterRegistryEntry`
+  以及 manifest schema、credential check 和 adapter selection 函数。
+- Sidecar `/api/v0/adapters` 改为返回 manifest registry、credential status、可执行状态和
+  缺失凭证摘要；`dry-run` 增加 `adapter_routing`，用于启动前预览每个 Node 的 adapter
+  承接情况。
+- NodeRun 执行链路接入 adapter registry：默认内容生产主链路选择
+  `codex-mock-compatible-adapter`，不可执行或缺能力时提交 failed AdapterResult，仍由
+  Orchestrator 单写入 NodeAttempt、ArtifactManifest、GateInstance 和 TraceEvent。
+- 新增 `32_P4第五轮_D7_Adapter插件目录实体化交付说明.md`，记录 manifest、凭证检查、
+  Codex mock-compatible adapter、执行选择和 D8 建议。
 
 本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 

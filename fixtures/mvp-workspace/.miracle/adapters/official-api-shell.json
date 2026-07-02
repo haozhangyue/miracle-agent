@@ -1,0 +1,32 @@
+{
+  "id": "official-api-adapter-shell",
+  "kind": "official-api",
+  "display_name": "Official API Adapter Shell",
+  "version": "0.1.0",
+  "status": "draft",
+  "description": "官方 API adapter 占位 manifest，用于验证凭证检查、ProviderPolicy 和后续远程 Worker 边界。",
+  "execution_mode": "external",
+  "capabilities": ["model.call", "text.generate", "image.generate", "video.generate", "tts.generate", "subtitle.generate"],
+  "supported_providers": ["openai", "anthropic", "volc-tts", "mock-failure"],
+  "default_provider": "openai",
+  "required_credentials": [
+    {
+      "key": "PROVIDER_API_KEY",
+      "label": "默认模型/API Provider Key",
+      "source": "env",
+      "required": true,
+      "providers": ["openai", "anthropic"]
+    },
+    {
+      "key": "VOLC_TTS_API_KEY",
+      "label": "火山 TTS API Key",
+      "source": "env",
+      "required": false,
+      "providers": ["volc-tts"]
+    }
+  ],
+  "runtime": {
+    "local_executor": "external-api",
+    "can_execute": false
+  }
+}

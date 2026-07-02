@@ -126,3 +126,30 @@ export const workflowTemplateSchema = z.object({
   source: z.enum(["builtin_template", "local_project", "local_registry", "github_repo"]),
   tags: z.array(z.string())
 });
+
+export const adapterCredentialRequirementSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  source: z.enum(["env", "keychain", "workspace-secret"]),
+  required: z.boolean(),
+  providers: z.array(z.string()).optional()
+});
+
+export const adapterManifestSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["mock-local", "codex", "hermes", "openclaw", "official-api"]),
+  display_name: z.string(),
+  version: z.string(),
+  status: z.enum(["draft", "experimental", "stable", "deprecated", "blocked"]),
+  description: z.string(),
+  execution_mode: z.enum(["mock-compatible", "external", "shell"]),
+  capabilities: z.array(z.string()),
+  supported_providers: z.array(z.string()),
+  default_provider: z.string(),
+  required_credentials: z.array(adapterCredentialRequirementSchema),
+  runtime: z.object({
+    local_executor: z.enum(["mock-runner", "codex-cli", "external-api", "not-implemented"]),
+    can_execute: z.boolean(),
+    entrypoint: z.string().optional()
+  })
+});

@@ -301,12 +301,53 @@ describe("sidecar api", () => {
     expect(detail.workflow.registry_meta.status).toBe("draft");
   });
 
-  it("returns adapter plugin shells", async () => {
+  it("returns adapter manifests with credential status", async () => {
     const body = await fetchJson<{
-      adapters: Array<{ id: string; kind: string }>;
+      adapters: Array<{ id: string; kind: string; execution_mode: string; executable: boolean; credential_status: Array<{ key: string; configured: boolean }> }>;
+      summary: { total: number; executable: number; missing_credentials: string[] };
     }>("/api/v0/adapters");
 
+    expect(body.summary.total).toBeGreaterThanOrEqual(5);
+    expect(body.summary.executable).toBeGreaterThanOrEqual(2);
+    expect(body.summary.missing_credentials).toContain("PROVIDER_API_KEY");
     expect(body.adapters.map((adapter) => adapter.kind)).toEqual(expect.arrayContaining(["mock-local", "codex", "hermes", "openclaw", "official-api"]));
+    expect(body.adapters.find((adapter) => adapter.id === "codex-mock-compatible-adapter")).toMatchObject({ execution_mode: "mock-compatible", executable: true });
+    expect(body.adapters.find((adapter) => adapter.id === "official-api-adapter-shell")?.credential_status.some((credential) => credential.key === "PROVIDER_API_KEY" && !credential.configured)).toBe(true);
+  });
+
+  it("surfaces invalid adapter manifests instead of falling back silently", async () => {
+    const badManifestPath = path.join(tempWorkspace, "adapters", "broken.json");
+    await writeFile(badManifestPath, `${JSON.stringify({ id: "broken-adapter" }, null, 2)}\n`, "utf8");
+    try {
+      const response = await fetch(`${baseUrl}/api/v0/adapters`);
+      const body = (await response.json()) as { error?: { code: string; message: string } };
+
+      expect(response.status).toBe(500);
+      expect(body.error?.code).toBe("sidecar_error");
+      expect(body.error?.message).toContain("Invalid input");
+    } finally {
+      await rm(badManifestPath, { force: true });
+    }
+  });
+
+  it("uses the same adapter fallback rule in dry-run routing as execution", async () => {
+    const body = await fetchJson<{
+      adapter_routing: Array<{ node_id: string; selected_adapter_id?: string; selected_adapter_kind?: string; executable: boolean }>;
+    }>("/api/v0/workflows/content-production-v0/dry-run", {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+
+    expect(body.adapter_routing.find((route) => route.node_id === "B_md_master")).toMatchObject({
+      selected_adapter_id: "codex-mock-compatible-adapter",
+      selected_adapter_kind: "codex",
+      executable: true
+    });
+    expect(body.adapter_routing.find((route) => route.node_id === "E_tts")).toMatchObject({
+      selected_adapter_id: "mock-local-adapter",
+      selected_adapter_kind: "mock-local",
+      executable: true
+    });
   });
 
   it("returns the project roadmap with git and evidence sync state", async () => {
@@ -351,12 +392,15 @@ describe("sidecar api", () => {
 
     const executed = await fetchJson<{
       accepted: boolean;
-      adapter_result: { status: string; operation_id: string; artifact_descriptors: Array<{ artifact_id: string }> };
+      invocation: { adapter_id?: string; adapter_kind: string };
+      adapter_result: { status: string; operation_id: string; provider_receipt: { adapter_kind: string }; artifact_descriptors: Array<{ artifact_id: string }> };
       committed: { node_run: { status: string; output_artifacts: string[] }; attempt: { status: string }; created_events: string[] };
     }>(`/api/v0/runs/${created.run_id}/nodes/${nodeRunId}/execute`, { method: "POST", body: JSON.stringify({}) });
 
     expect(executed.accepted).toBe(true);
+    expect(executed.invocation).toMatchObject({ adapter_id: "codex-mock-compatible-adapter", adapter_kind: "codex" });
     expect(executed.adapter_result.status).toBe("succeeded");
+    expect(executed.adapter_result.provider_receipt.adapter_kind).toBe("codex");
     expect(executed.committed.attempt.status).toBe("succeeded");
     expect(executed.committed.node_run.status).toBe("done");
     expect(executed.committed.node_run.output_artifacts.length).toBeGreaterThan(0);

@@ -1,0 +1,17 @@
+{
+  "id": "hermes-adapter-shell",
+  "kind": "hermes",
+  "display_name": "Hermes Adapter Shell",
+  "version": "0.1.0",
+  "status": "draft",
+  "description": "Hermes Agent adapter 占位 manifest，仅进入目录和路由评估，不在 MVP 执行。",
+  "execution_mode": "shell",
+  "capabilities": ["agent.collaborate", "workflow.operate"],
+  "supported_providers": ["hermes-local"],
+  "default_provider": "hermes-local",
+  "required_credentials": [],
+  "runtime": {
+    "local_executor": "not-implemented",
+    "can_execute": false
+  }
+}

@@ -196,6 +196,7 @@ export interface AdapterInvocation {
   node_run_id: string;
   node_id: string;
   adapter_kind: "mock-local" | "codex" | "hermes" | "openclaw" | "official-api";
+  adapter_id?: string;
   provider: string;
   capability_requirements: string[];
   input_artifacts: string[];
@@ -206,6 +207,46 @@ export interface AdapterInvocation {
     required: boolean;
   }>;
   dispatched_at: string;
+}
+
+export type AdapterExecutionMode = "mock-compatible" | "external" | "shell";
+export type AdapterCredentialSource = "env" | "keychain" | "workspace-secret";
+
+export interface AdapterCredentialRequirement {
+  key: string;
+  label: string;
+  source: AdapterCredentialSource;
+  required: boolean;
+  providers?: string[];
+}
+
+export interface AdapterManifest {
+  id: string;
+  kind: AdapterInvocation["adapter_kind"];
+  display_name: string;
+  version: string;
+  status: "draft" | "experimental" | "stable" | "deprecated" | "blocked";
+  description: string;
+  execution_mode: AdapterExecutionMode;
+  capabilities: string[];
+  supported_providers: string[];
+  default_provider: string;
+  required_credentials: AdapterCredentialRequirement[];
+  runtime: {
+    local_executor: "mock-runner" | "codex-cli" | "external-api" | "not-implemented";
+    can_execute: boolean;
+    entrypoint?: string;
+  };
+}
+
+export interface AdapterCredentialStatus extends AdapterCredentialRequirement {
+  configured: boolean;
+}
+
+export interface AdapterRegistryEntry extends AdapterManifest {
+  credential_status: AdapterCredentialStatus[];
+  executable: boolean;
+  unavailable_reasons: string[];
 }
 
 export interface AdapterArtifactDescriptor {

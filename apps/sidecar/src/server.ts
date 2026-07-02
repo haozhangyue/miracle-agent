@@ -2,14 +2,19 @@ import {
   buildCanvasDraftFromWorkflow,
   buildDagProjection,
   buildGateDecisionProjection,
-  adapterPluginShells,
+  buildAdapterRegistry,
   createAdapterInvocation,
   createArtifactManifestsFromAdapterResult,
   createDryRunPlan,
   createNodeAttemptFromAdapterResult,
   createRunFromWorkflow,
   createRunnerTraceEvents,
+  defaultAdapterManifests,
   executeMockAdapter,
+  parseAdapterManifests,
+  selectAdapterManifest,
+  type AdapterManifest,
+  type AdapterRegistryEntry,
   validateWorkflowSpec,
   type AdapterResult,
   type AttentionItem,
@@ -230,6 +235,28 @@ async function listJsonFiles<T>(folder: string): Promise<T[]> {
   const entries = await readdir(path.join(workspaceDir, folder), { withFileTypes: true });
   const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json"));
   return Promise.all(files.map((file) => readJson<T>(path.join(folder, file.name))));
+}
+
+function availableCredentialKeys() {
+  return Object.entries(process.env)
+    .filter(([, value]) => typeof value === "string" && value.length > 0)
+    .map(([key]) => key);
+}
+
+async function readAdapterManifests(): Promise<AdapterManifest[]> {
+  try {
+    const raw = await listJsonFiles<unknown>("adapters");
+    return parseAdapterManifests(raw);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return defaultAdapterManifests;
+    }
+    throw error;
+  }
+}
+
+async function readAdapterRegistry(): Promise<AdapterRegistryEntry[]> {
+  return buildAdapterRegistry({ manifests: await readAdapterManifests(), availableCredentials: availableCredentialKeys() });
 }
 
 async function listRuns() {
@@ -479,13 +506,89 @@ function addGatePendingAttention(attention: JsonValue, gate: GateInstance) {
   return [...items.filter((item) => (item as Record<string, unknown>).root_cause_key !== nextItem.root_cause_key), nextItem];
 }
 
+function preferredAdapterKinds(provider: string): AdapterManifest["kind"][] {
+  if (provider.includes("codex")) return ["codex", "mock-local"];
+  if (provider.includes("hermes")) return ["hermes", "mock-local"];
+  if (provider.includes("openclaw")) return ["openclaw", "mock-local"];
+  if (["openai", "anthropic", "volc-tts", "official-api"].some((name) => provider.includes(name))) return ["official-api", "mock-local"];
+  if (provider.includes("mock")) return ["mock-local", "codex"];
+  return ["mock-local", "codex"];
+}
+
+function buildAdapterUnavailableResult(input: {
+  invocation: ReturnType<typeof createAdapterInvocation>;
+  message: string;
+  receivedAt?: string;
+}): AdapterResult {
+  return {
+    operation_id: input.invocation.operation_id,
+    node_run_id: input.invocation.node_run_id,
+    status: "failed",
+    provider_receipt: {
+      provider: input.invocation.provider,
+      adapter_kind: input.invocation.adapter_kind,
+      raw_receipt_id: `receipt_${input.invocation.operation_id}`
+    },
+    artifact_descriptors: [],
+    error: {
+      code: "no_executable_adapter",
+      message: input.message,
+      recoverable: true
+    },
+    received_at: input.receivedAt ?? new Date().toISOString()
+  };
+}
+
+function selectAdapterForNode(input: {
+  manifests: AdapterManifest[];
+  node: WorkflowSpec["nodes"][number];
+  provider: string;
+  availableCredentials: string[];
+}) {
+  return (
+    selectAdapterManifest({
+      manifests: input.manifests,
+      capabilityRequirements: input.node.capability_requirements,
+      provider: input.provider,
+      preferredKinds: preferredAdapterKinds(input.provider),
+      availableCredentials: input.availableCredentials
+    }) ??
+    selectAdapterManifest({
+      manifests: input.manifests,
+      capabilityRequirements: input.node.capability_requirements,
+      preferredKinds: preferredAdapterKinds(input.provider),
+      availableCredentials: input.availableCredentials
+    })
+  );
+}
+
 function executeSidecarAdapter(input: {
   invocation: ReturnType<typeof createAdapterInvocation>;
   workflow: WorkflowSpec;
   nodeRun: NodeRun;
+  adapter: AdapterRegistryEntry;
   receivedAt?: string;
 }): AdapterResult {
   const receivedAt = input.receivedAt ?? new Date().toISOString();
+  if (!input.adapter.executable) {
+    return {
+      operation_id: input.invocation.operation_id,
+      node_run_id: input.invocation.node_run_id,
+      status: "failed",
+      provider_receipt: {
+        provider: input.invocation.provider,
+        adapter_kind: input.invocation.adapter_kind,
+        raw_receipt_id: `receipt_${input.invocation.operation_id}`
+      },
+      artifact_descriptors: [],
+      error: {
+        code: "adapter_unavailable",
+        message: `Adapter ${input.adapter.id} is unavailable: ${input.adapter.unavailable_reasons.join(", ")}`,
+        recoverable: true
+      },
+      received_at: receivedAt
+    };
+  }
   if (input.nodeRun.provider === "mock-failure") {
     return {
       operation_id: input.invocation.operation_id,
@@ -500,6 +603,25 @@ function executeSidecarAdapter(input: {
       error: {
         code: "mock_failure",
         message: "Mock failure provider requested a failed AdapterResult.",
+        recoverable: true
+      },
+      received_at: receivedAt
+    };
+  }
+  if (input.adapter.execution_mode !== "mock-compatible") {
+    return {
+      operation_id: input.invocation.operation_id,
+      node_run_id: input.invocation.node_run_id,
+      status: "failed",
+      provider_receipt: {
+        provider: input.invocation.provider,
+        adapter_kind: input.invocation.adapter_kind,
+        raw_receipt_id: `receipt_${input.invocation.operation_id}`
+      },
+      artifact_descriptors: [],
+      error: {
+        code: "adapter_runtime_not_implemented",
+        message: `Adapter ${input.adapter.id} runtime ${input.adapter.runtime.local_executor} is not implemented in MVP.`,
         recoverable: true
       },
       received_at: receivedAt
@@ -593,8 +715,26 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     targetNodeRun.updated_at = dispatchedAt;
     await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
 
-    const invocation = createAdapterInvocation({ runSpec, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, createdAt: dispatchedAt });
-    const result = executeSidecarAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, receivedAt: new Date().toISOString() });
+    const nodeSpec = lockedBundle.workflow.nodes.find((node) => node.id === targetNodeRun.node_id);
+    const provider = targetNodeRun.provider ?? runSpec.resolved_provider_policy.default_provider;
+    const manifests = await readAdapterManifests();
+    const availableCredentials = availableCredentialKeys();
+    const adapter = nodeSpec && selectAdapterForNode({ manifests, node: nodeSpec, provider, availableCredentials });
+    const invocation = createAdapterInvocation({
+      runSpec,
+      workflow: lockedBundle.workflow,
+      nodeRun: targetNodeRun,
+      createdAt: dispatchedAt,
+      adapterKind: adapter?.kind,
+      adapterId: adapter?.id
+    });
+    const result = adapter
+      ? executeSidecarAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, adapter, receivedAt: new Date().toISOString() })
+      : buildAdapterUnavailableResult({
+          invocation,
+          message: `No executable adapter supports NodeSpec ${targetNodeRun.node_id} capabilities: ${nodeSpec?.capability_requirements.join(", ") ?? "unknown"}`,
+          receivedAt: new Date().toISOString()
+        });
     const attempt = createNodeAttemptFromAdapterResult(result);
     const createdArtifacts = createArtifactManifestsFromAdapterResult({
       result,
@@ -968,7 +1108,16 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/v0/adapters") {
-    return sendJson(res, 200, { adapters: adapterPluginShells });
+    const adapters = await readAdapterRegistry();
+    return sendJson(res, 200, {
+      adapters,
+      summary: {
+        total: adapters.length,
+        executable: adapters.filter((adapter) => adapter.executable).length,
+        blocked: adapters.filter((adapter) => adapter.status === "blocked").length,
+        missing_credentials: adapters.flatMap((adapter) => adapter.credential_status.filter((credential) => credential.required && !credential.configured).map((credential) => credential.key))
+      }
+    });
   }
 
   if (req.method === "GET" && url.pathname === "/api/v0/project/roadmap") {
@@ -987,7 +1136,24 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const workflow = await readWorkflow(workflowId);
     if (req.method === "GET" && parts.length === 4) return sendJson(res, 200, { workflow, metadata: { source: workflow.registry_meta.source, readonly: false } });
     if (req.method === "POST" && parts[4] === "validate") return sendJson(res, 200, validateWorkflowSpec(workflow));
-    if (req.method === "POST" && parts[4] === "dry-run") return sendJson(res, 200, createDryRunPlan(workflow, []));
+    if (req.method === "POST" && parts[4] === "dry-run") {
+      const availableCredentials = availableCredentialKeys();
+      const plan = createDryRunPlan(workflow, availableCredentials);
+      const manifests = await readAdapterManifests();
+      return sendJson(res, 200, {
+        ...plan,
+        adapter_routing: workflow.nodes.map((node) => {
+          const selected = selectAdapterForNode({ manifests, node, provider: workflow.provider_policy.default_provider, availableCredentials });
+          return {
+            node_id: node.id,
+            selected_adapter_id: selected?.id,
+            selected_adapter_kind: selected?.kind,
+            executable: Boolean(selected),
+            missing_capabilities: selected ? [] : node.capability_requirements
+          };
+        })
+      });
+    }
     if (parts[4] === "canvas-draft") {
       const draftPath = `drafts/canvas-${workflowId}.json`;
       if (req.method === "POST" && parts[5] === "publish") {
