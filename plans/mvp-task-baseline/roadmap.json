@@ -12,6 +12,7 @@
     "28_P4第五轮_D3_Gate返工模型交付说明.md",
     "29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md",
     "30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md",
+    "31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -94,8 +95,8 @@
       "id": "p4-05",
       "label": "P4 第五轮 MVP 执行能力补齐",
       "status": "current",
-      "summary": "D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 scheduler tick 已完成；当前焦点切到 D6 scheduler 执行闭环，同时可并行准备 D7 Adapter 目录、D8 Canvas NodeSpec draft 和 D9 Web refresh。",
-      "evidence_paths": ["plans/mvp-task-baseline/README.md", "plans/mvp-task-baseline/roadmap.json", "plans/mvp-task-baseline/roadmap-page.png", "plans/mvp-task-baseline/index.html", "28_P4第五轮_D3_Gate返工模型交付说明.md", "29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md", "30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md"]
+      "summary": "D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 scheduler tick、D6 scheduler 连续执行闭环已完成；当前焦点切到 D7 Adapter 目录，同时可并行准备 D8 Canvas NodeSpec draft 和 D9 Web refresh。",
+      "evidence_paths": ["plans/mvp-task-baseline/README.md", "plans/mvp-task-baseline/roadmap.json", "plans/mvp-task-baseline/roadmap-page.png", "plans/mvp-task-baseline/index.html", "28_P4第五轮_D3_Gate返工模型交付说明.md", "29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md", "30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md", "31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md"]
     },
     {
       "id": "p4-06",
@@ -177,19 +178,19 @@
       "id": "d6-scheduler-run",
       "day": "D6",
       "title": "最小 scheduler 执行闭环",
-      "status": "current",
+      "status": "completed",
       "serial_group": "scheduler",
       "parallel_group": "execution",
       "depends_on": ["d5-scheduler-design"],
       "can_parallelize": false,
       "recommended_agent": "Agent D",
-      "deliverables": ["自动执行 queued 节点", "失败进入 Attention", "人工 Gate 暂停"]
+      "deliverables": ["POST /api/v0/runs/:runId/scheduler/run", "自动执行 queued 节点", "失败进入 Attention", "人工 Gate 暂停", "31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md"]
     },
     {
       "id": "d7-adapter-directory",
       "day": "D7",
       "title": "Adapter 插件目录实体化",
-      "status": "planned",
+      "status": "current",
       "serial_group": "adapter",
       "parallel_group": "platform",
       "depends_on": ["d1-roadmap-data"],

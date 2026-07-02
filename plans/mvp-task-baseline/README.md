@@ -24,7 +24,7 @@
 当前红点：
 
 ```text
-P4 第五轮 MVP 执行能力补齐：D5 已完成，D6 最小 scheduler 执行闭环为当前主线
+P4 第五轮 MVP 执行能力补齐：D6 已完成，D7 Adapter 插件目录实体化为当前主线
 ```
 
 ## 2. 可视化实现方式
@@ -57,8 +57,8 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 | D3 | Gate reject 返工模型 | 已完成，可作为 D4 前置 | Agent C | rework attempt、新 Artifact version、恢复规则 |
 | D4 | Gate reject 返工 UI 与事件审计 | 已完成，依赖 D3 | Agent C | 返工动作、receipt、TraceEvent |
 | D5 | 最小 scheduler 设计 | 已完成，可与 Adapter 目录并行 | Agent D | queued 节点扫描、Gate 人审暂停、operation lock 复用 |
-| D6 | 最小 scheduler 执行闭环 | 当前主线，依赖 D5 | Agent D | 自动执行 queued 节点、失败进入 Attention |
-| D7 | Adapter 插件目录实体化 | 可并行 | Agent D | adapter manifests、Codex mock-compatible adapter、credential check |
+| D6 | 最小 scheduler 执行闭环 | 已完成，依赖 D5 | Agent D | 自动执行 queued 节点、失败进入 Attention |
+| D7 | Adapter 插件目录实体化 | 当前主线，可并行 | Agent D | adapter manifests、Codex mock-compatible adapter、credential check |
 | D8 | Canvas 新增节点生成 NodeSpec draft | 可并行 | Agent B | 新增 node card、NodeSpec draft、validate-before-save |
 | D9 | Web run refresh/polling 与执行反馈 | 可并行 | Agent B | run polling、执行中状态、错误恢复提示 |
 | D10 | MVP 回归验收与版本收口 | 串行收口 | Lead | typecheck/test/build、截图证据、版本记录 |

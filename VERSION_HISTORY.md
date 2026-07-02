@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.5.1` |
 | 版本名称 | P4 MVP 第五轮执行能力补齐 |
-| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 最小 scheduler 设计与 tick 接口；当前主线进入 D6 scheduler 执行闭环；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续执行闭环；当前主线进入 D7 Adapter 插件目录实体化；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -186,6 +186,14 @@
   `scheduler_tick_completed` 的中文标签。
 - 新增 `30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md`，记录 scheduler
   tick API、Gate 暂停规则、测试覆盖和 D6 执行闭环建议。
+- P4 第五轮 D6 新增 scheduler 连续执行闭环：`POST /api/v0/runs/:runId/scheduler/run`
+  支持连续 tick、每轮重读 Run 状态、遇 pending_review Gate 暂停、执行失败停止。
+- Scheduler 失败链路新增通用 Attention 聚合：`node:{node_run_id}:execution_failed`，
+  并写入 `attention_item_created` 审计事件。
+- Run 工作区新增“自动推进”按钮，事件审计新增 `scheduler_run_started`、
+  `scheduler_run_completed` 和 `attention_item_created` 的中文标签。
+- 新增 `31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md`，记录连续推进 API、
+  stop reason、失败 Attention、测试覆盖和 D7 Adapter 目录建议。
 
 本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 

@@ -82,6 +82,9 @@ function eventAuditMeta(type: string) {
     node_run_committed: { label: "NodeRun 提交", className: "runner" },
     scheduler_tick_started: { label: "Scheduler 启动", className: "runner" },
     scheduler_tick_completed: { label: "Scheduler 完成", className: "runner" },
+    scheduler_run_started: { label: "Scheduler 连续推进", className: "runner" },
+    scheduler_run_completed: { label: "Scheduler 停止", className: "runner" },
+    attention_item_created: { label: "Attention 创建", className: "danger" },
     node_blocked: { label: "节点阻塞", className: "danger" },
     node_done: { label: "节点完成", className: "ok" },
     run_created: { label: "Run 创建", className: "muted" }
@@ -357,6 +360,16 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
       setSchedulerState(error instanceof Error ? error.message : "Scheduler 执行失败");
     }
   }
+  async function runSchedulerLoop() {
+    setSchedulerState("Scheduler 自动推进中");
+    try {
+      const result = await api<any>(`/runs/${runId}/scheduler/run`, { method: "POST", body: JSON.stringify({ max_ticks: 8, max_nodes_per_tick: 1 }) });
+      setSchedulerState(`自动推进停止 · ${result.stop_reason} · executed ${result.summary?.nodes_executed ?? 0} · attention ${result.summary?.attention_items_created ?? 0}`);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setSchedulerState(error instanceof Error ? error.message : "Scheduler 自动推进失败");
+    }
+  }
   const selectedStatus = String(node.data?.node?.status ?? "");
   const executable = ["queued", "running"].includes(selectedStatus);
 
@@ -369,6 +382,7 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
         <Metric label="Attention" value={String((run.data?.attention ?? []).length)} />
         <button onClick={() => go("attention")}>查看 Attention</button>
         <button onClick={runSchedulerTick}>调度一次</button>
+        <button onClick={runSchedulerLoop}>自动推进</button>
       </div>
       {schedulerState && <div className="receiptLine">{schedulerState}</div>}
       <div className="stageTabs">{stages.map((stage) => <span key={String(stage)}>{String(stage)}</span>)}</div>

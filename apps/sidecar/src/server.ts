@@ -11,6 +11,8 @@ import {
   createRunnerTraceEvents,
   executeMockAdapter,
   validateWorkflowSpec,
+  type AdapterResult,
+  type AttentionItem,
   type AdapterArtifactDescriptor,
   type ArtifactManifest,
   type CanvasLayout,
@@ -42,6 +44,12 @@ type SchedulerDecision = {
   reason: string;
   gate_instance_id?: string;
 };
+type SchedulerFailure = {
+  decision: SchedulerDecision;
+  node_run_id: string;
+  node_id: string;
+  error: { code: string; message: string; recoverable: boolean };
+};
 type NodeExecutionResult =
   | {
       accepted: false;
@@ -51,7 +59,7 @@ type NodeExecutionResult =
   | {
       accepted: true;
       invocation: ReturnType<typeof createAdapterInvocation>;
-      adapter_result: ReturnType<typeof executeMockAdapter>;
+      adapter_result: AdapterResult;
       committed: {
         node_run: NodeRun;
         attempt: NodeAttempt;
@@ -471,6 +479,80 @@ function addGatePendingAttention(attention: JsonValue, gate: GateInstance) {
   return [...items.filter((item) => (item as Record<string, unknown>).root_cause_key !== nextItem.root_cause_key), nextItem];
 }
 
+function executeSidecarAdapter(input: {
+  invocation: ReturnType<typeof createAdapterInvocation>;
+  workflow: WorkflowSpec;
+  nodeRun: NodeRun;
+  receivedAt?: string;
+}): AdapterResult {
+  const receivedAt = input.receivedAt ?? new Date().toISOString();
+  if (input.nodeRun.provider === "mock-failure") {
+    return {
+      operation_id: input.invocation.operation_id,
+      node_run_id: input.invocation.node_run_id,
+      status: "failed",
+      provider_receipt: {
+        provider: input.invocation.provider,
+        adapter_kind: input.invocation.adapter_kind,
+        raw_receipt_id: `receipt_${input.invocation.operation_id}`
+      },
+      artifact_descriptors: [],
+      error: {
+        code: "mock_failure",
+        message: "Mock failure provider requested a failed AdapterResult.",
+        recoverable: true
+      },
+      received_at: receivedAt
+    };
+  }
+  return executeMockAdapter({ invocation: input.invocation, workflow: input.workflow, receivedAt });
+}
+
+function buildSchedulerFailureAttentionItem(input: { failure: SchedulerFailure; node?: NodeRun }): AttentionItem {
+  const nodeId = input.node?.node_id ?? input.failure.node_id;
+  const nodeRunId = input.node?.node_run_id ?? input.failure.node_run_id;
+  return {
+    attention_id: `att_${safeId(nodeRunId)}_execution_failed`,
+    root_cause_key: `node:${nodeRunId}:execution_failed`,
+    title: "NodeRun 执行失败",
+    severity: "P0",
+    status: "open",
+    related_objects: [
+      { type: "NodeRun", id: nodeRunId, label: nodeId },
+      { type: "SchedulerDecision", id: input.failure.decision.decision }
+    ],
+    impact: {
+      blocked_nodes: [nodeRunId],
+      waiting_agents: input.node?.agent_id ? [input.node.agent_id] : [],
+      unaffected_paths: []
+    },
+    safe_actions: ["inspect_node_attempt", "retry_node", "switch_provider"]
+  };
+}
+
+async function persistSchedulerFailureAttention(runId: string, failures: SchedulerFailure[]) {
+  if (failures.length === 0) return { attention_items: [] as AttentionItem[], created_events: [] as string[] };
+  const bundle = await readRunBundle(runId);
+  const nodes = bundle.nodes as NodeRun[];
+  const currentAttention = Array.isArray(bundle.attention) ? (bundle.attention as AttentionItem[]) : [];
+  const byRootCause = new Map(currentAttention.map((item) => [item.root_cause_key, item]));
+  const createdAt = new Date().toISOString();
+  const attentionItems = failures.map((failure) => buildSchedulerFailureAttentionItem({ failure, node: nodes.find((node) => node.node_run_id === failure.node_run_id) }));
+  for (const item of attentionItems) byRootCause.set(item.root_cause_key, item);
+  await writeJson(`runs/${runId}/attention.json`, Array.from(byRootCause.values()));
+
+  const events = attentionItems.map((item) => ({
+    event_id: `evt_${item.attention_id}_${Date.parse(createdAt)}`,
+    run_id: runId,
+    type: "attention_item_created",
+    subject: { type: "AttentionItem", id: item.attention_id },
+    message: `AttentionItem ${item.root_cause_key} opened by scheduler`,
+    created_at: createdAt
+  }));
+  for (const event of events) await appendEvent(runId, event);
+  return { attention_items: attentionItems, created_events: events.map((event) => event.event_id) };
+}
+
 async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<NodeExecutionResult> {
   const lockName = safeId(nodeRunId);
   const lockDir = path.join(workspaceDir, "runs", runId, "locks", `${lockName}.lock`);
@@ -512,7 +594,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
 
     const invocation = createAdapterInvocation({ runSpec, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, createdAt: dispatchedAt });
-    const result = executeMockAdapter({ invocation, workflow: lockedBundle.workflow, receivedAt: new Date().toISOString() });
+    const result = executeSidecarAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, receivedAt: new Date().toISOString() });
     const attempt = createNodeAttemptFromAdapterResult(result);
     const createdArtifacts = createArtifactManifestsFromAdapterResult({
       result,
@@ -625,6 +707,199 @@ function schedulerLimits(value: unknown) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 1;
   return Math.max(1, Math.min(5, Math.floor(parsed)));
+}
+
+function schedulerTickLimits(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 8;
+  return Math.max(1, Math.min(20, Math.floor(parsed)));
+}
+
+async function buildSchedulerPlan(runId: string, maxNodes: number) {
+  const bundle = await readRunBundle(runId);
+  const decisions = buildSchedulerDecisions(bundle.workflow, bundle.nodes as NodeRun[], bundle.gates as GateInstance[]);
+  const executable = decisions.filter((decision) => decision.decision === "execute").slice(0, maxNodes);
+  const paused = decisions.filter((decision) => decision.decision === "pause_for_gate");
+  const skipped = decisions.filter((decision) => decision.decision === "skip");
+  return { decisions, executable, paused, skipped };
+}
+
+async function commitSchedulerTick(runId: string, maxNodes: number) {
+  const { decisions, executable, paused, skipped } = await buildSchedulerPlan(runId, maxNodes);
+  const tickId = `sched_${safeId(runId)}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const startedAt = new Date().toISOString();
+  const startedEvent = {
+    event_id: `evt_${tickId}_started`,
+    run_id: runId,
+    type: "scheduler_tick_started",
+    subject: { type: "RunSpec", id: runId },
+    message: `Scheduler tick started with ${executable.length} executable NodeRun(s)`,
+    created_at: startedAt
+  };
+  await appendEvent(runId, startedEvent);
+
+  const executed = [];
+  const failed: SchedulerFailure[] = [];
+  for (const decision of executable) {
+    try {
+      const result = await executeNodeRunOnce(runId, decision.node_run_id);
+      if (!result.accepted) {
+        failed.push({
+          decision,
+          node_run_id: decision.node_run_id,
+          node_id: decision.node_id,
+          error: { code: result.error.code, message: result.error.message, recoverable: result.status_code < 500 }
+        });
+        continue;
+      }
+      executed.push({ decision, result });
+      if (result.committed.node_run.status === "failed") {
+        failed.push({
+          decision,
+          node_run_id: decision.node_run_id,
+          node_id: decision.node_id,
+          error: result.adapter_result.error ?? { code: "adapter_failed", message: `AdapterResult ${result.adapter_result.status}`, recoverable: true }
+        });
+      }
+    } catch (error) {
+      failed.push({
+        decision,
+        node_run_id: decision.node_run_id,
+        node_id: decision.node_id,
+        error: {
+          code: "scheduler_execute_exception",
+          message: error instanceof Error ? error.message : "Unknown scheduler execute exception",
+          recoverable: false
+        }
+      });
+    }
+  }
+
+  const attention = await persistSchedulerFailureAttention(runId, failed);
+  const completedAt = new Date().toISOString();
+  const completedEvent = {
+    event_id: `evt_${tickId}_completed`,
+    run_id: runId,
+    type: "scheduler_tick_completed",
+    subject: { type: "RunSpec", id: runId },
+    message: `Scheduler tick completed: executed ${executed.length}, failed ${failed.length}, paused ${paused.length}`,
+    created_at: completedAt
+  };
+  await appendEvent(runId, completedEvent);
+
+  return {
+    accepted: true,
+    mode: "commit",
+    tick_id: tickId,
+    run_id: runId,
+    max_nodes: maxNodes,
+    decisions,
+    executable,
+    executed,
+    failed,
+    paused,
+    skipped,
+    attention_items: attention.attention_items,
+    created_events: [startedEvent.event_id, ...attention.created_events, completedEvent.event_id],
+    next_suggested_actions: failed.length > 0 ? ["inspect_attention", "retry_node_or_switch_provider"] : paused.length > 0 ? ["review_pending_gates"] : ["refresh_run"]
+  };
+}
+
+async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPerTick: number) {
+  const runIdSafe = safeId(runId);
+  const schedulerRunId = `sched_run_${runIdSafe}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const startedAt = new Date().toISOString();
+  const startedEvent = {
+    event_id: `evt_${schedulerRunId}_started`,
+    run_id: runId,
+    type: "scheduler_run_started",
+    subject: { type: "RunSpec", id: runId },
+    message: `Scheduler run started with max ${maxTicks} tick(s)`,
+    created_at: startedAt
+  };
+  await appendEvent(runId, startedEvent);
+
+  const ticks = [];
+  let stopReason: "no_executable_nodes" | "paused_for_gate" | "execution_failed" | "max_ticks_reached" = "max_ticks_reached";
+  for (let index = 0; index < maxTicks; index += 1) {
+    const plan = await buildSchedulerPlan(runId, maxNodesPerTick);
+    if (plan.executable.length === 0) {
+      stopReason = plan.paused.length > 0 ? "paused_for_gate" : "no_executable_nodes";
+      ticks.push({
+        mode: "dry_stop",
+        tick_index: index + 1,
+        decisions: plan.decisions,
+        executable: plan.executable,
+        paused: plan.paused,
+        skipped: plan.skipped
+      });
+      break;
+    }
+    const tick = await commitSchedulerTick(runId, maxNodesPerTick);
+    ticks.push({ tick_index: index + 1, ...tick });
+    if (tick.failed.length > 0) {
+      stopReason = "execution_failed";
+      break;
+    }
+  }
+  if (stopReason === "max_ticks_reached") {
+    const terminalPlan = await buildSchedulerPlan(runId, maxNodesPerTick);
+    if (terminalPlan.executable.length === 0) {
+      stopReason = terminalPlan.paused.length > 0 ? "paused_for_gate" : "no_executable_nodes";
+      ticks.push({
+        mode: "dry_stop",
+        tick_index: ticks.length + 1,
+        decisions: terminalPlan.decisions,
+        executable: terminalPlan.executable,
+        paused: terminalPlan.paused,
+        skipped: terminalPlan.skipped
+      });
+    }
+  }
+
+  const completedAt = new Date().toISOString();
+  const completedEvent = {
+    event_id: `evt_${schedulerRunId}_completed`,
+    run_id: runId,
+    type: "scheduler_run_completed",
+    subject: { type: "RunSpec", id: runId },
+    message: `Scheduler run stopped: ${stopReason}`,
+    created_at: completedAt
+  };
+  await appendEvent(runId, completedEvent);
+
+  const executedCount = ticks.reduce((total, tick) => total + (Array.isArray((tick as Record<string, unknown>).executed) ? ((tick as Record<string, unknown>).executed as unknown[]).length : 0), 0);
+  const failedCount = ticks.reduce((total, tick) => total + (Array.isArray((tick as Record<string, unknown>).failed) ? ((tick as Record<string, unknown>).failed as unknown[]).length : 0), 0);
+  const attentionCount = ticks.reduce(
+    (total, tick) => total + (Array.isArray((tick as Record<string, unknown>).attention_items) ? ((tick as Record<string, unknown>).attention_items as unknown[]).length : 0),
+    0
+  );
+
+  return {
+    accepted: true,
+    mode: "run",
+    scheduler_run_id: schedulerRunId,
+    run_id: runId,
+    max_ticks: maxTicks,
+    max_nodes_per_tick: maxNodesPerTick,
+    stop_reason: stopReason,
+    ticks,
+    summary: {
+      ticks_committed: ticks.filter((tick) => (tick as Record<string, unknown>).mode === "commit").length,
+      nodes_executed: executedCount,
+      failures: failedCount,
+      attention_items_created: attentionCount
+    },
+    created_events: [startedEvent.event_id, completedEvent.event_id],
+    next_suggested_actions:
+      stopReason === "paused_for_gate"
+        ? ["review_pending_gates"]
+        : stopReason === "execution_failed"
+          ? ["inspect_attention", "retry_node_or_switch_provider"]
+          : stopReason === "max_ticks_reached"
+            ? ["run_scheduler_again_or_increase_limit"]
+            : ["refresh_run"]
+  };
 }
 
 async function publishCanvasDraftAsWorkflow(workflowId: string, draft: CanvasLayout) {
@@ -805,12 +1080,8 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       const body = await parseBody(req);
       const dryRun = body.dry_run === true;
       const maxNodes = schedulerLimits(body.max_nodes);
-      const bundle = await readRunBundle(runId);
-      const decisions = buildSchedulerDecisions(bundle.workflow, bundle.nodes as NodeRun[], bundle.gates as GateInstance[]);
-      const executable = decisions.filter((decision) => decision.decision === "execute").slice(0, maxNodes);
-      const paused = decisions.filter((decision) => decision.decision === "pause_for_gate");
-      const skipped = decisions.filter((decision) => decision.decision === "skip");
-      const tickId = `sched_${safeId(runId)}_${Date.now()}`;
+      const plan = await buildSchedulerPlan(runId, maxNodes);
+      const tickId = `sched_${safeId(runId)}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
       if (dryRun) {
         return sendJson(res, 200, {
@@ -819,57 +1090,21 @@ async function route(req: IncomingMessage, res: ServerResponse) {
           tick_id: tickId,
           run_id: runId,
           max_nodes: maxNodes,
-          decisions,
-          executable,
-          paused,
-          skipped,
-          next_suggested_actions: executable.length > 0 ? ["run_scheduler_tick"] : paused.length > 0 ? ["review_pending_gates"] : ["wait_for_new_queued_nodes"]
+          decisions: plan.decisions,
+          executable: plan.executable,
+          paused: plan.paused,
+          skipped: plan.skipped,
+          next_suggested_actions: plan.executable.length > 0 ? ["run_scheduler_tick"] : plan.paused.length > 0 ? ["review_pending_gates"] : ["wait_for_new_queued_nodes"]
         });
       }
 
-      const startedAt = new Date().toISOString();
-      const startedEvent = {
-        event_id: `evt_${tickId}_started`,
-        run_id: runId,
-        type: "scheduler_tick_started",
-        subject: { type: "RunSpec", id: runId },
-        message: `Scheduler tick started with ${executable.length} executable NodeRun(s)`,
-        created_at: startedAt
-      };
-      await appendEvent(runId, startedEvent);
-
-      const executed = [];
-      const failed = [];
-      for (const decision of executable) {
-        const result = await executeNodeRunOnce(runId, decision.node_run_id);
-        if (result.accepted) executed.push({ decision, result });
-        else failed.push({ decision, error: result.error });
-      }
-
-      const completedAt = new Date().toISOString();
-      const completedEvent = {
-        event_id: `evt_${tickId}_completed`,
-        run_id: runId,
-        type: "scheduler_tick_completed",
-        subject: { type: "RunSpec", id: runId },
-        message: `Scheduler tick completed: executed ${executed.length}, failed ${failed.length}, paused ${paused.length}`,
-        created_at: completedAt
-      };
-      await appendEvent(runId, completedEvent);
-
-      return sendJson(res, 200, {
-        accepted: true,
-        mode: "commit",
-        tick_id: tickId,
-        run_id: runId,
-        max_nodes: maxNodes,
-        executed,
-        failed,
-        paused,
-        skipped,
-        created_events: [startedEvent.event_id, completedEvent.event_id],
-        next_suggested_actions: failed.length > 0 ? ["inspect_failed_node_runs"] : paused.length > 0 ? ["review_pending_gates"] : ["refresh_run"]
-      });
+      return sendJson(res, 200, await commitSchedulerTick(runId, maxNodes));
+    }
+    if (req.method === "POST" && parts[4] === "scheduler" && parts[5] === "run") {
+      const body = await parseBody(req);
+      const maxTicks = schedulerTickLimits(body.max_ticks);
+      const maxNodesPerTick = schedulerLimits(body.max_nodes_per_tick ?? body.max_nodes);
+      return sendJson(res, 200, await runSchedulerUntilStop(runId, maxTicks, maxNodesPerTick));
     }
     if (parts[4] === "nodes" && parts[5]) {
       const bundle = await readRunBundle(runId);

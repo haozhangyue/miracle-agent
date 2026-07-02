@@ -464,6 +464,103 @@ describe("sidecar api", () => {
     expect(planned.paused.some((item) => item.node_id === "G_distribution" && item.decision === "pause_for_gate" && item.gate_instance_id)).toBe(true);
   });
 
+  it("runs scheduler continuously until a pending review gate pauses downstream nodes", async () => {
+    const created = await fetchJson<{
+      run_id: string;
+    }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+
+    const scheduled = await fetchJson<{
+      stop_reason: string;
+      summary: { nodes_executed: number; ticks_committed: number };
+      ticks: Array<{ mode: string; paused?: Array<{ node_id: string; decision: string }> }>;
+    }>(`/api/v0/runs/${created.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 5, max_nodes_per_tick: 1 })
+    });
+
+    expect(scheduled.stop_reason).toBe("paused_for_gate");
+    expect(scheduled.summary.nodes_executed).toBe(2);
+    expect(scheduled.summary.ticks_committed).toBe(2);
+    expect(scheduled.ticks.at(-1)?.mode).toBe("dry_stop");
+    expect(scheduled.ticks.at(-1)?.paused?.some((item) => item.node_id === "C_script" && item.decision === "pause_for_gate")).toBe(true);
+
+    const run = await fetchJson<{
+      nodes: Array<{ node_id: string; status: string }>;
+      gates: Array<{ status: string }>;
+    }>(`/api/v0/runs/${created.run_id}`);
+    expect(run.nodes.find((node) => node.node_id === "A_collect")?.status).toBe("done");
+    expect(run.nodes.find((node) => node.node_id === "B_md_master")?.status).toBe("reviewing");
+    expect(run.gates.some((gate) => gate.status === "pending_review")).toBe(true);
+
+    const events = await fetchJson<{ events: Array<{ type: string }> }>(`/api/v0/runs/${created.run_id}/events`);
+    expect(events.events.map((event) => event.type)).toEqual(expect.arrayContaining(["scheduler_run_started", "scheduler_run_completed", "scheduler_tick_started", "scheduler_tick_completed"]));
+  });
+
+  it("reports gate pause instead of max tick limit when the terminal state is blocked by review", async () => {
+    const created = await fetchJson<{
+      run_id: string;
+    }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+
+    const scheduled = await fetchJson<{
+      stop_reason: string;
+      summary: { nodes_executed: number; ticks_committed: number };
+      ticks: Array<{ mode: string; paused?: Array<{ node_id: string; decision: string }> }>;
+    }>(`/api/v0/runs/${created.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 2, max_nodes_per_tick: 1 })
+    });
+
+    expect(scheduled.stop_reason).toBe("paused_for_gate");
+    expect(scheduled.summary.nodes_executed).toBe(2);
+    expect(scheduled.summary.ticks_committed).toBe(2);
+    expect(scheduled.ticks.at(-1)?.mode).toBe("dry_stop");
+    expect(scheduled.ticks.at(-1)?.paused?.some((item) => item.node_id === "G_distribution" && item.decision === "pause_for_gate")).toBe(true);
+  });
+
+  it("opens an Attention item when scheduler execution fails", async () => {
+    const created = await fetchJson<{
+      run_id: string;
+      initial_node_runs: string[];
+    }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+
+    const nodesPath = path.join(tempWorkspace, "runs", created.run_id, "nodes.json");
+    const nodes = JSON.parse(await readFile(nodesPath, "utf8")) as Array<{ node_run_id: string; provider?: string }>;
+    const firstNode = nodes.find((node) => node.node_run_id === created.initial_node_runs[0]);
+    if (!firstNode) throw new Error("Expected first NodeRun");
+    firstNode.provider = "mock-failure";
+    await writeFile(nodesPath, `${JSON.stringify(nodes, null, 2)}\n`, "utf8");
+
+    const scheduled = await fetchJson<{
+      stop_reason: string;
+      summary: { nodes_executed: number; failures: number; attention_items_created: number };
+      ticks: Array<{ failed?: Array<{ error: { code: string } }>; attention_items?: Array<{ root_cause_key: string }> }>;
+    }>(`/api/v0/runs/${created.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 3, max_nodes_per_tick: 1 })
+    });
+
+    expect(scheduled.stop_reason).toBe("execution_failed");
+    expect(scheduled.summary.nodes_executed).toBe(1);
+    expect(scheduled.summary.failures).toBe(1);
+    expect(scheduled.summary.attention_items_created).toBe(1);
+    expect(scheduled.ticks[0]?.failed?.[0]?.error.code).toBe("mock_failure");
+    expect(scheduled.ticks[0]?.attention_items?.[0]?.root_cause_key).toContain(created.initial_node_runs[0]);
+
+    const attention = await fetchJson<{ attention: Array<{ root_cause_key: string; status: string; safe_actions: string[] }> }>(`/api/v0/attention?run_id=${created.run_id}`);
+    expect(attention.attention.some((item) => item.root_cause_key === `node:${created.initial_node_runs[0]}:execution_failed` && item.status === "open")).toBe(true);
+    const events = await fetchJson<{ events: Array<{ type: string }> }>(`/api/v0/runs/${created.run_id}/events`);
+    expect(events.events.map((event) => event.type)).toContain("attention_item_created");
+  });
+
   it("does not queue downstream optional media nodes when the artifact selector is not qualified", async () => {
     const created = await fetchJson<{
       run_id: string;
