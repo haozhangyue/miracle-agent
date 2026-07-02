@@ -26,6 +26,13 @@ export const nodeSpecSchema = z.object({
   })
 });
 
+export const canvasNodeSpecDraftSchema = z.object({
+  draft_id: z.string(),
+  status: z.enum(["draft", "ready", "invalid"]),
+  created_from: z.literal("canvas"),
+  node_spec: nodeSpecSchema
+});
+
 export const edgeSpecSchema = z.object({
   from: z.string(),
   to: z.string(),

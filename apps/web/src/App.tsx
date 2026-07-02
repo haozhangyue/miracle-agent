@@ -16,6 +16,7 @@ import {
   Network,
   Play,
   Plus,
+  RefreshCw,
   Save,
   Search,
   ShieldCheck,
@@ -27,7 +28,7 @@ import { Background, Controls, MarkerType, ReactFlow, type Edge as FlowEdge, typ
 import { useEffect, useMemo, useState } from "react";
 
 type Page = "home" | "new" | "dryrun" | "run" | "attention" | "agents" | "artifacts" | "review" | "canvas" | "sync" | "evolution";
-type ApiState<T> = { loading: boolean; data?: T; error?: string };
+type ApiState<T> = { loading: boolean; data?: T; error?: string; refreshing?: boolean; updatedAt?: number };
 
 const apiBase = "/api/v0";
 
@@ -47,10 +48,10 @@ function useApi<T>(path: string, deps: unknown[] = []): ApiState<T> {
   const [state, setState] = useState<ApiState<T>>({ loading: true });
   useEffect(() => {
     let alive = true;
-    setState({ loading: true });
+    setState((current) => current.data ? { ...current, loading: false, refreshing: true, error: undefined } : { loading: true });
     api<T>(path)
-      .then((data) => alive && setState({ loading: false, data }))
-      .catch((error: Error) => alive && setState({ loading: false, error: error.message }));
+      .then((data) => alive && setState({ loading: false, refreshing: false, data, updatedAt: Date.now() }))
+      .catch((error: Error) => alive && setState((current) => ({ ...current, loading: false, refreshing: false, error: error.message })));
     return () => {
       alive = false;
     };
@@ -90,6 +91,71 @@ function eventAuditMeta(type: string) {
     run_created: { label: "Run 创建", className: "muted" }
   };
   return map[type] ?? { label: type, className: "muted" };
+}
+
+function nodeStatusSummary(nodes: any[] = []) {
+  return nodes.reduce((summary, node) => {
+    const status = String(node.status ?? "unknown");
+    if (status === "done" || status === "succeeded") summary.succeeded += 1;
+    else if (status === "running") summary.running += 1;
+    else if (status === "queued") summary.queued += 1;
+    else if (status === "blocked") summary.blocked += 1;
+    else if (status === "failed") summary.failed += 1;
+    else summary.other += 1;
+    return summary;
+  }, { running: 0, queued: 0, blocked: 0, failed: 0, succeeded: 0, other: 0 });
+}
+
+function executionFeedback(status: string) {
+  const map: Record<string, { title: string; body: string; action: string; tone: string }> = {
+    running: {
+      title: "节点正在执行",
+      body: "轮询会自动刷新 NodeRun、Attempt 和事件审计。若长期无新事件，可手动刷新或检查 Sidecar 日志。",
+      action: "等待 AdapterResult 回执",
+      tone: "info"
+    },
+    queued: {
+      title: "节点等待调度",
+      body: "可使用调度一次或自动推进触发 Scheduler；若上游 Gate 未通过，Scheduler 会保持暂停。",
+      action: "运行 Scheduler",
+      tone: "info"
+    },
+    blocked: {
+      title: "节点被阻塞",
+      body: "优先查看 Attention 根因。常见恢复动作是补凭证、切换 Provider、跳过可选分支或完成人工审核。",
+      action: "查看 Attention 或审核",
+      tone: "danger"
+    },
+    failed: {
+      title: "最近一次执行失败",
+      body: "先确认 NodeAttempt 的 AdapterResult，再决定重试、切换 Provider 或创建返工版本。失败事实保留在事件审计中。",
+      action: "检查 Attempt 与事件",
+      tone: "danger"
+    },
+    succeeded: {
+      title: "节点已成功",
+      body: "下游节点会在依赖满足后进入 queued/running；产物可在 Artifact Board 中查看。",
+      action: "查看下游或产物",
+      tone: "ok"
+    },
+    done: {
+      title: "节点已完成",
+      body: "下游节点会在依赖满足后进入 queued/running；产物可在 Artifact Board 中查看。",
+      action: "查看下游或产物",
+      tone: "ok"
+    }
+  };
+  return map[status] ?? {
+    title: "等待运行事实",
+    body: "当前状态暂未映射到自动恢复动作，请查看 NodeRun JSON 和事件审计。",
+    action: "查看事件",
+    tone: "muted"
+  };
+}
+
+function formatUpdatedAt(value?: number) {
+  if (!value) return "尚未刷新";
+  return new Date(value).toLocaleTimeString();
 }
 
 export function App() {
@@ -292,12 +358,17 @@ function DryRunPage({ workflowId, setRunId, go }: { workflowId: string; setRunId
 
 function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; selectedNode: string; setSelectedNode: (id: string) => void; go: (page: Page) => void }) {
   const [refresh, setRefresh] = useState(0);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<number>();
   const [executeState, setExecuteState] = useState<string>("");
   const [schedulerState, setSchedulerState] = useState<string>("");
   const run = useApi<any>(`/runs/${runId}`, [runId, refresh]);
   const dag = useApi<any>(`/runs/${runId}/dag`, [runId, refresh]);
   const events = useApi<any>(`/runs/${runId}/events`, [runId, refresh]);
+  const attention = useApi<any>(`/attention?run_id=${runId}`, [runId, refresh]);
   const node = selectedNode ? useApi<any>(`/runs/${runId}/nodes/${selectedNode}`, [runId, selectedNode, refresh]) : { loading: false } as ApiState<any>;
+  const statusSummary = useMemo(() => nodeStatusSummary(run.data?.nodes ?? []), [run.data?.nodes]);
+  const attentionCount = attention.data?.attention?.length ?? run.data?.attention?.length ?? 0;
   const stages = useMemo(() => {
     const workflow = run.data?.workflow;
     if (!workflow) return [];
@@ -338,6 +409,14 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
     const selectedExists = dag.data?.dag.nodes.some((item: any) => item.node_run_id === selectedNode);
     if (firstNodeRunId && !selectedExists) setSelectedNode(firstNodeRunId);
   }, [dag.data, selectedNode, setSelectedNode]);
+  useEffect(() => {
+    if (!autoRefreshEnabled || !runId) return;
+    const intervalId = window.setInterval(() => {
+      setLastAutoRefreshAt(Date.now());
+      setRefresh((value) => value + 1);
+    }, 5000);
+    return () => window.clearInterval(intervalId);
+  }, [autoRefreshEnabled, runId]);
 
   async function executeSelectedNode() {
     if (!selectedNode) return;
@@ -379,10 +458,28 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
       <div className="runHeader">
         <Metric label="状态" value={String(run.data?.run.status ?? "-")} />
         <Metric label="节点" value={String((run.data?.nodes ?? []).length)} />
-        <Metric label="Attention" value={String((run.data?.attention ?? []).length)} />
+        <Metric label="Attention" value={String(attentionCount)} />
+        <div className="refreshPanel">
+          <div>
+            <RefreshCw className={run.refreshing || events.refreshing || attention.refreshing ? "spin" : ""} size={16} />
+            <strong>{autoRefreshEnabled ? "自动刷新中" : "自动刷新暂停"}</strong>
+          </div>
+          <small>间隔 5s · 最近 {formatUpdatedAt(run.updatedAt ?? events.updatedAt ?? attention.updatedAt ?? lastAutoRefreshAt)}</small>
+          <div className="refreshActions">
+            <button onClick={() => setAutoRefreshEnabled((value) => !value)}>{autoRefreshEnabled ? "暂停" : "开启"}</button>
+            <button onClick={() => setRefresh((value) => value + 1)}>立即刷新</button>
+          </div>
+        </div>
         <button onClick={() => go("attention")}>查看 Attention</button>
         <button onClick={runSchedulerTick}>调度一次</button>
         <button onClick={runSchedulerLoop}>自动推进</button>
+      </div>
+      <div className="statusStrip">
+        <StatusCounter label="running" value={statusSummary.running} />
+        <StatusCounter label="queued" value={statusSummary.queued} />
+        <StatusCounter label="blocked" value={statusSummary.blocked} />
+        <StatusCounter label="failed" value={statusSummary.failed} />
+        <StatusCounter label="succeeded" value={statusSummary.succeeded} />
       </div>
       {schedulerState && <div className="receiptLine">{schedulerState}</div>}
       <div className="stageTabs">{stages.map((stage) => <span key={String(stage)}>{String(stage)}</span>)}</div>
@@ -417,6 +514,7 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
                 </div>
                 <Pill value={selectedStatus} />
               </div>
+              <ExecutionFeedback status={selectedStatus} go={go} onRefresh={() => setRefresh((value) => value + 1)} />
               <div className="safeActions">
                 <button onClick={executeSelectedNode} disabled={!executable}><Play size={16} /> 执行当前节点</button>
                 <button onClick={() => setRefresh((value) => value + 1)}>刷新</button>
@@ -458,6 +556,25 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
         </DataState>
       </Panel>
     </section>
+  );
+}
+
+function ExecutionFeedback({ status, go, onRefresh }: { status: string; go: (page: Page) => void; onRefresh: () => void }) {
+  const feedback = executionFeedback(status);
+  return (
+    <div className={`executionFeedback ${feedback.tone}`}>
+      <div>
+        <strong>{feedback.title}</strong>
+        <span>{feedback.body}</span>
+      </div>
+      <Pill value={feedback.action} />
+      {["blocked", "failed"].includes(status) && (
+        <div className="feedbackActions">
+          <button onClick={() => go("attention")}><AlertTriangle size={14} /> 查看 Attention</button>
+          <button onClick={onRefresh}><RefreshCw size={14} /> 刷新状态</button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -772,13 +889,21 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
   const [objects, setObjects] = useState<any[]>([]);
   const [saveState, setSaveState] = useState<string>("未保存");
   const [publishState, setPublishState] = useState<any>();
+  const [draftMeta, setDraftMeta] = useState<any>();
+  const [nodeTitle, setNodeTitle] = useState("Pencil 原型节点");
+  const [nodeCapability, setNodeCapability] = useState("prototype.pencil");
+  const [nodeZone, setNodeZone] = useState("content");
 
   useEffect(() => {
     if (draftState.data?.draft.objects) {
       setObjects(draftState.data.draft.objects);
+      setDraftMeta(draftState.data);
       setSaveState("已加载草稿");
     }
   }, [draftState.data]);
+
+  const zones = objects.filter((object) => object.type === "zone");
+  const nodeDrafts = objects.filter((object) => object.node_spec_draft);
 
   function moveObject(id: string, dx: number, dy: number) {
     setObjects((current) => current.map((object) => object.id === id ? { ...object, x: object.x + dx, y: object.y + dy } : object));
@@ -786,18 +911,47 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
   }
 
   async function saveDraft() {
-    const result = await api<any>(`/workflows/${workflowId}/canvas-draft`, {
-      method: "POST",
-      body: JSON.stringify({ objects })
-    });
-    setObjects(result.draft.objects);
-    setSaveState(`已保存 · ${new Date(result.draft.updated_at).toLocaleTimeString()}`);
+    try {
+      const result = await api<any>(`/workflows/${workflowId}/canvas-draft`, {
+        method: "POST",
+        body: JSON.stringify({ objects })
+      });
+      setObjects(result.draft.objects);
+      setDraftMeta(result);
+      setSaveState(`已保存 · ${new Date(result.draft.updated_at).toLocaleTimeString()}`);
+      return true;
+    } catch (error) {
+      setSaveState(`保存失败 · ${error instanceof Error ? error.message : "validate failed"}`);
+      return false;
+    }
+  }
+
+  async function addNodeDraft() {
+    setSaveState("正在生成 NodeSpec draft");
+    try {
+      const result = await api<any>(`/workflows/${workflowId}/canvas-draft/nodes`, {
+        method: "POST",
+        body: JSON.stringify({
+          title: nodeTitle,
+          capability: nodeCapability,
+          zone_id: nodeZone,
+          node_type: nodeCapability === "prototype.pencil" ? "mcp_tool" : "transform",
+          artifact_type: nodeCapability === "prototype.pencil" ? "prototype" : "document"
+        })
+      });
+      setObjects(result.draft.objects);
+      setDraftMeta(result);
+      setSaveState(`已生成草稿节点 · ${result.node_object?.ref_id}`);
+    } catch (error) {
+      setSaveState(`生成失败 · ${error instanceof Error ? error.message : "NodeSpec draft invalid"}`);
+    }
   }
 
   async function publishDraft() {
     setPublishState({ status: "发布中" });
     try {
-      await saveDraft();
+      const saved = await saveDraft();
+      if (!saved) return;
       const result = await api<any>(`/workflows/${workflowId}/canvas-draft/publish`, { method: "POST", body: JSON.stringify({}) });
       setPublishState(result);
     } catch (error) {
@@ -815,6 +969,38 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
           <button className="primary" onClick={publishDraft}><GitBranch size={16} /> 发布 Workflow draft</button>
         </div>
       </div>
+      <Panel title="新增 NodeSpec Draft">
+        <div className="nodeDraftComposer">
+          <label>
+            <span>节点标题</span>
+            <input value={nodeTitle} onChange={(event) => setNodeTitle(event.target.value)} />
+          </label>
+          <label>
+            <span>能力需求</span>
+            <select value={nodeCapability} onChange={(event) => setNodeCapability(event.target.value)}>
+              <option value="prototype.pencil">prototype.pencil</option>
+              <option value="content.refine_plan">content.refine_plan</option>
+              <option value="image.generate">image.generate</option>
+              <option value="research.verify">research.verify</option>
+            </select>
+          </label>
+          <label>
+            <span>画布区域</span>
+            <select value={nodeZone} onChange={(event) => setNodeZone(event.target.value)}>
+              {zones.map((zone) => {
+                const zoneId = zone.ref_id ?? zone.id.replace(/^zone_/, "");
+                return <option value={zoneId} key={zone.id}>{zone.title ?? zoneId}</option>;
+              })}
+            </select>
+          </label>
+          <button className="primary" onClick={addNodeDraft}><Plus size={16} /> 生成节点草稿</button>
+        </div>
+        <div className="nodeDraftSummary">
+          <Metric label="草稿节点" value={String(nodeDrafts.length)} />
+          <Metric label="校验结果" value={draftMeta?.validation?.valid === false ? "invalid" : "ready"} />
+          <Metric label="待发布操作" value={String(draftMeta?.spec_diff_preview?.operations?.length ?? objects.length)} />
+        </div>
+      </Panel>
       <Panel title="Canvas Draft Board">
         <DataState state={draftState}>
           <div className="canvasBoard">
@@ -829,6 +1015,12 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
                   <Pill value={object.type} />
                 </header>
                 {object.type !== "zone" && <small>{object.ref_id} · {object.zone_id ?? "unassigned"}</small>}
+                {object.node_spec_draft && (
+                  <div className="nodeDraftBadge">
+                    <Pill value={`NodeSpec · ${object.node_spec_draft.status}`} />
+                    <small>{object.node_spec_draft.node_spec.capability_requirements.join(", ")}</small>
+                  </div>
+                )}
                 {object.type !== "zone" && (
                   <div className="moveControls">
                     <button onClick={() => moveObject(object.id, -24, 0)}><Move size={13} />左</button>
@@ -844,7 +1036,13 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
       </Panel>
       <Panel title="Spec Diff Preview">
         <DataState state={draftState}>
-          <pre className="jsonBlock">{JSON.stringify({
+          {draftMeta?.validation && (
+            <div className="validationStrip">
+              <Pill value={draftMeta.validation.valid ? "validate-ready" : "validate-failed"} />
+              <span>{draftMeta.validation.errors?.length ?? 0} errors · {draftMeta.validation.warnings?.length ?? 0} warnings</span>
+            </div>
+          )}
+          <pre className="jsonBlock">{JSON.stringify(draftMeta?.spec_diff_preview ?? {
             workflow_id: workflowId,
             operations: objects.map((object) => ({ op: "replace", path: `/layouts/canvas/objects/${object.id}`, value: { x: object.x, y: object.y, zone_id: object.zone_id } }))
           }, null, 2)}</pre>
@@ -873,9 +1071,13 @@ function Panel({ title, count, children }: { title: string; count?: number; chil
 }
 
 function DataState<T>({ state, children }: { state: ApiState<T>; children: React.ReactNode }) {
-  if (state.loading) return <div className="loading"><Loader2 className="spin" size={18} /> 加载中</div>;
-  if (state.error) return <div className="error"><AlertTriangle size={18} /> {state.error}</div>;
-  return <>{children}</>;
+  if (state.loading && !state.data) return <div className="loading"><Loader2 className="spin" size={18} /> 加载中</div>;
+  if (state.error && !state.data) return <div className="error"><AlertTriangle size={18} /> {state.error}</div>;
+  return <>
+    {state.refreshing && <div className="refreshHint"><Loader2 className="spin" size={14} /> 正在刷新最新运行状态</div>}
+    {state.error && <div className="inlineError"><AlertTriangle size={14} /> 刷新失败，当前展示上一次成功数据：{state.error}</div>}
+    {children}
+  </>;
 }
 
 function Pill({ value }: { value?: string }) {
@@ -888,4 +1090,13 @@ function Severity({ severity }: { severity: string }) {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function StatusCounter({ label, value }: { label: string; value: number }) {
+  return (
+    <div className={`statusCounter ${statusClass(label)}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
 }

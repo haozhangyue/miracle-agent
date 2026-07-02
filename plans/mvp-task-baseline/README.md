@@ -21,11 +21,13 @@
 | P4 第三轮 | Sidecar 集成测试、Runner/Adapter 最小协议、Mock Runner 执行闭环落地 | `26_P4第三轮_集成测试与Runner协议交付说明.md` |
 | P4 第四轮 | Gate 决策真实推进、Run 执行 UI、Canvas 发布 Workflow draft、Adapter 插件壳落地 | `27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md` |
 | P4 第五轮 D7 | Adapter manifest、Codex mock-compatible adapter、credential check 落地 | `32_P4第五轮_D7_Adapter插件目录实体化交付说明.md` |
+| P4 第五轮 D8/D9 | Canvas NodeSpec draft、validate-before-save、Run polling 和执行反馈落地 | `34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md` |
+| D10 预备 | MVP 回归验收预备清单已生成，等待执行最终收口 | `33_P4_MVP回归验收预备清单.md` |
 
 当前红点：
 
 ```text
-P4 第五轮 MVP 执行能力补齐：D7 已完成，D8 Canvas 新增节点生成 NodeSpec draft 为当前主线
+P4 第五轮 MVP 执行能力补齐：D8/D9 已完成，D10 MVP 回归验收与版本收口为当前主线
 ```
 
 ## 2. 可视化实现方式
@@ -60,9 +62,9 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 | D5 | 最小 scheduler 设计 | 已完成，可与 Adapter 目录并行 | Agent D | queued 节点扫描、Gate 人审暂停、operation lock 复用 |
 | D6 | 最小 scheduler 执行闭环 | 已完成，依赖 D5 | Agent D | 自动执行 queued 节点、失败进入 Attention |
 | D7 | Adapter 插件目录实体化 | 已完成，可并行 | Agent D | adapter manifests、Codex mock-compatible adapter、credential check |
-| D8 | Canvas 新增节点生成 NodeSpec draft | 当前主线，可并行 | Agent B | 新增 node card、NodeSpec draft、validate-before-save |
-| D9 | Web run refresh/polling 与执行反馈 | 可并行 | Agent B | run polling、执行中状态、错误恢复提示 |
-| D10 | MVP 回归验收与版本收口 | 串行收口 | Lead | typecheck/test/build、截图证据、版本记录 |
+| D8 | Canvas 新增节点生成 NodeSpec draft | 已完成，可并行 | Agent B | 新增 node card、NodeSpec draft、validate-before-save |
+| D9 | Web run refresh/polling 与执行反馈 | 已完成，可并行 | Agent B | run polling、执行中状态、错误恢复提示 |
+| D10 | MVP 回归验收与版本收口 | 当前主线，串行收口 | Lead | typecheck/test/build、截图证据、版本记录 |
 
 ## 4. 串行与并行边界
 

@@ -14,8 +14,8 @@ Gate 决策真实推进、Run 页面执行 UI、Canvas 发布 Workflow draft 和
 P4 第五轮已开始执行能力补齐，D3 Gate reject 返工模型已落地，支持返工 attempt、
 新 Artifact version、新 GateInstance 和下游恢复规则；D4 Gate 返工 UI 与事件审计已接入
 Web 工作台；D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续推进、Gate 暂停和
-失败 Attention、D7 Adapter 插件目录实体化已完成，下一主线切到 D8 Canvas 新增节点生成
-NodeSpec draft。
+失败 Attention、D7 Adapter 插件目录实体化已完成。D8 Canvas 新增节点生成 NodeSpec
+draft 与 D9 Web run refresh/polling 已落地，下一主线进入 D10 MVP 回归验收与版本收口。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -88,6 +88,8 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md](30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md) | P4 第五轮 D5 scheduler tick、Gate 人审暂停和 Run 手动调度入口 |
 | `CURRENT` | [31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md](31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md) | P4 第五轮 D6 scheduler 连续推进、Gate 暂停和失败 Attention |
 | `CURRENT` | [32_P4第五轮_D7_Adapter插件目录实体化交付说明.md](32_P4第五轮_D7_Adapter插件目录实体化交付说明.md) | P4 第五轮 D7 Adapter manifest、Codex mock-compatible adapter 和 credential check |
+| `CURRENT` | [33_P4_MVP回归验收预备清单.md](33_P4_MVP回归验收预备清单.md) | D10 MVP 回归验收预备清单，待 D8/D9 后执行最终收口 |
+| `CURRENT` | [34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md](34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md) | P4 第五轮 D8/D9 Canvas NodeSpec draft、Run polling 和执行反馈 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明

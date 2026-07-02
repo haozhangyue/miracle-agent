@@ -281,7 +281,43 @@ describe("sidecar api", () => {
     expect(saved.draft.objects[0].x).toBe(moved[0].x);
   });
 
+  it("creates a Canvas NodeSpec draft with validate-before-save", async () => {
+    const created = await fetchJson<{
+      accepted: boolean;
+      node_object: { ref_id: string; node_spec_draft: { status: string; node_spec: { id: string; capability_requirements: string[] } } };
+      validation: { valid: boolean; errors: unknown[] };
+      spec_diff_preview: { operations: Array<{ op: string; path: string }> };
+    }>("/api/v0/workflows/content-production-v0/canvas-draft/nodes", {
+      method: "POST",
+      body: JSON.stringify({
+        title: "Pencil 原型设计",
+        capability: "prototype.pencil",
+        zone_id: "content"
+      })
+    });
+
+    expect(created.accepted).toBe(true);
+    expect(created.validation.valid).toBe(true);
+    expect(created.node_object.node_spec_draft.status).toBe("ready");
+    expect(created.node_object.node_spec_draft.node_spec.capability_requirements).toEqual(["prototype.pencil"]);
+    expect(created.spec_diff_preview.operations.some((operation) => operation.op === "add" && operation.path === "/nodes/-")).toBe(true);
+
+    const draft = await fetchJson<{
+      draft: { objects: Array<{ ref_id?: string; node_spec_draft?: { node_spec: { id: string } } }> };
+      validation: { valid: boolean };
+    }>("/api/v0/workflows/content-production-v0/canvas-draft");
+    expect(draft.validation.valid).toBe(true);
+    expect(draft.draft.objects.some((object) => object.ref_id === created.node_object.node_spec_draft.node_spec.id && object.node_spec_draft)).toBe(true);
+  });
+
   it("publishes a canvas draft as a validated Workflow draft", async () => {
+    const created = await fetchJson<{
+      node_object: { node_spec_draft: { node_spec: { id: string } } };
+    }>("/api/v0/workflows/content-production-v0/canvas-draft/nodes", {
+      method: "POST",
+      body: JSON.stringify({ title: "内容精细策划", capability: "content.refine_plan", zone_id: "content" })
+    });
+
     const published = await fetchJson<{
       accepted: boolean;
       workflow_id: string;
@@ -296,9 +332,10 @@ describe("sidecar api", () => {
     expect(published.validation.valid).toBe(true);
 
     const detail = await fetchJson<{
-      workflow: { id: string; registry_meta: { status: string } };
+      workflow: { id: string; registry_meta: { status: string }; nodes: Array<{ id: string; capability_requirements: string[] }> };
     }>(`/api/v0/workflows/${published.workflow_id}`);
     expect(detail.workflow.registry_meta.status).toBe("draft");
+    expect(detail.workflow.nodes.some((node) => node.id === created.node_object.node_spec_draft.node_spec.id && node.capability_requirements.includes("content.refine_plan"))).toBe(true);
   });
 
   it("returns adapter manifests with credential status", async () => {

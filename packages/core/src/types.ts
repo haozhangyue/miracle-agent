@@ -390,6 +390,14 @@ export interface ValidationResult {
   checked_at: string;
 }
 
+export interface CanvasNodeSpecDraft {
+  draft_id: string;
+  status: "draft" | "ready" | "invalid";
+  created_from: "canvas";
+  node_spec: NodeSpec;
+  validation?: ValidationResult;
+}
+
 export interface CanvasLayout {
   workflow_id?: string;
   status?: "draft" | "published";
@@ -404,6 +412,7 @@ export interface CanvasLayout {
     y: number;
     width?: number;
     height?: number;
+    node_spec_draft?: CanvasNodeSpecDraft;
   }>;
 }
 

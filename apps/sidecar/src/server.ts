@@ -3,6 +3,7 @@ import {
   buildDagProjection,
   buildGateDecisionProjection,
   buildAdapterRegistry,
+  canvasNodeSpecDraftSchema,
   createAdapterInvocation,
   createArtifactManifestsFromAdapterResult,
   createDryRunPlan,
@@ -21,11 +22,14 @@ import {
   type AdapterArtifactDescriptor,
   type ArtifactManifest,
   type CanvasLayout,
+  type CanvasNodeSpecDraft,
   type GateDecision,
   type GateInstance,
+  type NodeSpec,
   type NodeAttempt,
   type NodeRun,
   type RunSpec,
+  type ValidationResult,
   type WorkflowSpec
 } from "@miracle/core";
 import { execFile } from "node:child_process";
@@ -55,6 +59,7 @@ type SchedulerFailure = {
   node_id: string;
   error: { code: string; message: string; recoverable: boolean };
 };
+type CanvasObject = CanvasLayout["objects"][number];
 type NodeExecutionResult =
   | {
       accepted: false;
@@ -1042,28 +1047,206 @@ async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPe
   };
 }
 
+function safeIdSegment(input: string) {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 38);
+}
+
+function uniqueNodeId(workflow: WorkflowSpec, draft: CanvasLayout, requested: string) {
+  const existing = new Set([
+    ...workflow.nodes.map((node) => node.id),
+    ...draft.objects.flatMap((object) => (object.ref_id ? [object.ref_id] : []))
+  ]);
+  const base = safeIdSegment(requested) || "canvas_node";
+  let candidate = base;
+  let index = 1;
+  while (existing.has(candidate)) {
+    candidate = `${base}_${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function buildCanvasNodeSpecDraft(params: {
+  workflow: WorkflowSpec;
+  draft: CanvasLayout;
+  title?: unknown;
+  nodeId?: unknown;
+  zoneId?: unknown;
+  capability?: unknown;
+  nodeType?: unknown;
+  artifactType?: unknown;
+}): CanvasObject {
+  const title = typeof params.title === "string" && params.title.trim() ? params.title.trim() : "Pencil 原型节点";
+  const capability = typeof params.capability === "string" && params.capability.trim() ? params.capability.trim() : "prototype.pencil";
+  const artifactType = typeof params.artifactType === "string" && params.artifactType.trim() ? params.artifactType.trim() : "prototype";
+  const allowedTypes: NodeSpec["type"][] = ["start", "source", "transform", "agent", "tool", "mcp_tool", "branch", "loop", "review_gate", "artifact", "subworkflow", "end", "terminate"];
+  const nodeType = typeof params.nodeType === "string" && allowedTypes.includes(params.nodeType as NodeSpec["type"]) ? (params.nodeType as NodeSpec["type"]) : "mcp_tool";
+  const requestedId = typeof params.nodeId === "string" && params.nodeId.trim() ? params.nodeId.trim() : `${safeIdSegment(capability) || "prototype"}_draft`;
+  const nodeId = uniqueNodeId(params.workflow, params.draft, requestedId);
+  const zoneObjects = params.draft.objects.filter((object) => object.type === "zone");
+  const requestedZoneId = typeof params.zoneId === "string" && params.zoneId.trim() ? params.zoneId.trim() : undefined;
+  const zoneId = requestedZoneId ?? zoneObjects[0]?.ref_id ?? zoneObjects[0]?.id.replace(/^zone_/, "");
+  const zone = zoneObjects.find((object) => (object.ref_id ?? object.id.replace(/^zone_/, "")) === zoneId);
+  const siblingCount = params.draft.objects.filter((object) => object.type === "node" && object.zone_id === zoneId).length;
+  const nodeSpec: NodeSpec = {
+    id: nodeId,
+    name: title,
+    type: nodeType,
+    domain_tags: [params.workflow.domain, "canvas-draft"],
+    capability_requirements: [capability],
+    recommended_libraries: capability === "prototype.pencil" ? ["pencil-mcp-library"] : [],
+    agent_candidates: capability === "prototype.pencil" ? ["prototype-agent"] : [],
+    inputs: [{ id: "brief", kind: "parameter", required: false }],
+    outputs: [{ id: `${safeIdSegment(artifactType) || "artifact"}_draft`, kind: "artifact", artifact_type: artifactType, required: false }],
+    failure_policy: { retry: 0, on_missing_input: "blocked", on_provider_failure: "failed" }
+  };
+  const nodeSpecDraft: CanvasNodeSpecDraft = {
+    draft_id: `node_spec_draft_${nodeId}`,
+    status: "draft",
+    created_from: "canvas",
+    node_spec: nodeSpec
+  };
+
+  return {
+    id: `node_${nodeId}`,
+    type: "node",
+    title,
+    ref_id: nodeId,
+    zone_id: zoneId,
+    x: (zone?.x ?? 60) + 18,
+    y: (zone?.y ?? 80) + 104 + siblingCount * 104,
+    width: 216,
+    height: 104,
+    node_spec_draft: nodeSpecDraft
+  };
+}
+
+function validationWithExtraErrors(base: ValidationResult, errors: ValidationResult["errors"]): ValidationResult {
+  return {
+    ...base,
+    valid: base.valid && errors.length === 0,
+    errors: [...errors, ...base.errors]
+  };
+}
+
+function buildWorkflowCandidateFromCanvasDraft(workflow: WorkflowSpec, draft: CanvasLayout) {
+  const extraErrors: ValidationResult["errors"] = [];
+  const existingNodeIds = new Set(workflow.nodes.map((node) => node.id));
+  const draftNodes: NodeSpec[] = [];
+
+  for (const object of draft.objects) {
+    if (!object.node_spec_draft) continue;
+    const parsed = canvasNodeSpecDraftSchema.safeParse(object.node_spec_draft);
+    if (!parsed.success) {
+      extraErrors.push({
+        code: "invalid_node_spec_draft",
+        object_type: "CanvasObject",
+        object_id: object.id,
+        message: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")
+      });
+      continue;
+    }
+    if (object.ref_id && object.ref_id !== parsed.data.node_spec.id) {
+      extraErrors.push({
+        code: "node_spec_draft_ref_mismatch",
+        object_type: "CanvasObject",
+        object_id: object.id,
+        message: `画布对象 ref_id ${object.ref_id} 与 NodeSpec id ${parsed.data.node_spec.id} 不一致`
+      });
+    }
+    if (!existingNodeIds.has(parsed.data.node_spec.id)) draftNodes.push(parsed.data.node_spec);
+  }
+
+  const zoneObjects = draft.objects.filter((object) => object.type === "zone");
+  const nodeObjects = draft.objects.filter((object) => object.type === "node" && object.ref_id);
+  const zoneNames = new Map(zoneObjects.map((zone) => [zone.ref_id ?? zone.id.replace(/^zone_/, ""), zone.title ?? zone.ref_id ?? zone.id]));
+  const zones = zoneObjects.map((zone) => {
+    const zoneId = zone.ref_id ?? zone.id.replace(/^zone_/, "");
+    return {
+      id: zoneId,
+      name: zone.title ?? zoneId,
+      node_ids: nodeObjects.filter((object) => object.zone_id === zoneId).map((object) => String(object.ref_id))
+    };
+  });
+  const dag = { ...workflow.layouts.dag };
+  for (const object of nodeObjects) {
+    const nodeId = String(object.ref_id);
+    dag[nodeId] = {
+      x: Math.round(object.x),
+      y: Math.round(object.y),
+      stage: object.zone_id ? zoneNames.get(object.zone_id) : dag[nodeId]?.stage
+    };
+  }
+
+  const candidate: WorkflowSpec = {
+    ...workflow,
+    nodes: [...workflow.nodes, ...draftNodes],
+    layouts: {
+      ...workflow.layouts,
+      dag,
+      canvas: { zones }
+    }
+  };
+  return {
+    workflow: candidate,
+    validation: validationWithExtraErrors(validateWorkflowSpec(candidate), extraErrors)
+  };
+}
+
+function stampCanvasDraftValidation(draft: CanvasLayout, validation: ValidationResult): CanvasLayout {
+  return {
+    ...draft,
+    objects: draft.objects.map((object) => {
+      if (!object.node_spec_draft) return object;
+      const nodeId = object.node_spec_draft.node_spec.id;
+      const hasNodeError = validation.errors.some((error) => error.object_id === nodeId || error.object_id === object.id || error.message.includes(nodeId));
+      return {
+        ...object,
+        node_spec_draft: {
+          ...object.node_spec_draft,
+          status: hasNodeError ? "invalid" : "ready",
+          validation
+        }
+      };
+    })
+  };
+}
+
+function buildCanvasSpecDiffPreview(workflow: WorkflowSpec, draft: CanvasLayout) {
+  const candidate = buildWorkflowCandidateFromCanvasDraft(workflow, draft);
+  const existingNodeIds = new Set(workflow.nodes.map((node) => node.id));
+  const operations: Array<{ op: "add" | "replace" | "remove"; path: string; value?: unknown }> = [
+    { op: "replace", path: "/layouts/canvas/zones", value: candidate.workflow.layouts.canvas?.zones ?? [] }
+  ];
+  for (const object of draft.objects.filter((item) => item.type === "node" && item.ref_id)) {
+    operations.push({ op: "replace", path: `/layouts/dag/${object.ref_id}`, value: { x: object.x, y: object.y, zone_id: object.zone_id } });
+    if (object.node_spec_draft && !existingNodeIds.has(object.node_spec_draft.node_spec.id)) {
+      operations.push({ op: "add", path: "/nodes/-", value: object.node_spec_draft.node_spec });
+    }
+  }
+  return {
+    diff_id: `diff_canvas_${workflow.id}_${Date.now()}`,
+    workflow_id: workflow.id,
+    operations
+  };
+}
+
 async function publishCanvasDraftAsWorkflow(workflowId: string, draft: CanvasLayout) {
   const workflow = await readWorkflow(workflowId);
-  const nodeIds = new Set(workflow.nodes.map((node) => node.id));
-  const zoneObjects = draft.objects.filter((object) => object.type === "zone");
-  const nodeObjects = draft.objects.filter((object) => object.type === "node" && object.ref_id && nodeIds.has(object.ref_id));
-  const zones = zoneObjects.map((zone) => ({
-    id: zone.ref_id ?? zone.id.replace(/^zone_/, ""),
-    name: zone.title ?? zone.ref_id ?? zone.id,
-    node_ids: nodeObjects.filter((object) => object.zone_id === (zone.ref_id ?? zone.id.replace(/^zone_/, ""))).map((object) => String(object.ref_id))
-  }));
+  const candidate = buildWorkflowCandidateFromCanvasDraft(workflow, draft);
+  if (!candidate.validation.valid) return { accepted: false, validation: candidate.validation };
   const draftId = `${workflow.id}-canvas-draft-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${Math.random().toString(36).slice(2, 6)}`;
   const nextWorkflow: WorkflowSpec = {
-    ...workflow,
+    ...candidate.workflow,
     id: draftId,
     name: `${workflow.name} · Canvas Draft`,
     registry_meta: {
       ...workflow.registry_meta,
       status: "draft"
-    },
-    layouts: {
-      ...workflow.layouts,
-      canvas: { zones }
     }
   };
   const validation = validateWorkflowSpec(nextWorkflow);
@@ -1156,40 +1339,86 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     }
     if (parts[4] === "canvas-draft") {
       const draftPath = `drafts/canvas-${workflowId}.json`;
+      if (req.method === "POST" && parts[5] === "nodes") {
+        const currentDraft = (await readJsonOptional<CanvasLayout>(draftPath)) ?? buildCanvasDraftFromWorkflow(workflow);
+        const body = await parseBody(req);
+        const nodeObject = buildCanvasNodeSpecDraft({
+          workflow,
+          draft: currentDraft,
+          title: body.title,
+          nodeId: body.node_id,
+          zoneId: body.zone_id,
+          capability: body.capability,
+          nodeType: body.node_type,
+          artifactType: body.artifact_type
+        });
+        const candidateDraft: CanvasLayout = {
+          ...currentDraft,
+          workflow_id: workflowId,
+          status: "draft",
+          updated_at: new Date().toISOString(),
+          objects: [...currentDraft.objects, nodeObject]
+        };
+        const candidate = buildWorkflowCandidateFromCanvasDraft(workflow, candidateDraft);
+        const draft = stampCanvasDraftValidation(candidateDraft, candidate.validation);
+        if (!candidate.validation.valid) {
+          return sendJson(res, 422, {
+            accepted: false,
+            draft,
+            node_object: nodeObject,
+            validation: candidate.validation,
+            spec_diff_preview: buildCanvasSpecDiffPreview(workflow, draft)
+          });
+        }
+        await writeJson(draftPath, draft);
+        return sendJson(res, 201, {
+          accepted: true,
+          draft,
+          node_object: draft.objects.find((object) => object.id === nodeObject.id),
+          validation: candidate.validation,
+          spec_diff_preview: buildCanvasSpecDiffPreview(workflow, draft)
+        });
+      }
       if (req.method === "POST" && parts[5] === "publish") {
         const draft = (await readJsonOptional<CanvasLayout>(draftPath)) ?? buildCanvasDraftFromWorkflow(workflow);
         const result = await publishCanvasDraftAsWorkflow(workflowId, draft);
         return sendJson(res, result.accepted ? 201 : 422, result);
       }
       if (req.method === "GET") {
-        const draft = (await readJsonOptional<CanvasLayout>(draftPath)) ?? buildCanvasDraftFromWorkflow(workflow);
+        const rawDraft = (await readJsonOptional<CanvasLayout>(draftPath)) ?? buildCanvasDraftFromWorkflow(workflow);
+        const candidate = buildWorkflowCandidateFromCanvasDraft(workflow, rawDraft);
+        const draft = stampCanvasDraftValidation(rawDraft, candidate.validation);
         return sendJson(res, 200, {
           draft,
-          spec_diff_preview: {
-            diff_id: `diff_canvas_${workflowId}`,
-            workflow_id: workflowId,
-            operations: draft.objects.map((object) => ({ op: "replace", path: `/layouts/canvas/objects/${object.id}`, value: object }))
-          }
+          validation: candidate.validation,
+          spec_diff_preview: buildCanvasSpecDiffPreview(workflow, draft)
         });
       }
       if (req.method === "POST") {
         const body = await parseBody(req);
         const objects = Array.isArray(body.objects) ? body.objects : [];
-        const draft: CanvasLayout = {
+        const rawDraft: CanvasLayout = {
           workflow_id: workflowId,
           status: "draft",
           updated_at: new Date().toISOString(),
           objects: objects.map((object) => object as CanvasLayout["objects"][number])
         };
+        const candidate = buildWorkflowCandidateFromCanvasDraft(workflow, rawDraft);
+        const draft = stampCanvasDraftValidation(rawDraft, candidate.validation);
+        if (!candidate.validation.valid) {
+          return sendJson(res, 422, {
+            accepted: false,
+            draft,
+            validation: candidate.validation,
+            spec_diff_preview: buildCanvasSpecDiffPreview(workflow, draft)
+          });
+        }
         await writeJson(draftPath, draft);
         return sendJson(res, 200, {
           accepted: true,
           draft,
-          spec_diff_preview: {
-            diff_id: `diff_canvas_${Date.now()}`,
-            workflow_id: workflowId,
-            operations: draft.objects.map((object) => ({ op: "replace", path: `/layouts/canvas/objects/${object.id}`, value: object }))
-          }
+          validation: candidate.validation,
+          spec_diff_preview: buildCanvasSpecDiffPreview(workflow, draft)
         });
       }
     }

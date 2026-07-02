@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.5.1` |
 | 版本名称 | P4 MVP 第五轮执行能力补齐 |
-| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续执行闭环、D7 Adapter 插件目录实体化；当前主线进入 D8 Canvas 新增节点生成 NodeSpec draft；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 当前阶段 | P4 第五轮已完成 D3 Gate reject 返工模型、D4 Gate 返工 UI 与事件审计、D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续执行闭环、D7 Adapter 插件目录实体化、D8 Canvas NodeSpec draft 和 D9 Web run refresh/polling；当前主线进入 D10 MVP 回归验收与版本收口；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -207,6 +207,19 @@
   Orchestrator 单写入 NodeAttempt、ArtifactManifest、GateInstance 和 TraceEvent。
 - 新增 `32_P4第五轮_D7_Adapter插件目录实体化交付说明.md`，记录 manifest、凭证检查、
   Codex mock-compatible adapter、执行选择和 D8 建议。
+- P4 第五轮 D8 新增 Canvas NodeSpec draft：Canvas node card 可生成结构化
+  `node_spec_draft`，Sidecar 在保存前把草稿节点并入候选 WorkflowSpec 并执行
+  validate-before-save。
+- Canvas draft 发布逻辑增强：发布时生成新的 draft WorkflowSpec，新增节点进入
+  `nodes`，稳定 Workflow 不被原地覆盖。
+- P4 第五轮 D9 新增 Run 工作区轻量 polling：Run detail、DAG、Node Detail、Events
+  和 Attention 会在 Run 页面挂载期间刷新，并提供自动刷新状态、立即刷新和暂停入口。
+- Run 工作区新增状态计数和执行反馈卡，对 `running / queued / blocked / failed /
+  done` 给出当前解释和恢复提示。
+- 新增 `33_P4_MVP回归验收预备清单.md`，作为 D10 回归验收、截图证据和 task-baseline
+  同步检查的预备资产，不代表 D10 已完成。
+- 新增 `34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md`，记录 D8/D9 的接口、
+  UI、写入边界、验收场景和下一步 D10 建议。
 
 本节在 P4 MVP 工程验收后，转换为正式的 `v0.7.0` 版本记录。
 
