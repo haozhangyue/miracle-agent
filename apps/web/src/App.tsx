@@ -919,16 +919,23 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
       setObjects(result.draft.objects);
       setDraftMeta(result);
       setSaveState(`已保存 · ${new Date(result.draft.updated_at).toLocaleTimeString()}`);
-      return true;
+      return { ok: true, result };
     } catch (error) {
-      setSaveState(`保存失败 · ${error instanceof Error ? error.message : "validate failed"}`);
-      return false;
+      const message = error instanceof Error ? error.message : "validate failed";
+      setSaveState(`保存失败 · ${message}`);
+      return { ok: false, error: message };
     }
   }
 
   async function addNodeDraft() {
-    setSaveState("正在生成 NodeSpec draft");
+    setSaveState("正在保存当前画布");
     try {
+      const saved = await saveDraft();
+      if (!saved.ok) {
+        setSaveState(`生成已取消 · ${saved.error}`);
+        return;
+      }
+      setSaveState("正在生成 NodeSpec draft");
       const result = await api<any>(`/workflows/${workflowId}/canvas-draft/nodes`, {
         method: "POST",
         body: JSON.stringify({
@@ -951,7 +958,10 @@ function CanvasPage({ workflowId }: { workflowId: string }) {
     setPublishState({ status: "发布中" });
     try {
       const saved = await saveDraft();
-      if (!saved) return;
+      if (!saved.ok) {
+        setPublishState({ status: "失败", error: `保存草稿失败，发布已取消：${saved.error}` });
+        return;
+      }
       const result = await api<any>(`/workflows/${workflowId}/canvas-draft/publish`, { method: "POST", body: JSON.stringify({}) });
       setPublishState(result);
     } catch (error) {
