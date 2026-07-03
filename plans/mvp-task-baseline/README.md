@@ -24,11 +24,12 @@
 | P4 第五轮 D8/D9 | Canvas NodeSpec draft、validate-before-save、Run polling 和执行反馈落地 | `34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md` |
 | D10 验收 | MVP 回归验收与版本收口已通过，形成 v0.7.0 本地 MVP 验收基线 | `35_P4_MVP回归验收与版本收口报告.md` |
 | P5 计划 | 真实工作流接入详细任务拆解已启动 | `36_P5真实工作流接入详细计划与任务拆解.md` |
+| P5-01 | 真实工作区盘点已完成，确认 W24 主样本和 W23 对照样本 | `37_P5-01真实工作区盘点报告.md` |
 
 当前红点：
 
 ```text
-P5-01 真实工作区盘点：确认 W24/W23 真实交付包、控制文件、产物文件、审核文件和缺口
+P5-02 Flow A-G 对象映射：将真实 Flow A-G 映射到 WorkflowSpec、AgentSpec、ComponentLibrary、ArtifactManifest、GateSpec、TraceEvent
 ```
 
 ## 2. 可视化实现方式
@@ -71,8 +72,8 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 
 | ID | 任务 | 串并行 | 推荐子 Agent | 交付物 |
 |---|---|---|---|---|
-| P5-01 | 真实工作区盘点 | 当前串行起点 | Lead | W24/W23 文件清单、控制文件缺口表、样本选择结论 |
-| P5-02 | Flow A-G 对象映射 | 依赖 P5-01 | Lead | WorkflowSpec、AgentSpec、ComponentLibrary、Artifact/Gate/Trace 映射 |
+| P5-01 | 真实工作区盘点 | 已完成 | Lead | W24/W23 文件清单、控制文件缺口表、样本选择结论 |
+| P5-02 | Flow A-G 对象映射 | 当前串行任务 | Lead | WorkflowSpec、AgentSpec、ComponentLibrary、Artifact/Gate/Trace 映射 |
 | P5-03 | 历史 Run 只读导入方案 | P5-02 后可并行 | Agent A | W24 主样本、W23 对照样本、projection 边界 |
 | P5-04 | 审核策略映射 | P5-02 后可并行 | Agent B | `approval_policy.yaml` 到 Gate 模型 |
 | P5-05 | Trace 映射 | P5-02 后可并行 | Agent C | `task_trace.json`、`task_events.jsonl` 到 TraceEvent |

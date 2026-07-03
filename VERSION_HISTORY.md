@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.7.0` |
 | 版本名称 | P4 MVP 本地闭环验收基线 |
-| 当前阶段 | D10 MVP 回归验收与版本收口已通过；当前形成本地 Web + Local Sidecar + core + fixture workspace 的可运行、可演示、可回归 MVP 基线；P5 真实工作流接入详细计划已启动，当前任务为 `P5-01` 真实工作区盘点；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 当前阶段 | D10 MVP 回归验收与版本收口已通过；当前形成本地 Web + Local Sidecar + core + fixture workspace 的可运行、可演示、可回归 MVP 基线；`P5-01` 真实工作区盘点已完成，当前任务为 `P5-02` Flow A-G 对象映射；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -241,8 +241,11 @@
   `P5-01` 至 `P5-09` 的可执行任务。
 - 同步 `07_后续对接路线图与任务拆解.md`、`README.md` 和
   `17_文档资产关联与AI阅读导航.md`，明确 P5 当前任务和阅读入口。
-- 更新 `plans/mvp-task-baseline/roadmap.json`，将 P5 设置为当前阶段，并将
-  `current_node_id` 推进到 `p5-01`。
+- 更新 `plans/mvp-task-baseline/roadmap.json`，将 P5 设置为当前阶段，并建立
+  `P5-01` 至 `P5-09` 的任务节点。
+- 新增 `37_P5-01真实工作区盘点报告.md`，确认 W24 为主样本、W23 为对照样本，并记录
+  控制文件、产物文件、审核文件和对象映射候选。
+- 同步 task-baseline：`P5-01` 标记完成，`current_node_id` 推进到 `p5-02`。
 
 ## 5. 里程碑
 
