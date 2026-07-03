@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p5-03",
+  "current_node_id": "p5-04",
   "generated_from": [
     "07_后续对接路线图与任务拆解.md",
     "23_P3MVP任务拆解与验收计划.md",
@@ -20,6 +20,7 @@
     "36_P5真实工作流接入详细计划与任务拆解.md",
     "37_P5-01真实工作区盘点报告.md",
     "38_P5-02FlowAG对象映射设计.md",
+    "39_P5-03历史Run只读导入方案.md",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -116,8 +117,8 @@
       "id": "p5",
       "label": "P5 真实工作流接入",
       "status": "current",
-      "summary": "P5 详细任务计划已启动，P5-01 与 P5-02 已完成，当前推进 P5-03 历史 Run 只读导入方案。",
-      "evidence_paths": ["07_后续对接路线图与任务拆解.md", "36_P5真实工作流接入详细计划与任务拆解.md", "37_P5-01真实工作区盘点报告.md", "38_P5-02FlowAG对象映射设计.md"]
+      "summary": "P5 详细任务计划已启动，P5-01、P5-02 与 P5-03 已完成，当前推进 P5-04 审核策略映射。",
+      "evidence_paths": ["07_后续对接路线图与任务拆解.md", "36_P5真实工作流接入详细计划与任务拆解.md", "37_P5-01真实工作区盘点报告.md", "38_P5-02FlowAG对象映射设计.md", "39_P5-03历史Run只读导入方案.md"]
     }
   ],
   "mvp_execution_plan": [
@@ -269,22 +270,22 @@
       "id": "p5-03",
       "day": "P5-03",
       "title": "历史 Run 只读导入方案",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p5-import",
       "parallel_group": "real-workflow-import",
       "depends_on": ["p5-02"],
       "can_parallelize": true,
       "recommended_agent": "Agent A",
-      "deliverables": ["W24 主样本导入规则", "W23 对照样本导入规则", "projection 与真实事件边界"]
+      "deliverables": ["W24 主样本导入规则", "W23 对照样本导入规则", "projection 与真实事件边界", "39_P5-03历史Run只读导入方案.md"]
     },
     {
       "id": "p5-04",
       "day": "P5-04",
       "title": "审核策略映射",
-      "status": "planned",
+      "status": "current",
       "serial_group": "p5-import",
       "parallel_group": "real-workflow-import",
-      "depends_on": ["p5-02"],
+      "depends_on": ["p5-02", "p5-03"],
       "can_parallelize": true,
       "recommended_agent": "Agent B",
       "deliverables": ["approval_policy.yaml 映射", "GateSpec/GateInstance/GateDecision 规则", "审核证据边界"]

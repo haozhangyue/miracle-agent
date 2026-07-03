@@ -17,8 +17,8 @@ Web 工作台；D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续�
 失败 Attention、D7 Adapter 插件目录实体化已完成。D8 Canvas 新增节点生成 NodeSpec
 draft 与 D9 Web run refresh/polling 已落地，D10 MVP 回归验收与版本收口已通过，
 当前形成 `v0.7.0` 本地 MVP 验收基线。P5 真实工作流接入详细计划已启动，
-`P5-01` 真实工作区盘点和 `P5-02` Flow A-G 对象映射已完成，当前焦点是
-`P5-03` 历史 Run 只读导入方案。
+`P5-01` 真实工作区盘点、`P5-02` Flow A-G 对象映射和 `P5-03` 历史 Run
+只读导入方案已完成，当前焦点是 `P5-04` 审核策略映射。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -97,6 +97,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [36_P5真实工作流接入详细计划与任务拆解.md](36_P5真实工作流接入详细计划与任务拆解.md) | P5 真实工作流接入、历史 Run 只读导入和半自动 Run 任务拆解 |
 | `CURRENT` | [37_P5-01真实工作区盘点报告.md](37_P5-01真实工作区盘点报告.md) | W24/W23 真实交付包、控制文件、产物文件和缺口盘点 |
 | `CURRENT` | [38_P5-02FlowAG对象映射设计.md](38_P5-02FlowAG对象映射设计.md) | Flow A-G 到 WorkflowSpec、Artifact、Gate、Agent、Trace 的对象映射 |
+| `CURRENT` | [39_P5-03历史Run只读导入方案.md](39_P5-03历史Run只读导入方案.md) | W24/W23 historical importer、projection、source metadata 和降级导入规则 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明
