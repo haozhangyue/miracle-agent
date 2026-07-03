@@ -98,6 +98,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [37_P5-01真实工作区盘点报告.md](37_P5-01真实工作区盘点报告.md) | W24/W23 真实交付包、控制文件、产物文件和缺口盘点 |
 | `CURRENT` | [38_P5-02FlowAG对象映射设计.md](38_P5-02FlowAG对象映射设计.md) | Flow A-G 到 WorkflowSpec、Artifact、Gate、Agent、Trace 的对象映射 |
 | `CURRENT` | [39_P5-03历史Run只读导入方案.md](39_P5-03历史Run只读导入方案.md) | W24/W23 historical importer、projection、source metadata 和降级导入规则 |
+| `CURRENT` | [40_Miracle系统操作使用说明书.md](40_Miracle系统操作使用说明书.md) | 本地启动、菜单操作、版本感知、常见问题和手册同步规则 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明
@@ -138,6 +139,9 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 
 ## P4 MVP 启动
 
+完整操作说明优先阅读
+[40_Miracle系统操作使用说明书.md](40_Miracle系统操作使用说明书.md)。README 只保留最短启动入口。
+
 ```bash
 npm_config_cache=.npm-cache npm install
 npm run dev
@@ -170,6 +174,10 @@ API:     http://127.0.0.1:4317/api/v0/project/roadmap
 调整或兼容性变化时，必须同步记录版本号、变更文件数量、详细内容、验证结果和里程碑；
 普通修订可归并到当前版本的修订记录，不单独制造大版本。
 
+用户可感知的菜单、启动方式、操作流程、功能变化和 bug 修复，必须同步更新
+`40_Miracle系统操作使用说明书.md`；如果本次更新没有用户操作影响，应在
+`VERSION_HISTORY.md` 中说明“无操作变化”。
+
 ## 文档治理要求
 
 新增重要 Markdown 时必须同步更新：
@@ -178,6 +186,7 @@ API:     http://127.0.0.1:4317/api/v0/project/roadmap
 2. `17_文档资产关联与AI阅读导航.md`。
 3. 影响阶段时更新 `07_后续对接路线图与任务拆解.md`。
 4. 构成重要更新时更新 `VERSION_HISTORY.md`。
+5. 影响用户操作或版本感知时更新 `40_Miracle系统操作使用说明书.md`。
 
 评审或候选文档完成收口后，应标记为历史过程资产，并明确当前有效结果，避免 AI 重复
 读取旧文档。

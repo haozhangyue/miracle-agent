@@ -252,6 +252,10 @@
 - 新增 `39_P5-03历史Run只读导入方案.md`，定义 historical importer 的输入输出、
   W24/W23 projection、source metadata、TraceEvent 边界和降级导入规则。
 - 同步 task-baseline：`P5-03` 标记完成，`current_node_id` 推进到 `p5-04`。
+- 新增 `40_Miracle系统操作使用说明书.md`，作为用户操作真相源，统一记录本地启动、
+  功能菜单、典型操作、版本感知、常见问题和后续手册同步规则。
+- 同步 README、文档阅读导航和 task-baseline 说明：后续重要迭代若影响用户操作或
+  用户可感知功能，必须同步更新操作手册；若无操作影响，应在版本记录中明确说明。
 
 ## 5. 里程碑
 

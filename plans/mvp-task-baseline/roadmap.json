@@ -21,6 +21,7 @@
     "37_P5-01真实工作区盘点报告.md",
     "38_P5-02FlowAG对象映射设计.md",
     "39_P5-03历史Run只读导入方案.md",
+    "40_Miracle系统操作使用说明书.md",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -118,7 +119,7 @@
       "label": "P5 真实工作流接入",
       "status": "current",
       "summary": "P5 详细任务计划已启动，P5-01、P5-02 与 P5-03 已完成，当前推进 P5-04 审核策略映射。",
-      "evidence_paths": ["07_后续对接路线图与任务拆解.md", "36_P5真实工作流接入详细计划与任务拆解.md", "37_P5-01真实工作区盘点报告.md", "38_P5-02FlowAG对象映射设计.md", "39_P5-03历史Run只读导入方案.md"]
+      "evidence_paths": ["07_后续对接路线图与任务拆解.md", "36_P5真实工作流接入详细计划与任务拆解.md", "37_P5-01真实工作区盘点报告.md", "38_P5-02FlowAG对象映射设计.md", "39_P5-03历史Run只读导入方案.md", "40_Miracle系统操作使用说明书.md"]
     }
   ],
   "mvp_execution_plan": [
