@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p4-06",
+  "current_node_id": "p5-01",
   "generated_from": [
     "07_后续对接路线图与任务拆解.md",
     "23_P3MVP任务拆解与验收计划.md",
@@ -17,6 +17,7 @@
     "33_P4_MVP回归验收预备清单.md",
     "34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md",
     "35_P4_MVP回归验收与版本收口报告.md",
+    "36_P5真实工作流接入详细计划与任务拆解.md",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -105,16 +106,16 @@
     {
       "id": "p4-06",
       "label": "P4 MVP 验收与版本发布",
-      "status": "current",
+      "status": "completed",
       "summary": "D10 MVP 回归验收已通过，命令、API smoke、页面截图、版本历史和 task-baseline 已收口，形成 v0.7.0 本地 MVP 验收基线。",
       "evidence_paths": ["35_P4_MVP回归验收与版本收口报告.md", "assets/reviews/p4-mvp", "VERSION_HISTORY.md"]
     },
     {
       "id": "p5",
       "label": "P5 真实工作流接入",
-      "status": "planned",
-      "summary": "接入真实热点工具更新 Flow A-G，从历史 run 展示推进到半自动控制。",
-      "evidence_paths": ["07_后续对接路线图与任务拆解.md"]
+      "status": "current",
+      "summary": "P5 详细任务计划已启动，当前从 P5-01 真实工作区盘点开始，后续推进历史 run 只读展示和半自动控制。",
+      "evidence_paths": ["07_后续对接路线图与任务拆解.md", "36_P5真实工作流接入详细计划与任务拆解.md"]
     }
   ],
   "mvp_execution_plan": [
@@ -237,6 +238,114 @@
       "can_parallelize": false,
       "recommended_agent": "Lead",
       "deliverables": ["npm run typecheck/test/build", "API smoke", "截图证据", "VERSION_HISTORY 发布记录", "35_P4_MVP回归验收与版本收口报告.md"]
+    },
+    {
+      "id": "p5-01",
+      "day": "P5-01",
+      "title": "真实工作区盘点",
+      "status": "current",
+      "serial_group": "p5-foundation",
+      "parallel_group": "real-workflow",
+      "depends_on": ["d10-mvp-acceptance"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["W24/W23 文件清单", "控制文件缺口表", "真实样本选择结论", "36_P5真实工作流接入详细计划与任务拆解.md"]
+    },
+    {
+      "id": "p5-02",
+      "day": "P5-02",
+      "title": "Flow A-G 对象映射",
+      "status": "planned",
+      "serial_group": "p5-foundation",
+      "parallel_group": "real-workflow",
+      "depends_on": ["p5-01"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["WorkflowSpec 映射表", "AgentSpec 映射表", "ComponentLibrary 映射表", "Artifact/Gate/Trace 对象边界"]
+    },
+    {
+      "id": "p5-03",
+      "day": "P5-03",
+      "title": "历史 Run 只读导入方案",
+      "status": "planned",
+      "serial_group": "p5-import",
+      "parallel_group": "real-workflow-import",
+      "depends_on": ["p5-02"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent A",
+      "deliverables": ["W24 主样本导入规则", "W23 对照样本导入规则", "projection 与真实事件边界"]
+    },
+    {
+      "id": "p5-04",
+      "day": "P5-04",
+      "title": "审核策略映射",
+      "status": "planned",
+      "serial_group": "p5-import",
+      "parallel_group": "real-workflow-import",
+      "depends_on": ["p5-02"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent B",
+      "deliverables": ["approval_policy.yaml 映射", "GateSpec/GateInstance/GateDecision 规则", "审核证据边界"]
+    },
+    {
+      "id": "p5-05",
+      "day": "P5-05",
+      "title": "Trace 映射",
+      "status": "planned",
+      "serial_group": "p5-import",
+      "parallel_group": "real-workflow-import",
+      "depends_on": ["p5-02"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent C",
+      "deliverables": ["task_trace.json 映射", "task_events.jsonl 映射", "缺失证据 projection 规则"]
+    },
+    {
+      "id": "p5-06",
+      "day": "P5-06",
+      "title": "Miracle UI 展示验收",
+      "status": "planned",
+      "serial_group": "p5-display",
+      "parallel_group": "real-workflow",
+      "depends_on": ["p5-03", "p5-04", "p5-05"],
+      "can_parallelize": false,
+      "recommended_agent": "Agent D",
+      "deliverables": ["Run/DAG 展示验收", "Agent/Artifact/Gate 展示验收", "Attention 真实根因展示", "截图证据要求"]
+    },
+    {
+      "id": "p5-07",
+      "day": "P5-07",
+      "title": "半自动新 Run 草案",
+      "status": "planned",
+      "serial_group": "p5-control",
+      "parallel_group": "real-workflow-control",
+      "depends_on": ["p5-06"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent D",
+      "deliverables": ["Run draft 协议", "Dry-run 结果", "人工确认门", "不调用真实 Runner 的安全边界"]
+    },
+    {
+      "id": "p5-08",
+      "day": "P5-08",
+      "title": "首个真实 Adapter 边界",
+      "status": "planned",
+      "serial_group": "p5-adapter",
+      "parallel_group": "real-workflow-control",
+      "depends_on": ["p5-06"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent E",
+      "deliverables": ["Codex Adapter 评估", "官方 API Adapter 评估", "凭证/审计/回滚边界", "首个 Adapter 推荐结论"]
+    },
+    {
+      "id": "p5-09",
+      "day": "P5-09",
+      "title": "P5 回归验收",
+      "status": "planned",
+      "serial_group": "p5-acceptance",
+      "parallel_group": "release",
+      "depends_on": ["p5-07", "p5-08"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["P5 验收报告", "API smoke", "截图证据", "VERSION_HISTORY 更新", "task-baseline 同步"]
     }
   ],
   "long_term_plan": [
@@ -300,6 +409,24 @@
       "name": "验收发布",
       "parallelizable": false,
       "tasks": ["d10-mvp-acceptance"]
+    },
+    {
+      "id": "track-p5-foundation",
+      "name": "P5 真实工作流基础",
+      "parallelizable": false,
+      "tasks": ["p5-01", "p5-02"]
+    },
+    {
+      "id": "track-p5-import",
+      "name": "P5 历史导入映射",
+      "parallelizable": true,
+      "tasks": ["p5-03", "p5-04", "p5-05"]
+    },
+    {
+      "id": "track-p5-control",
+      "name": "P5 展示与半自动控制",
+      "parallelizable": true,
+      "tasks": ["p5-06", "p5-07", "p5-08", "p5-09"]
     }
   ]
 }

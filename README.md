@@ -16,7 +16,8 @@ P4 第五轮已开始执行能力补齐，D3 Gate reject 返工模型已落地�
 Web 工作台；D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续推进、Gate 暂停和
 失败 Attention、D7 Adapter 插件目录实体化已完成。D8 Canvas 新增节点生成 NodeSpec
 draft 与 D9 Web run refresh/polling 已落地，D10 MVP 回归验收与版本收口已通过，
-当前形成 `v0.7.0` 本地 MVP 验收基线。
+当前形成 `v0.7.0` 本地 MVP 验收基线。P5 真实工作流接入详细计划已启动，
+当前焦点是将“热点工具更新”真实 Flow A-G 从历史 Run 只读展示推进到半自动新 Run。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -92,6 +93,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [33_P4_MVP回归验收预备清单.md](33_P4_MVP回归验收预备清单.md) | D10 MVP 回归验收预备清单，已由 35 执行收口 |
 | `CURRENT` | [34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md](34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md) | P4 第五轮 D8/D9 Canvas NodeSpec draft、Run polling 和执行反馈 |
 | `CURRENT` | [35_P4_MVP回归验收与版本收口报告.md](35_P4_MVP回归验收与版本收口报告.md) | D10 MVP 回归验收通过、截图证据、API smoke 和版本收口 |
+| `CURRENT` | [36_P5真实工作流接入详细计划与任务拆解.md](36_P5真实工作流接入详细计划与任务拆解.md) | P5 真实工作流接入、历史 Run 只读导入和半自动 Run 任务拆解 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明

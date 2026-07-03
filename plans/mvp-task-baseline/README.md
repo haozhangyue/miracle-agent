@@ -2,11 +2,11 @@
 
 > 文档状态：项目任务基线，不属于 Miracle 系统设计文档序列。
 >
-> 目标：把现有 P0-P4 进度、P4 第五轮 MVP 执行计划、P5 以后长期系统建设计划统一成可视化 Roadmap，并让页面随 Git 提交和证据文件更新动态刷新。
+> 目标：把现有 P0-P5 进度、P4 MVP 执行计划、P5 真实工作流接入计划和长期系统建设计划统一成可视化 Roadmap，并让页面随 Git 提交和证据文件更新动态刷新。
 
 ## 1. 当前阶段判断
 
-当前项目已经不是纯文档或原型阶段，而是进入 P4 可运行 MVP 实现阶段。
+当前项目已经通过 P4 可运行 MVP 验收，进入 P5 真实工作流接入阶段。
 
 已完成：
 
@@ -23,11 +23,12 @@
 | P4 第五轮 D7 | Adapter manifest、Codex mock-compatible adapter、credential check 落地 | `32_P4第五轮_D7_Adapter插件目录实体化交付说明.md` |
 | P4 第五轮 D8/D9 | Canvas NodeSpec draft、validate-before-save、Run polling 和执行反馈落地 | `34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md` |
 | D10 验收 | MVP 回归验收与版本收口已通过，形成 v0.7.0 本地 MVP 验收基线 | `35_P4_MVP回归验收与版本收口报告.md` |
+| P5 计划 | 真实工作流接入详细任务拆解已启动 | `36_P5真实工作流接入详细计划与任务拆解.md` |
 
 当前红点：
 
 ```text
-P4 MVP 验收与版本发布：D10 已完成，下一主线建议进入 P5 真实工作流接入
+P5-01 真实工作区盘点：确认 W24/W23 真实交付包、控制文件、产物文件、审核文件和缺口
 ```
 
 ## 2. 可视化实现方式
@@ -65,6 +66,20 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 | D8 | Canvas 新增节点生成 NodeSpec draft | 已完成，可并行 | Agent B | 新增 node card、NodeSpec draft、validate-before-save |
 | D9 | Web run refresh/polling 与执行反馈 | 已完成，可并行 | Agent B | run polling、执行中状态、错误恢复提示 |
 | D10 | MVP 回归验收与版本收口 | 已完成，串行收口 | Lead | typecheck/test/build、API smoke、截图证据、版本记录、`35` |
+
+## 3.1 P5 真实工作流接入计划
+
+| ID | 任务 | 串并行 | 推荐子 Agent | 交付物 |
+|---|---|---|---|---|
+| P5-01 | 真实工作区盘点 | 当前串行起点 | Lead | W24/W23 文件清单、控制文件缺口表、样本选择结论 |
+| P5-02 | Flow A-G 对象映射 | 依赖 P5-01 | Lead | WorkflowSpec、AgentSpec、ComponentLibrary、Artifact/Gate/Trace 映射 |
+| P5-03 | 历史 Run 只读导入方案 | P5-02 后可并行 | Agent A | W24 主样本、W23 对照样本、projection 边界 |
+| P5-04 | 审核策略映射 | P5-02 后可并行 | Agent B | `approval_policy.yaml` 到 Gate 模型 |
+| P5-05 | Trace 映射 | P5-02 后可并行 | Agent C | `task_trace.json`、`task_events.jsonl` 到 TraceEvent |
+| P5-06 | Miracle UI 展示验收 | 依赖 P5-03/P5-04/P5-05 | Agent D | Run、DAG、Agent、Artifact、Gate、Attention 展示 |
+| P5-07 | 半自动新 Run 草案 | P5-06 后可并行 | Agent D | Run draft、Dry-run、人工确认门 |
+| P5-08 | 首个真实 Adapter 边界 | P5-06 后可并行 | Agent E | Codex/API Adapter 评估和边界 |
+| P5-09 | P5 回归验收 | 串行收口 | Lead | P5 验收报告、API smoke、截图、版本记录、task-baseline 同步 |
 
 ## 4. 串行与并行边界
 
