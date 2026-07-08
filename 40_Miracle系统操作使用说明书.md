@@ -33,8 +33,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 | 当前产品版本 | `v0.7.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
 | 当前阶段 | P5 真实工作流接入 |
-| 当前任务焦点 | `P5-04` 审核策略映射 |
-| 已完成 P5 任务 | `P5-01` 真实工作区盘点、`P5-02` Flow A-G 对象映射、`P5-03` 历史 Run 只读导入方案 |
+| 当前任务焦点 | `P5-05` Trace 映射 |
+| 已完成 P5 任务 | `P5-01` 真实工作区盘点、`P5-02` Flow A-G 对象映射、`P5-03` 历史 Run 只读导入方案、`P5-04` 审核策略映射 |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
 | 任务基线数据 | `plans/mvp-task-baseline/roadmap.json` |
 
@@ -280,6 +280,7 @@ Attention 的原则是“一个根因对应一个主 Attention Item”，避免�
 | `v0.7.0` | 本地 MVP 可运行闭环 | Run/Gate/Attention/Artifact/Canvas 可观察 | Dry-run、Canvas 草稿链路等问题已修复 | 需要通过 `npm run dev` 启动 Web + Sidecar | 否 |
 | P5-01 至 P5-03 | 真实工作流接入计划、盘点、映射和历史导入方案 | 明确 W24/W23 样本边界 | 暂无用户界面 bug 修复 | 暂不新增 UI 操作，只影响后续真实导入理解 | 否 |
 | 本手册创建 | 新增统一操作说明书 | 版本变化更易感知 | 解决“提交说明分散、用户不知道系统怎么用”的文档缺口 | 用户优先阅读本文 | 否 |
+| P5-04 | 审核策略映射设计 | 明确 approval policy 到 Gate 模型和 F_final_render 待审边界 | 无用户界面 bug 修复 | 暂不新增 UI 操作，后续 P5-06 展示验收会使用该规则 | 否 |
 
 ### 8.3 提交前同步检查
 
