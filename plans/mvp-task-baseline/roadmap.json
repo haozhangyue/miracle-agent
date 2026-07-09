@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p5-05",
+  "current_node_id": "p5-07",
   "generated_from": [
     "07_后续对接路线图与任务拆解.md",
     "23_P3MVP任务拆解与验收计划.md",
@@ -23,6 +23,8 @@
     "39_P5-03历史Run只读导入方案.md",
     "40_Miracle系统操作使用说明书.md",
     "41_P5-04审核策略映射设计.md",
+    "42_P5-05Trace映射设计.md",
+    "43_P5-06真实历史Run_UI展示验收方案.md",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -166,7 +168,7 @@
       "id": "p5",
       "label": "P5 真实工作流接入",
       "status": "current",
-      "summary": "P5 详细任务计划已启动，P5-01 至 P5-04 已完成，当前推进 P5-05 Trace 映射。",
+      "summary": "P5 详细任务计划已启动，P5-01 至 P5-06 已完成，当前推进 P5-07 半自动新 Run 草案。",
       "evidence_paths": [
         "07_后续对接路线图与任务拆解.md",
         "36_P5真实工作流接入详细计划与任务拆解.md",
@@ -174,7 +176,9 @@
         "38_P5-02FlowAG对象映射设计.md",
         "39_P5-03历史Run只读导入方案.md",
         "40_Miracle系统操作使用说明书.md",
-        "41_P5-04审核策略映射设计.md"
+        "41_P5-04审核策略映射设计.md",
+        "42_P5-05Trace映射设计.md",
+        "43_P5-06真实历史Run_UI展示验收方案.md"
       ]
     }
   ],
@@ -457,7 +461,7 @@
       "id": "p5-05",
       "day": "P5-05",
       "title": "Trace 映射",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p5-import",
       "parallel_group": "real-workflow-import",
       "depends_on": [
@@ -469,14 +473,15 @@
       "deliverables": [
         "task_trace.json 映射",
         "task_events.jsonl 映射",
-        "缺失证据 projection 规则"
+        "缺失证据 projection 规则",
+        "42_P5-05Trace映射设计.md"
       ]
     },
     {
       "id": "p5-06",
       "day": "P5-06",
       "title": "Miracle UI 展示验收",
-      "status": "planned",
+      "status": "completed",
       "serial_group": "p5-display",
       "parallel_group": "real-workflow",
       "depends_on": [
@@ -490,14 +495,15 @@
         "Run/DAG 展示验收",
         "Agent/Artifact/Gate 展示验收",
         "Attention 真实根因展示",
-        "截图证据要求"
+        "截图证据要求",
+        "43_P5-06真实历史Run_UI展示验收方案.md"
       ]
     },
     {
       "id": "p5-07",
       "day": "P5-07",
       "title": "半自动新 Run 草案",
-      "status": "planned",
+      "status": "current",
       "serial_group": "p5-control",
       "parallel_group": "real-workflow-control",
       "depends_on": [

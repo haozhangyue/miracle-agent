@@ -29,11 +29,13 @@
 | P5-03 | 历史 Run 只读导入方案已完成，确认 W24/W23 importer、projection 和 source metadata 规则 | `39_P5-03历史Run只读导入方案.md` |
 | 操作手册 | 系统操作使用说明书已建立，统一启动方式、菜单说明、版本感知和手册同步规则 | `40_Miracle系统操作使用说明书.md` |
 | P5-04 | 审核策略映射已完成，确认 approval policy、GateInstance、GateDecision 和 F_final_render 待审边界 | `41_P5-04审核策略映射设计.md` |
+| P5-05 | Trace 映射已完成，确认 task_trace 到 NodeAttempt、task_events 到 TraceEvent 和缺失 trace 降级规则 | `42_P5-05Trace映射设计.md` |
+| P5-06 | UI 展示验收方案已完成，确认真实历史 Run 在 Run、DAG、Agent、Artifact、Gate、Attention 中的展示口径 | `43_P5-06真实历史Run_UI展示验收方案.md` |
 
 当前红点：
 
 ```text
-P5-05 Trace 映射：将 `task_trace.json`、`task_events.jsonl` 映射为 TraceEvent
+P5-07 半自动新 Run 草案：创建真实 workflow 的 Run draft 和 Dry-run，不调用真实 Runner
 ```
 
 ## 2. 可视化实现方式
@@ -80,9 +82,9 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 | P5-02 | Flow A-G 对象映射 | 已完成 | Lead | WorkflowSpec、AgentSpec、ComponentLibrary、Artifact/Gate/Trace 映射 |
 | P5-03 | 历史 Run 只读导入方案 | 已完成 | Agent A | W24 主样本、W23 对照样本、projection 边界 |
 | P5-04 | 审核策略映射 | 已完成，可作为 P5-05/P5-06 前置 | Agent B | `approval_policy.yaml` 到 Gate 模型 |
-| P5-05 | Trace 映射 | 当前主线任务 | Agent C | `task_trace.json`、`task_events.jsonl` 到 TraceEvent |
-| P5-06 | Miracle UI 展示验收 | 依赖 P5-03/P5-04/P5-05 | Agent D | Run、DAG、Agent、Artifact、Gate、Attention 展示 |
-| P5-07 | 半自动新 Run 草案 | P5-06 后可并行 | Agent D | Run draft、Dry-run、人工确认门 |
+| P5-05 | Trace 映射 | 已完成，可作为 P5-06 前置 | Agent C | `task_trace.json`、`task_events.jsonl` 到 TraceEvent |
+| P5-06 | Miracle UI 展示验收 | 已完成 | Agent D | Run、DAG、Agent、Artifact、Gate、Attention 展示验收方案 |
+| P5-07 | 半自动新 Run 草案 | 当前主线任务 | Agent D | Run draft、Dry-run、人工确认门 |
 | P5-08 | 首个真实 Adapter 边界 | P5-06 后可并行 | Agent E | Codex/API Adapter 评估和边界 |
 | P5-09 | P5 回归验收 | 串行收口 | Lead | P5 验收报告、API smoke、截图、版本记录、task-baseline 同步 |
 
@@ -128,7 +130,7 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 
 1. 通过 Sidecar 独立地址 `/task-baseline` 访问，不进入 `apps/web` 侧边栏。
 2. 总体阶段用绿色、红色、灰色展示完成、当前和计划。
-3. 当前红点指向 `P5-05 Trace 映射`。
+3. 当前红点指向 `P5-07 半自动新 Run 草案`。
 4. D1-D10 和 P5-01 至 P5-09 能区分串行、依赖和可并行任务。
 5. 能看到最近 Git 提交。
 6. 能看到工作区是否有未提交修改。

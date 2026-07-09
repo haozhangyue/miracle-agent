@@ -33,8 +33,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 | 当前产品版本 | `v0.7.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
 | 当前阶段 | P5 真实工作流接入 |
-| 当前任务焦点 | `P5-05` Trace 映射 |
-| 已完成 P5 任务 | `P5-01` 真实工作区盘点、`P5-02` Flow A-G 对象映射、`P5-03` 历史 Run 只读导入方案、`P5-04` 审核策略映射 |
+| 当前任务焦点 | `P5-07` 半自动新 Run 草案 |
+| 已完成 P5 任务 | `P5-01` 真实工作区盘点、`P5-02` Flow A-G 对象映射、`P5-03` 历史 Run 只读导入方案、`P5-04` 审核策略映射、`P5-05` Trace 映射、`P5-06` UI 展示验收方案 |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
 | 任务基线数据 | `plans/mvp-task-baseline/roadmap.json` |
 
@@ -281,6 +281,8 @@ Attention 的原则是“一个根因对应一个主 Attention Item”，避免�
 | P5-01 至 P5-03 | 真实工作流接入计划、盘点、映射和历史导入方案 | 明确 W24/W23 样本边界 | 暂无用户界面 bug 修复 | 暂不新增 UI 操作，只影响后续真实导入理解 | 否 |
 | 本手册创建 | 新增统一操作说明书 | 版本变化更易感知 | 解决“提交说明分散、用户不知道系统怎么用”的文档缺口 | 用户优先阅读本文 | 否 |
 | P5-04 | 审核策略映射设计 | 明确 approval policy 到 Gate 模型和 F_final_render 待审边界 | 无用户界面 bug 修复 | 暂不新增 UI 操作，后续 P5-06 展示验收会使用该规则 | 否 |
+| P5-05 | Trace 映射设计 | 明确 task_trace 到 NodeAttempt、task_events 到 TraceEvent 和 W23 缺 trace 降级规则 | 无用户界面 bug 修复 | 暂不新增 UI 操作，后续 P5-06 展示验收会使用该规则 | 否 |
+| P5-06 | UI 展示验收方案 | 明确真实历史 Run 在 Run、DAG、Agent、Artifact、Gate、Attention 中的展示口径 | 无用户界面 bug 修复 | 暂不新增 UI 操作，作为后续 importer 和截图验收标准 | 否 |
 
 ### 8.3 提交前同步检查
 
@@ -305,7 +307,7 @@ Attention 的原则是“一个根因对应一个主 Attention Item”，避免�
 | Scheduler 不继续推进 | Run 停在 pending_review Gate 或失败节点 | 先处理 Gate 审核或 Attention 根因，再重新调度 |
 | Gate 不能创建返工 | 按钮不可用或接口返回冲突 | 只有已 `reject` 或 `request_changes` 的 Gate 可以创建返工 |
 | Artifact 不可预览 | 预览区域显示 missing、binary 或路径拒绝 | 检查 ArtifactManifest 路径、文件是否存在、是否在 workspace 内 |
-| 真实工作流没有进入 UI | P5 当前仍是计划和导入方案阶段 | 等 P5-06 展示验收后再进入真实历史 Run 的 UI 验收 |
+| 真实工作流没有进入 UI | P5 当前仍是计划、导入方案和展示验收口径阶段 | 等 P5 importer 实现后再进行真实历史 Run 的页面截图验收 |
 
 ## 10. 当前限制
 
