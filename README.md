@@ -19,7 +19,8 @@ draft 与 D9 Web run refresh/polling 已落地，D10 MVP 回归验收与版本�
 当前形成 `v0.7.0` 本地 MVP 验收基线。P5 真实工作流接入详细计划已启动，
 `P5-01` 真实工作区盘点、`P5-02` Flow A-G 对象映射、`P5-03` 历史 Run
 只读导入方案、`P5-04` 审核策略映射、`P5-05` Trace 映射和 `P5-06`
-UI 展示验收方案已完成，当前焦点是 `P5-07` 半自动新 Run 草案。
+UI 展示验收方案和 `P5-07` 半自动新 Run 草案设计已完成，当前焦点是 `P5-08`
+首个真实 Adapter 边界评估。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -103,6 +104,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [41_P5-04审核策略映射设计.md](41_P5-04审核策略映射设计.md) | approval_policy 到 GateSpec、GateInstance、GateDecision 和审核证据边界 |
 | `CURRENT` | [42_P5-05Trace映射设计.md](42_P5-05Trace映射设计.md) | task_trace 到 NodeAttempt、task_events 到 TraceEvent 和缺失 trace 降级规则 |
 | `CURRENT` | [43_P5-06真实历史Run_UI展示验收方案.md](43_P5-06真实历史Run_UI展示验收方案.md) | 真实历史 Run 在 Run、DAG、Agent、Artifact、Gate、Attention 中的展示验收口径 |
+| `CURRENT` | [44_P5-07半自动新Run草案设计.md](44_P5-07半自动新Run草案设计.md) | RunDraft、RunDraftDryRunPlan、LaunchConfirmation 和统一 Run 启动边界 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明

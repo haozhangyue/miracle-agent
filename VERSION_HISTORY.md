@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.7.0` |
 | 版本名称 | P4 MVP 本地闭环验收基线 |
-| 当前阶段 | D10 MVP 回归验收与版本收口已通过；当前形成本地 Web + Local Sidecar + core + fixture workspace 的可运行、可演示、可回归 MVP 基线；`P5-01` 真实工作区盘点、`P5-02` Flow A-G 对象映射、`P5-03` 历史 Run 只读导入方案、`P5-04` 审核策略映射、`P5-05` Trace 映射和 `P5-06` UI 展示验收方案已完成，当前任务为 `P5-07` 半自动新 Run 草案；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 当前阶段 | D10 MVP 回归验收与版本收口已通过；当前形成本地 Web + Local Sidecar + core + fixture workspace 的可运行、可演示、可回归 MVP 基线；`P5-01` 至 `P5-07` 已完成，当前任务为 `P5-08` 首个真实 Adapter 边界评估；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -270,6 +270,12 @@
   DAG、Agent、Artifact、Gate、Attention 中的展示验收口径、API smoke 范围和截图证据要求。
 - 同步 task-baseline：`P5-06` 标记完成，`current_node_id` 推进到 `p5-07`。
 - 本次为 P5 展示验收方案更新，不改变本地启动命令和 Web 菜单操作。
+- 新增 `44_P5-07半自动新Run草案设计.md`，定义 RunDraft、WorkflowSnapshotDraft、
+  RunDraftDryRunPlan、LaunchConfirmation、草案审计和 P5-08 启动边界；复用核心
+  DryRunPlan 与既有 `POST /api/v0/runs`，避免形成两套计划和启动协议。
+- 同步 task-baseline：`P5-07` 标记完成，`current_node_id` 推进到 `p5-08`。
+- 本次为半自动启动协议设计更新，尚未实现 Run draft 页面或真实 Runner，不改变当前可运行
+  Web 菜单和启动命令。
 
 ## 5. 里程碑
 

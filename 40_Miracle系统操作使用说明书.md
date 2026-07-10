@@ -33,8 +33,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 | 当前产品版本 | `v0.7.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
 | 当前阶段 | P5 真实工作流接入 |
-| 当前任务焦点 | `P5-07` 半自动新 Run 草案 |
-| 已完成 P5 任务 | `P5-01` 真实工作区盘点、`P5-02` Flow A-G 对象映射、`P5-03` 历史 Run 只读导入方案、`P5-04` 审核策略映射、`P5-05` Trace 映射、`P5-06` UI 展示验收方案 |
+| 当前任务焦点 | `P5-08` 首个真实 Adapter 边界评估 |
+| 已完成 P5 任务 | `P5-01` 至 `P5-07`，最新完成半自动新 Run 草案设计 |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
 | 任务基线数据 | `plans/mvp-task-baseline/roadmap.json` |
 
@@ -244,6 +244,7 @@ Attention 的原则是“一个根因对应一个主 Attention Item”，避免�
 | Canvas 草稿 | Canvas node card 到 NodeSpec draft | 用户能把画布草稿发布为 draft WorkflowSpec |
 | Task Baseline | 独立任务基线页面和 Git 同步状态 | 用户能看当前任务计划、证据文件和提交同步状态 |
 | P5 真实工作流接入 | W24/W23 真实样本盘点、对象映射、历史 Run 只读导入方案 | 用户能知道真实工作流接入正在从历史 Run 只读展示开始 |
+| 半自动新 Run 草案 | RunDraft、RunDraftDryRunPlan、LaunchConfirmation 和草案审计边界 | 用户后续可在不调用真实 Runner 的情况下准备、检查并确认一次新 Run |
 | 操作手册 | 新增本文 | 用户不再只依赖提交文字，可以按手册启动、操作和理解版本变化 |
 
 ## 7. 相比上一版本的用户变化
