@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.7.0` |
 | 版本名称 | P4 MVP 本地闭环验收基线 |
-| 当前阶段 | D10 MVP 回归验收与版本收口已通过；当前形成本地 Web + Local Sidecar + core + fixture workspace 的可运行、可演示、可回归 MVP 基线；`P5-01` 至 `P5-07` 已完成，当前任务为 `P5-08` 首个真实 Adapter 边界评估；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 当前阶段 | D10 MVP 回归验收与版本收口已通过；当前形成本地 Web + Local Sidecar + core + fixture workspace 的可运行、可演示、可回归 MVP 基线；`P5-01` 至 `P5-08` 已完成，当前任务为 `P5-09` P5 回归验收；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -276,6 +276,12 @@
 - 同步 task-baseline：`P5-07` 标记完成，`current_node_id` 推进到 `p5-08`。
 - 本次为半自动启动协议设计更新，尚未实现 Run draft 页面或真实 Runner，不改变当前可运行
   Web 菜单和启动命令。
+- 新增 `45_P5-08首个真实Adapter边界评估.md`，推荐 Codex CLI 作为首个真实 Adapter，
+  定义 attempt workspace、Codex JSONL、输出校验、凭证、取消、超时、崩溃对账和官方
+  Responses API 第二阶段边界。
+- 同步 task-baseline：`P5-08` 标记完成，`current_node_id` 推进到 `p5-09`。
+- 本次为 Adapter 选型和技术边界更新，尚未启用真实 Codex/API 调用，不改变当前 Web
+  菜单和启动命令。
 
 ## 5. 里程碑
 

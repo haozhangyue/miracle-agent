@@ -32,11 +32,12 @@
 | P5-05 | Trace 映射已完成，确认 task_trace 到 NodeAttempt、task_events 到 TraceEvent 和缺失 trace 降级规则 | `42_P5-05Trace映射设计.md` |
 | P5-06 | UI 展示验收方案已完成，确认真实历史 Run 在 Run、DAG、Agent、Artifact、Gate、Attention 中的展示口径 | `43_P5-06真实历史Run_UI展示验收方案.md` |
 | P5-07 | 半自动新 Run 草案已完成，确认 RunDraft、Dry-run、启动确认和不写执行事实的边界 | `44_P5-07半自动新Run草案设计.md` |
+| P5-08 | 首个真实 Adapter 边界评估已完成，推荐 Codex CLI 首接、官方 API 第二阶段接入 | `45_P5-08首个真实Adapter边界评估.md` |
 
 当前红点：
 
 ```text
-P5-08 首个真实 Adapter 边界：评估 Codex Adapter 与官方 API Adapter 的最小接入边界
+P5-09 P5 回归验收：收口 P5 文档、当前实现证据、版本记录和后续 Adapter backlog
 ```
 
 ## 2. 可视化实现方式
@@ -86,8 +87,8 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 | P5-05 | Trace 映射 | 已完成，可作为 P5-06 前置 | Agent C | `task_trace.json`、`task_events.jsonl` 到 TraceEvent |
 | P5-06 | Miracle UI 展示验收 | 已完成 | Agent D | Run、DAG、Agent、Artifact、Gate、Attention 展示验收方案 |
 | P5-07 | 半自动新 Run 草案 | 已完成 | Agent D | Run draft、Dry-run、人工确认门 |
-| P5-08 | 首个真实 Adapter 边界 | 当前主线任务 | Agent E | Codex/API Adapter 评估和边界 |
-| P5-09 | P5 回归验收 | 串行收口 | Lead | P5 验收报告、API smoke、截图、版本记录、task-baseline 同步 |
+| P5-08 | 首个真实 Adapter 边界 | 已完成 | Agent E | Codex/API Adapter 评估和边界 |
+| P5-09 | P5 回归验收 | 当前主线任务 | Lead | P5 验收报告、API smoke、截图、版本记录、task-baseline 同步 |
 
 ## 4. 串行与并行边界
 
@@ -131,7 +132,7 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 
 1. 通过 Sidecar 独立地址 `/task-baseline` 访问，不进入 `apps/web` 侧边栏。
 2. 总体阶段用绿色、红色、灰色展示完成、当前和计划。
-3. 当前红点指向 `P5-08 首个真实 Adapter 边界`。
+3. 当前红点指向 `P5-09 P5 回归验收`。
 4. D1-D10 和 P5-01 至 P5-09 能区分串行、依赖和可并行任务。
 5. 能看到最近 Git 提交。
 6. 能看到工作区是否有未提交修改。

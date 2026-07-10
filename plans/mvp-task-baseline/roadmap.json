@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p5-08",
+  "current_node_id": "p5-09",
   "generated_from": [
     "07_后续对接路线图与任务拆解.md",
     "23_P3MVP任务拆解与验收计划.md",
@@ -26,6 +26,7 @@
     "42_P5-05Trace映射设计.md",
     "43_P5-06真实历史Run_UI展示验收方案.md",
     "44_P5-07半自动新Run草案设计.md",
+    "45_P5-08首个真实Adapter边界评估.md",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -169,7 +170,7 @@
       "id": "p5",
       "label": "P5 真实工作流接入",
       "status": "current",
-      "summary": "P5 详细任务计划已启动，P5-01 至 P5-07 已完成，当前推进 P5-08 首个真实 Adapter 边界评估。",
+      "summary": "P5 详细任务计划已启动，P5-01 至 P5-08 已完成，当前推进 P5-09 P5 回归验收。",
       "evidence_paths": [
         "07_后续对接路线图与任务拆解.md",
         "36_P5真实工作流接入详细计划与任务拆解.md",
@@ -180,7 +181,8 @@
         "41_P5-04审核策略映射设计.md",
         "42_P5-05Trace映射设计.md",
         "43_P5-06真实历史Run_UI展示验收方案.md",
-        "44_P5-07半自动新Run草案设计.md"
+        "44_P5-07半自动新Run草案设计.md",
+        "45_P5-08首个真实Adapter边界评估.md"
       ]
     }
   ],
@@ -525,11 +527,11 @@
       "id": "p5-08",
       "day": "P5-08",
       "title": "首个真实 Adapter 边界",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p5-adapter",
       "parallel_group": "real-workflow-control",
       "depends_on": [
-        "p5-06"
+        "p5-07"
       ],
       "can_parallelize": true,
       "recommended_agent": "Agent E",
@@ -537,14 +539,15 @@
         "Codex Adapter 评估",
         "官方 API Adapter 评估",
         "凭证/审计/回滚边界",
-        "首个 Adapter 推荐结论"
+        "首个 Adapter 推荐结论",
+        "45_P5-08首个真实Adapter边界评估.md"
       ]
     },
     {
       "id": "p5-09",
       "day": "P5-09",
       "title": "P5 回归验收",
-      "status": "planned",
+      "status": "current",
       "serial_group": "p5-acceptance",
       "parallel_group": "release",
       "depends_on": [
