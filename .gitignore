@@ -6,6 +6,7 @@ dist/
 .npm-cache/
 coverage/
 *.log
+.playwright-cli/
 
 apps/*/node_modules/
 apps/*/dist/

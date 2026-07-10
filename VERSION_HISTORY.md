@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.7.0` |
 | 版本名称 | P4 MVP 本地闭环验收基线 |
-| 当前阶段 | D10 MVP 回归验收与版本收口已通过；当前形成本地 Web + Local Sidecar + core + fixture workspace 的可运行、可演示、可回归 MVP 基线；`P5-01` 至 `P5-08` 已完成，当前任务为 `P5-09` P5 回归验收；项目任务基线独立维护在 `plans/mvp-task-baseline/` |
+| 当前阶段 | P5-09 回归验收通过，形成真实工作流接入设计基线；运行版本仍为 v0.7.0，真实 importer、RunDraft 和 Codex CLI Adapter 尚未实装；当前任务为 `P6-01` 真实工作流工程实施计划 |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -282,6 +282,14 @@
 - 同步 task-baseline：`P5-08` 标记完成，`current_node_id` 推进到 `p5-09`。
 - 本次为 Adapter 选型和技术边界更新，尚未启用真实 Codex/API 调用，不改变当前 Web
   菜单和启动命令。
+- 新增 `46_P5回归验收与阶段收口报告.md`，完成 P5-01 至 P5-08 证据、真实 W24/W23
+  样本、工程测试、20 项 API smoke、页面截图和范围真实性验收。
+- 修复 Sidecar roadmap API 测试硬编码旧 `p4-06` 当前节点的问题，改为验证当前节点存在且
+  状态为 current。
+- 同步 task-baseline：`P5-09` 标记完成，P5 阶段收口，`current_node_id` 推进到
+  `p6-01`。
+- 本次不升级运行版本；系统仍为 `v0.7.0`，P6 实装真实 historical importer 后再评估
+  `v0.8.0`。
 
 ## 5. 里程碑
 

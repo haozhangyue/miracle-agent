@@ -16,11 +16,12 @@ P4 第五轮已开始执行能力补齐，D3 Gate reject 返工模型已落地�
 Web 工作台；D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续推进、Gate 暂停和
 失败 Attention、D7 Adapter 插件目录实体化已完成。D8 Canvas 新增节点生成 NodeSpec
 draft 与 D9 Web run refresh/polling 已落地，D10 MVP 回归验收与版本收口已通过，
-当前形成 `v0.7.0` 本地 MVP 验收基线。P5 真实工作流接入详细计划已启动，
+当前形成 `v0.7.0` 本地 MVP 验收基线。P5 真实工作流接入设计与阶段验收已完成，
 `P5-01` 真实工作区盘点、`P5-02` Flow A-G 对象映射、`P5-03` 历史 Run
 只读导入方案、`P5-04` 审核策略映射、`P5-05` Trace 映射和 `P5-06`
-UI 展示验收方案、`P5-07` 半自动新 Run 草案设计和 `P5-08` 首个真实 Adapter
-边界评估已完成；首接推荐 Codex CLI Adapter，当前焦点是 `P5-09` P5 回归验收。
+UI 展示验收方案、`P5-07` 半自动新 Run 草案设计、`P5-08` 首个真实 Adapter
+边界评估和 `P5-09` 回归验收均已完成。P5 形成真实工作流接入设计基线，首接推荐
+Codex CLI Adapter；当前焦点进入 `P6-01` 真实工作流工程实施计划。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -106,6 +107,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [43_P5-06真实历史Run_UI展示验收方案.md](43_P5-06真实历史Run_UI展示验收方案.md) | 真实历史 Run 在 Run、DAG、Agent、Artifact、Gate、Attention 中的展示验收口径 |
 | `CURRENT` | [44_P5-07半自动新Run草案设计.md](44_P5-07半自动新Run草案设计.md) | RunDraft、RunDraftDryRunPlan、LaunchConfirmation 和统一 Run 启动边界 |
 | `CURRENT` | [45_P5-08首个真实Adapter边界评估.md](45_P5-08首个真实Adapter边界评估.md) | Codex CLI 首接结论、运行隔离、审计和官方 API 后续边界 |
+| `CURRENT` | [46_P5回归验收与阶段收口报告.md](46_P5回归验收与阶段收口报告.md) | P5-09 回归验收、真实范围核验、截图证据和 P6 入口 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明

@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p5-09",
+  "current_node_id": "p6-01",
   "generated_from": [
     "07_后续对接路线图与任务拆解.md",
     "23_P3MVP任务拆解与验收计划.md",
@@ -27,6 +27,8 @@
     "43_P5-06真实历史Run_UI展示验收方案.md",
     "44_P5-07半自动新Run草案设计.md",
     "45_P5-08首个真实Adapter边界评估.md",
+    "46_P5回归验收与阶段收口报告.md",
+    "assets/reviews/p5-acceptance",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -169,8 +171,8 @@
     {
       "id": "p5",
       "label": "P5 真实工作流接入",
-      "status": "current",
-      "summary": "P5 详细任务计划已启动，P5-01 至 P5-08 已完成，当前推进 P5-09 P5 回归验收。",
+      "status": "completed",
+      "summary": "P5-01 至 P5-09 已完成并通过回归验收，形成真实工作流接入设计基线；真实 importer、RunDraft 和 Adapter 留待 P6 实装。",
       "evidence_paths": [
         "07_后续对接路线图与任务拆解.md",
         "36_P5真实工作流接入详细计划与任务拆解.md",
@@ -182,7 +184,20 @@
         "42_P5-05Trace映射设计.md",
         "43_P5-06真实历史Run_UI展示验收方案.md",
         "44_P5-07半自动新Run草案设计.md",
-        "45_P5-08首个真实Adapter边界评估.md"
+        "45_P5-08首个真实Adapter边界评估.md",
+        "46_P5回归验收与阶段收口报告.md",
+        "assets/reviews/p5-acceptance"
+      ]
+    },
+    {
+      "id": "p6",
+      "label": "P6 真实工作流工程接入",
+      "status": "current",
+      "summary": "先完成 P6 工程实施计划，再依次落地 historical importer、真实 Run UI、RunDraft 和 Codex CLI Adapter。",
+      "evidence_paths": [
+        "46_P5回归验收与阶段收口报告.md",
+        "45_P5-08首个真实Adapter边界评估.md",
+        "plans/mvp-task-baseline/roadmap.json"
       ]
     }
   ],
@@ -547,7 +562,7 @@
       "id": "p5-09",
       "day": "P5-09",
       "title": "P5 回归验收",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p5-acceptance",
       "parallel_group": "release",
       "depends_on": [
@@ -561,7 +576,29 @@
         "API smoke",
         "截图证据",
         "VERSION_HISTORY 更新",
-        "task-baseline 同步"
+        "task-baseline 同步",
+        "46_P5回归验收与阶段收口报告.md",
+        "assets/reviews/p5-acceptance"
+      ]
+    },
+    {
+      "id": "p6-01",
+      "day": "P6-01",
+      "title": "真实工作流工程实施计划",
+      "status": "current",
+      "serial_group": "p6-planning",
+      "parallel_group": "real-workflow-implementation",
+      "depends_on": [
+        "p5-09"
+      ],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": [
+        "P6 详细实施计划",
+        "historical importer 任务拆解",
+        "真实 Run UI 与 RunDraft 任务拆解",
+        "Codex CLI Adapter 实现任务拆解",
+        "依赖、并行边界和验收标准"
       ]
     }
   ],
@@ -578,14 +615,14 @@
       "stage": "L2",
       "title": "真实工作流接入",
       "status": "current",
-      "summary": "下一阶段接入真实内容生产流程和历史 run，再用新 run 做半自动控制。"
+      "summary": "P5 已完成真实工作流接入设计基线，P6 开始实现 historical importer、真实 Run UI 和 RunDraft。"
     },
     {
       "id": "l3-real-adapters",
       "stage": "L3",
       "title": "真实 Adapter 接入",
       "status": "planned",
-      "summary": "从 Codex 或官方 API 开始接入真实执行，再扩展 Hermes/OpenClaw。"
+      "summary": "按 P5-08 结论优先接入 Codex CLI，再实现官方 API 并扩展 Hermes/OpenClaw。"
     },
     {
       "id": "l4-stable-runtime",
@@ -669,6 +706,14 @@
         "p5-07",
         "p5-08",
         "p5-09"
+      ]
+    },
+    {
+      "id": "track-p6-planning",
+      "name": "P6 工程实施计划",
+      "parallelizable": false,
+      "tasks": [
+        "p6-01"
       ]
     }
   ]

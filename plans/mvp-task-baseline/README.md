@@ -6,7 +6,7 @@
 
 ## 1. 当前阶段判断
 
-当前项目已经通过 P4 可运行 MVP 验收，进入 P5 真实工作流接入阶段。
+当前项目已经通过 P4 可运行 MVP 和 P5 真实工作流接入设计验收，进入 P6 工程接入阶段。
 
 已完成：
 
@@ -23,7 +23,7 @@
 | P4 第五轮 D7 | Adapter manifest、Codex mock-compatible adapter、credential check 落地 | `32_P4第五轮_D7_Adapter插件目录实体化交付说明.md` |
 | P4 第五轮 D8/D9 | Canvas NodeSpec draft、validate-before-save、Run polling 和执行反馈落地 | `34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md` |
 | D10 验收 | MVP 回归验收与版本收口已通过，形成 v0.7.0 本地 MVP 验收基线 | `35_P4_MVP回归验收与版本收口报告.md` |
-| P5 计划 | 真实工作流接入详细任务拆解已启动 | `36_P5真实工作流接入详细计划与任务拆解.md` |
+| P5 计划 | 真实工作流接入详细任务拆解已完成 | `36_P5真实工作流接入详细计划与任务拆解.md` |
 | P5-01 | 真实工作区盘点已完成，确认 W24 主样本和 W23 对照样本 | `37_P5-01真实工作区盘点报告.md` |
 | P5-02 | Flow A-G 对象映射已完成，确认 WorkflowSpec、Artifact、Gate、Agent、Trace 映射 | `38_P5-02FlowAG对象映射设计.md` |
 | P5-03 | 历史 Run 只读导入方案已完成，确认 W24/W23 importer、projection 和 source metadata 规则 | `39_P5-03历史Run只读导入方案.md` |
@@ -33,11 +33,12 @@
 | P5-06 | UI 展示验收方案已完成，确认真实历史 Run 在 Run、DAG、Agent、Artifact、Gate、Attention 中的展示口径 | `43_P5-06真实历史Run_UI展示验收方案.md` |
 | P5-07 | 半自动新 Run 草案已完成，确认 RunDraft、Dry-run、启动确认和不写执行事实的边界 | `44_P5-07半自动新Run草案设计.md` |
 | P5-08 | 首个真实 Adapter 边界评估已完成，推荐 Codex CLI 首接、官方 API 第二阶段接入 | `45_P5-08首个真实Adapter边界评估.md` |
+| P5-09 | P5 回归验收已通过，完成测试、API smoke、截图、真实范围核验和阶段收口 | `46_P5回归验收与阶段收口报告.md` |
 
 当前红点：
 
 ```text
-P5-09 P5 回归验收：收口 P5 文档、当前实现证据、版本记录和后续 Adapter backlog
+P6-01 真实工作流工程实施计划：拆解 importer、真实 Run UI、RunDraft 和 Codex Adapter
 ```
 
 ## 2. 可视化实现方式
@@ -88,7 +89,8 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 | P5-06 | Miracle UI 展示验收 | 已完成 | Agent D | Run、DAG、Agent、Artifact、Gate、Attention 展示验收方案 |
 | P5-07 | 半自动新 Run 草案 | 已完成 | Agent D | Run draft、Dry-run、人工确认门 |
 | P5-08 | 首个真实 Adapter 边界 | 已完成 | Agent E | Codex/API Adapter 评估和边界 |
-| P5-09 | P5 回归验收 | 当前主线任务 | Lead | P5 验收报告、API smoke、截图、版本记录、task-baseline 同步 |
+| P5-09 | P5 回归验收 | 已完成 | Lead | P5 验收报告、API smoke、截图、版本记录、task-baseline 同步 |
+| P6-01 | 真实工作流工程实施计划 | 当前主线任务 | Lead | P6 详细计划、依赖、任务拆解和验收标准 |
 
 ## 4. 串行与并行边界
 
@@ -132,8 +134,8 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 
 1. 通过 Sidecar 独立地址 `/task-baseline` 访问，不进入 `apps/web` 侧边栏。
 2. 总体阶段用绿色、红色、灰色展示完成、当前和计划。
-3. 当前红点指向 `P5-09 P5 回归验收`。
-4. D1-D10 和 P5-01 至 P5-09 能区分串行、依赖和可并行任务。
+3. 当前红点指向 `P6-01 真实工作流工程实施计划`。
+4. D1-D10、P5-01 至 P5-09 和 P6 入口能区分串行、依赖和可并行任务。
 5. 能看到最近 Git 提交。
 6. 能看到工作区是否有未提交修改。
 7. 能看到证据文件是否存在、是否被 Git 跟踪、最后关联 commit。

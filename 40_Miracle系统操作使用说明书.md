@@ -32,9 +32,9 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 |---|---|
 | 当前产品版本 | `v0.7.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
-| 当前阶段 | P5 真实工作流接入 |
-| 当前任务焦点 | `P5-09` P5 回归验收 |
-| 已完成 P5 任务 | `P5-01` 至 `P5-08`，最新完成首个真实 Adapter 边界评估 |
+| 当前阶段 | P5 已验收，进入 P6 真实工作流工程接入 |
+| 当前任务焦点 | `P6-01` 真实工作流工程实施计划 |
+| 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
 | 任务基线数据 | `plans/mvp-task-baseline/roadmap.json` |
 
@@ -153,7 +153,7 @@ http://127.0.0.1:4317/task-baseline
 
 1. 在仓库根目录执行 `npm run dev`。
 2. 打开 `http://127.0.0.1:4317/api/v0/health`。
-3. 打开 `http://127.0.0.1:4317/task-baseline`，确认当前红点为 P5 当前任务。
+3. 打开 `http://127.0.0.1:4317/task-baseline`，确认当前红点与本文“当前任务焦点”一致。
 4. 打开 `http://127.0.0.1:5174/`，确认首页能显示 Attention、Run、Artifact 和模板。
 
 ### 5.2 启动一个示例 Run
@@ -246,6 +246,7 @@ Attention 的原则是“一个根因对应一个主 Attention Item”，避免�
 | P5 真实工作流接入 | W24/W23 真实样本盘点、对象映射、历史 Run 只读导入方案 | 用户能知道真实工作流接入正在从历史 Run 只读展示开始 |
 | 半自动新 Run 草案 | RunDraft、RunDraftDryRunPlan、LaunchConfirmation 和草案审计边界 | 用户后续可在不调用真实 Runner 的情况下准备、检查并确认一次新 Run |
 | 真实 Adapter 评估 | 推荐 Codex CLI 首接，官方 API 作为第二阶段 Provider Adapter | 用户能理解后续真实执行的能力、凭证和安全边界；当前版本尚未开放真实调用 |
+| P5 回归验收 | 工程测试、20 项 API smoke、真实样本复核和页面截图通过 | 当前运行版本仍是 v0.7.0；真实 importer、RunDraft 和 Adapter 留待 P6 实现 |
 | 操作手册 | 新增本文 | 用户不再只依赖提交文字，可以按手册启动、操作和理解版本变化 |
 
 ## 7. 相比上一版本的用户变化
@@ -309,7 +310,7 @@ Attention 的原则是“一个根因对应一个主 Attention Item”，避免�
 | Scheduler 不继续推进 | Run 停在 pending_review Gate 或失败节点 | 先处理 Gate 审核或 Attention 根因，再重新调度 |
 | Gate 不能创建返工 | 按钮不可用或接口返回冲突 | 只有已 `reject` 或 `request_changes` 的 Gate 可以创建返工 |
 | Artifact 不可预览 | 预览区域显示 missing、binary 或路径拒绝 | 检查 ArtifactManifest 路径、文件是否存在、是否在 workspace 内 |
-| 真实工作流没有进入 UI | P5 当前仍是计划、导入方案和展示验收口径阶段 | 等 P5 importer 实现后再进行真实历史 Run 的页面截图验收 |
+| 真实工作流没有进入 UI | P5 已完成设计验收，P6 尚未实现 historical importer | 等 P6 importer 实现后再进行真实历史 Run 的页面截图验收 |
 
 ## 10. 当前限制
 

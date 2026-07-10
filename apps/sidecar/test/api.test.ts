@@ -398,15 +398,15 @@ describe("sidecar api", () => {
     const body = await fetchJson<{
       current_node_id: string;
       phase_timeline: Array<{ id: string; status: string }>;
-      mvp_execution_plan: Array<{ id: string; day: string }>;
+      mvp_execution_plan: Array<{ id: string; day: string; status: string }>;
       sync_state: {
         git: { available: boolean; head: string; recent_commits: Array<{ short_hash: string; subject: string }> };
         evidence: Array<{ path: string; exists: boolean; tracked: boolean }>;
       };
     }>("/api/v0/project/roadmap");
 
-    expect(body.current_node_id).toBe("p4-06");
-    expect(body.phase_timeline.some((phase) => phase.id === "p4-06" && phase.status === "current")).toBe(true);
+    expect(body.mvp_execution_plan.find((task) => task.id === body.current_node_id)?.status).toBe("current");
+    expect(body.phase_timeline.some((phase) => phase.status === "current")).toBe(true);
     expect(body.mvp_execution_plan.some((task) => task.day === "D10")).toBe(true);
     expect(body.sync_state.git.available).toBe(true);
     expect(body.sync_state.git.head).toMatch(/[0-9a-f]{40}/);
