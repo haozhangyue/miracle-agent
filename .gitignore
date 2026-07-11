@@ -19,3 +19,7 @@ assets/prototypes/.DS_Store
 prototypes/p2/fusion-clickable/node_modules/
 prototypes/p2/fusion-clickable/dist/
 培训专用/
+
+# Runtime historical imports must live outside the repository.
+/fixtures/mvp-workspace/.miracle/runs/run-real-*
+/fixtures/mvp-workspace/.miracle/imports/

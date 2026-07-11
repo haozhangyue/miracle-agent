@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p6-01",
+  "current_node_id": "p6-03",
   "generated_from": [
     "07_后续对接路线图与任务拆解.md",
     "23_P3MVP任务拆解与验收计划.md",
@@ -28,6 +28,8 @@
     "44_P5-07半自动新Run草案设计.md",
     "45_P5-08首个真实Adapter边界评估.md",
     "46_P5回归验收与阶段收口报告.md",
+    "47_P6真实工作流工程实施计划与任务拆解.md",
+    "48_P6-02HistoricalImporter与Projection交付说明.md",
     "assets/reviews/p5-acceptance",
     "VERSION_HISTORY.md"
   ],
@@ -193,10 +195,12 @@
       "id": "p6",
       "label": "P6 真实工作流工程接入",
       "status": "current",
-      "summary": "先完成 P6 工程实施计划，再依次落地 historical importer、真实 Run UI、RunDraft 和 Codex CLI Adapter。",
+      "summary": "P6-01/P6-02 已完成，当前推进 P6-03 真实 Run API/UI；RunDraft 与 Adapter Contract 可按三轨边界并行。",
       "evidence_paths": [
         "46_P5回归验收与阶段收口报告.md",
         "45_P5-08首个真实Adapter边界评估.md",
+        "47_P6真实工作流工程实施计划与任务拆解.md",
+        "48_P6-02HistoricalImporter与Projection交付说明.md",
         "plans/mvp-task-baseline/roadmap.json"
       ]
     }
@@ -585,7 +589,7 @@
       "id": "p6-01",
       "day": "P6-01",
       "title": "真实工作流工程实施计划",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p6-planning",
       "parallel_group": "real-workflow-implementation",
       "depends_on": [
@@ -598,8 +602,93 @@
         "historical importer 任务拆解",
         "真实 Run UI 与 RunDraft 任务拆解",
         "Codex CLI Adapter 实现任务拆解",
-        "依赖、并行边界和验收标准"
+        "依赖、并行边界和验收标准",
+        "47_P6真实工作流工程实施计划与任务拆解.md"
       ]
+    },
+    {
+      "id": "p6-02",
+      "day": "P6-02",
+      "title": "Historical Importer 与 Projection",
+      "status": "completed",
+      "serial_group": "p6-historical-import",
+      "parallel_group": "p6-track-a",
+      "depends_on": ["p6-01"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent A",
+      "deliverables": ["historical core types/schema", "W24/W23 projection", "preview/commit API", "source_meta 与只读边界", "48_P6-02HistoricalImporter与Projection交付说明.md"]
+    },
+    {
+      "id": "p6-03",
+      "day": "P6-03",
+      "title": "真实 Run API 与 Web 展示",
+      "status": "current",
+      "serial_group": "p6-historical-ui",
+      "parallel_group": "p6-track-a",
+      "depends_on": ["p6-02"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent A",
+      "deliverables": ["historical read model", "Run/Attention/Artifact/Gate/Agent UI", "P6 real-run screenshots"]
+    },
+    {
+      "id": "p6-04",
+      "day": "P6-04",
+      "title": "RunDraft API 与 Web",
+      "status": "planned",
+      "serial_group": "p6-run-draft",
+      "parallel_group": "p6-track-b",
+      "depends_on": ["p6-01"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent B",
+      "deliverables": ["RunDraft types/state machine", "draft store/API", "Dry-run/confirmation UI", "draft audit"]
+    },
+    {
+      "id": "p6-05",
+      "day": "P6-05",
+      "title": "Adapter Contract Schema 与注册表",
+      "status": "planned",
+      "serial_group": "p6-adapter-contract",
+      "parallel_group": "p6-track-c",
+      "depends_on": ["p6-01"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent C",
+      "deliverables": ["Invocation/Result/Receipt schema", "real Codex manifest", "mock-compatible regression"]
+    },
+    {
+      "id": "p6-06",
+      "day": "P6-06",
+      "title": "Codex CLI Health 与 Attempt Workspace",
+      "status": "planned",
+      "serial_group": "p6-codex-runtime",
+      "parallel_group": "p6-track-c",
+      "depends_on": ["p6-05"],
+      "can_parallelize": true,
+      "recommended_agent": "Agent C",
+      "deliverables": ["Codex health API", "isolated attempt workspace", "fake-codex process control", "timeout/cancel"]
+    },
+    {
+      "id": "p6-07",
+      "day": "P6-07",
+      "title": "C_md_master 单节点真实执行",
+      "status": "planned",
+      "serial_group": "p6-real-node",
+      "parallel_group": "p6-convergence",
+      "depends_on": ["p6-03", "p6-04", "p6-06"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["confirmed draft 到正式 Run", "Codex JSONL parser", "Markdown Artifact", "pending Gate 与 Trace"]
+    },
+    {
+      "id": "p6-08",
+      "day": "P6-08",
+      "title": "P6 回归验收与版本收口",
+      "status": "planned",
+      "serial_group": "p6-acceptance",
+      "parallel_group": "release",
+      "depends_on": ["p6-07"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["P6 验收报告", "API/UI smoke", "安全真实性复核", "v0.8.0 版本决策", "task-baseline 同步"]
     }
   ],
   "long_term_plan": [
@@ -715,6 +804,30 @@
       "tasks": [
         "p6-01"
       ]
+    },
+    {
+      "id": "track-p6-historical",
+      "name": "P6 Historical Import 与 UI",
+      "parallelizable": true,
+      "tasks": ["p6-02", "p6-03"]
+    },
+    {
+      "id": "track-p6-run-draft",
+      "name": "P6 RunDraft",
+      "parallelizable": true,
+      "tasks": ["p6-04"]
+    },
+    {
+      "id": "track-p6-adapter",
+      "name": "P6 Codex Adapter",
+      "parallelizable": true,
+      "tasks": ["p6-05", "p6-06"]
+    },
+    {
+      "id": "track-p6-convergence",
+      "name": "P6 真实执行与验收",
+      "parallelizable": false,
+      "tasks": ["p6-07", "p6-08"]
     }
   ]
 }

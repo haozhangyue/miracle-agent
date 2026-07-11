@@ -134,6 +134,36 @@ export const workflowTemplateSchema = z.object({
   tags: z.array(z.string())
 });
 
+const runSpecBaseSchema = z.object({
+  run_id: z.string(),
+  workflow_id: z.string(),
+  workflow_version: z.string(),
+  workflow_snapshot_id: z.string(),
+  status: z.enum(["created", "queued", "running", "paused", "cancelling", "cancelled", "failed", "completed", "aborted"]),
+  role_profile: z.string(),
+  resolved_components: z.array(z.string()),
+  resolved_provider_policy: z.object({
+    default_provider: z.string(),
+    allowed_providers: z.array(z.string()),
+    required_credentials: z.array(z.string()),
+    fallback_providers: z.array(z.string())
+  }),
+  created_at: z.string()
+});
+
+export const executableRunSpecSchema = runSpecBaseSchema.extend({
+  run_mode: z.literal("executable").default("executable"),
+  execution_policy: z.enum(["auto", "manual", "hybrid"])
+});
+
+export const historicalRunSpecSchema = runSpecBaseSchema.extend({
+  run_mode: z.literal("historical_readonly"),
+  execution_policy: z.null(),
+  source_meta_path: z.string()
+});
+
+export const runSpecSchema = z.union([executableRunSpecSchema, historicalRunSpecSchema]);
+
 export const adapterCredentialRequirementSchema = z.object({
   key: z.string(),
   label: z.string(),

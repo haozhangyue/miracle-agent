@@ -25,6 +25,7 @@ import {
   type CanvasNodeSpecDraft,
   type GateDecision,
   type GateInstance,
+  type HistoricalImportRequest,
   type NodeSpec,
   type NodeAttempt,
   type NodeRun,
@@ -38,10 +39,21 @@ import { readdir, readFile, writeFile, mkdir, rm, stat } from "node:fs/promises"
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  commitHistoricalImport,
+  HistoricalImportError,
+  previewHistoricalImport,
+  readHistoricalImport
+} from "./historical-importer";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
+const workflowRegistryDir = process.env.MIRACLE_WORKFLOW_REGISTRY_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle/workflows");
 const port = Number(process.env.MIRACLE_SIDECAR_PORT ?? 4317);
+const historicalImportRoots = (process.env.MIRACLE_IMPORT_ROOTS ?? "")
+  .split(path.delimiter)
+  .map((item) => item.trim())
+  .filter(Boolean);
 const execGit = promisify(execFile);
 
 type JsonValue = Record<string, unknown> | unknown[];
@@ -267,7 +279,7 @@ async function readAdapterRegistry(): Promise<AdapterRegistryEntry[]> {
 async function listRuns() {
   const entries = await readdir(path.join(workspaceDir, "runs"), { withFileTypes: true });
   const runs = [];
-  for (const entry of entries.filter((item) => item.isDirectory())) {
+  for (const entry of entries.filter((item) => item.isDirectory() && !item.name.startsWith("."))) {
     const run = await readJson<Record<string, unknown>>(path.join("runs", entry.name, "run_spec.json"));
     const nodes = await readJson<Array<{ status: string; updated_at?: string }>>(path.join("runs", entry.name, "nodes.json"));
     const attention = await readJson<Array<unknown>>(path.join("runs", entry.name, "attention.json")).catch(() => []);
@@ -298,6 +310,11 @@ async function readRunBundle(runId: string) {
   const gates = await readJson<JsonValue>(`runs/${runId}/gates.json`);
   const attention = await readJson<JsonValue>(`runs/${runId}/attention.json`).catch(() => []);
   return { run, snapshot, workflow, nodes, artifacts, gates, attention };
+}
+
+async function isHistoricalReadOnlyRun(runId: string) {
+  const run = await readJsonOptional<{ run_mode?: string }>(`runs/${runId}/run_spec.json`);
+  return run?.run_mode === "historical_readonly";
 }
 
 async function readEvents(runId: string) {
@@ -1307,6 +1324,34 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return sendJson(res, 200, await buildProjectRoadmap());
   }
 
+  if (req.method === "POST" && (url.pathname === "/api/v0/historical-imports/preview" || url.pathname === "/api/v0/historical-imports")) {
+    const body = await parseBody(req);
+    const sampleKind = body.sample_kind === "w23" ? "w23" : body.sample_kind === "w24" ? "w24" : undefined;
+    if (!sampleKind) return sendError(res, 400, "invalid_sample_kind", "sample_kind must be w24 or w23");
+    const workflowId = String(body.workflow_id ?? "");
+    if (!workflowId) return sendError(res, 400, "workflow_required", "workflow_id is required");
+    if (!/^[a-zA-Z0-9._-]+$/.test(workflowId)) {
+      return sendError(res, 400, "invalid_workflow_id", "workflow_id may only contain letters, numbers, dot, underscore and hyphen");
+    }
+    const request: HistoricalImportRequest = {
+      source_run_dir: String(body.source_run_dir ?? ""),
+      workflow_id: workflowId,
+      sample_kind: sampleKind
+    };
+    const options = {
+      workspaceDir,
+      allowedRoots: historicalImportRoots,
+      workflowPath: path.join(workflowRegistryDir, `${workflowId}.json`),
+      repositoryRoot: rootDir
+    };
+    if (url.pathname.endsWith("/preview")) return sendJson(res, 200, await previewHistoricalImport(request, options));
+    return sendJson(res, 201, await commitHistoricalImport(request, options));
+  }
+
+  if (req.method === "GET" && parts[0] === "api" && parts[1] === "v0" && parts[2] === "historical-imports" && parts[3]) {
+    return sendJson(res, 200, await readHistoricalImport(getId(parts, 3), workspaceDir));
+  }
+
   if (req.method === "GET" && url.pathname === "/api/v0/workflows") {
     const workflows = await listJsonFiles<WorkflowSpec>("workflows");
     return sendJson(res, 200, {
@@ -1478,6 +1523,9 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       const bundle = await readRunBundle(runId);
       return sendJson(res, 200, { dag: buildDagProjection(bundle.workflow, bundle.nodes as NodeRun[]) });
     }
+    if (req.method === "POST" && (await isHistoricalReadOnlyRun(runId))) {
+      return sendError(res, 409, "historical_run_read_only", "Historical run is read-only and cannot execute scheduler or node commands.");
+    }
     if (req.method === "POST" && parts[4] === "scheduler" && parts[5] === "tick") {
       const body = await parseBody(req);
       const dryRun = body.dry_run === true;
@@ -1587,6 +1635,9 @@ async function route(req: IncomingMessage, res: ServerResponse) {
         history_decisions: gate.decisions,
         projection: buildGateDecisionProjection(gate, bundle.workflow, bundle.nodes as NodeRun[])
       });
+    }
+    if (req.method === "POST" && (await isHistoricalReadOnlyRun(runId))) {
+      return sendError(res, 409, "historical_run_read_only", "Historical run is read-only and cannot create GateDecision or rework facts.");
     }
     if (req.method === "POST" && parts[4] === "rework") {
       const body = await parseBody(req);
@@ -1806,6 +1857,19 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
 const server = createServer((req, res) => {
   route(req, res).catch((error: unknown) => {
+    if (error instanceof HistoricalImportError) {
+      const status =
+        error.code === "source_path_not_allowed"
+          ? 403
+          : error.code === "source_run_not_found"
+            ? 404
+            : error.code === "historical_import_not_found"
+              ? 404
+            : error.code === "runtime_workspace_required" || error.code === "import_lock_timeout"
+              ? 409
+              : 422;
+      return sendError(res, status, error.code, error.message);
+    }
     const message = error instanceof Error ? error.message : "Unknown sidecar error";
     sendError(res, 500, "sidecar_error", message);
   });

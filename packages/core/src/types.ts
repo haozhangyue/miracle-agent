@@ -141,18 +141,30 @@ export interface WorkflowSpec {
   };
 }
 
-export interface RunSpec {
+export interface RunSpecBase {
   run_id: string;
   workflow_id: string;
   workflow_version: string;
   workflow_snapshot_id: string;
   status: "created" | "queued" | "running" | "paused" | "cancelling" | "cancelled" | "failed" | "completed" | "aborted";
-  execution_policy: "auto" | "manual" | "hybrid";
   role_profile: string;
   resolved_components: string[];
   resolved_provider_policy: WorkflowSpec["provider_policy"];
   created_at: string;
 }
+
+export interface ExecutableRunSpec extends RunSpecBase {
+  run_mode: "executable";
+  execution_policy: "auto" | "manual" | "hybrid";
+}
+
+export interface HistoricalRunSpec extends RunSpecBase {
+  run_mode: "historical_readonly";
+  execution_policy: null;
+  source_meta_path: string;
+}
+
+export type RunSpec = ExecutableRunSpec | HistoricalRunSpec;
 
 export interface WorkflowSnapshot {
   snapshot_id: string;
@@ -479,4 +491,135 @@ export interface GateDecisionProjection {
   }>;
   event_types: string[];
   mutates_artifact: boolean;
+}
+
+export type EvidenceConfidence =
+  | "observed_from_event"
+  | "observed_from_trace"
+  | "observed_from_status"
+  | "observed_from_artifact"
+  | "inferred"
+  | "missing";
+
+export interface HistoricalImportRequest {
+  source_run_dir: string;
+  workflow_id: string;
+  sample_kind: "w24" | "w23";
+}
+
+export interface HistoricalGap {
+  code: string;
+  severity: "warning" | "error";
+  message: string;
+}
+
+export interface HistoricalNodeEvidence {
+  node_id: string;
+  status: NodeRunStatus;
+  confidence: EvidenceConfidence;
+  source_paths: string[];
+  updated_at?: string;
+}
+
+export interface HistoricalAttemptEvidence extends NodeAttempt {
+  confidence: EvidenceConfidence;
+  source_paths: string[];
+}
+
+export interface HistoricalArtifactEvidence {
+  artifact_id: string;
+  node_id: string;
+  type: string;
+  path: string;
+  hash: string;
+  status: ArtifactManifest["status"];
+  review_status: ArtifactReviewStatus;
+  producer: string;
+  confidence: EvidenceConfidence;
+  source_paths: string[];
+  created_at?: string;
+}
+
+export interface HistoricalGateEvidence {
+  gate_spec_id: string;
+  target_artifact_id: string;
+  status: GateStatus;
+  decisions: GateDecision[];
+  confidence: EvidenceConfidence;
+  source_paths: string[];
+}
+
+export interface HistoricalSourceEvent {
+  source_path: string;
+  source_line: number;
+  occurred_at: string;
+  event_type: string;
+  subject_type: string;
+  subject_id: string;
+  message: string;
+}
+
+export interface HistoricalProjectionInput {
+  request: HistoricalImportRequest;
+  workflow: WorkflowSpec;
+  run_id: string;
+  source_fingerprint: string;
+  imported_at: string;
+  source_files: string[];
+  nodes: HistoricalNodeEvidence[];
+  attempts: HistoricalAttemptEvidence[];
+  artifacts: HistoricalArtifactEvidence[];
+  gates: HistoricalGateEvidence[];
+  source_events: HistoricalSourceEvent[];
+  gaps: HistoricalGap[];
+}
+
+export interface HistoricalObjectSource {
+  object_type: string;
+  source_paths: string[];
+  confidence: EvidenceConfidence;
+  import_note: string;
+}
+
+export interface HistoricalSourceMeta {
+  importer: "historical-run-importer";
+  importer_version: "0.1.0";
+  mode: "historical_readonly";
+  source_run_dir: string;
+  source_fingerprint: string;
+  imported_at: string;
+  objects: Record<string, HistoricalObjectSource>;
+  gaps: HistoricalGap[];
+}
+
+export interface HistoricalTraceEvent extends TraceEvent {
+  source?: {
+    path: string;
+    line: number;
+    event_type: string;
+    confidence: "observed_from_event";
+  };
+}
+
+export interface HistoricalRunProjection {
+  runSpec: HistoricalRunSpec;
+  workflowSnapshot: WorkflowSnapshot;
+  nodeRuns: NodeRun[];
+  attempts: NodeAttempt[];
+  artifacts: ArtifactManifest[];
+  gates: GateInstance[];
+  events: HistoricalTraceEvent[];
+  attention: AttentionItem[];
+  sourceMeta: HistoricalSourceMeta;
+  manifest: Record<string, string>;
+}
+
+export interface HistoricalImportPreview {
+  import_id: string;
+  run_id: string;
+  source_fingerprint: string;
+  valid: boolean;
+  files: Array<{ relative_path: string; exists: boolean; size?: number }>;
+  gaps: HistoricalGap[];
+  projected_counts: { nodes: number; artifacts: number; gates: number; events: number; attention: number };
 }

@@ -1,0 +1,14 @@
+{
+  "status": "completed_pending_human_visual_review",
+  "publish_allowed": "pending_human_visual_review",
+  "outputs": [
+    {
+      "label": "horizontal_4k_v3",
+      "output_file": "04_PPT视频/Codex_ClaudeCode_横版4K_v3.mp4",
+      "file_size_bytes": 16,
+      "resolution": "3840x2160",
+      "duration_sec": 3.2,
+      "render_status": "completed"
+    }
+  ]
+}

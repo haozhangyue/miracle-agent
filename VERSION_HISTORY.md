@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.7.0` |
 | 版本名称 | P4 MVP 本地闭环验收基线 |
-| 当前阶段 | P5-09 回归验收通过，形成真实工作流接入设计基线；运行版本仍为 v0.7.0，真实 importer、RunDraft 和 Codex CLI Adapter 尚未实装；当前任务为 `P6-01` 真实工作流工程实施计划 |
+| 当前阶段 | P6-02 Historical Importer 与 Projection 已完成；运行版本仍为 v0.7.0，当前任务为 `P6-03` 真实 Run API 与 Web 展示 |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -290,6 +290,27 @@
   `p6-01`。
 - 本次不升级运行版本；系统仍为 `v0.7.0`，P6 实装真实 historical importer 后再评估
   `v0.8.0`。
+- 新增 `47_P6真实工作流工程实施计划与任务拆解.md`，采用 historical importer/真实 Run
+  UI、RunDraft、Adapter Contract/Codex CLI 三轨并行方案，拆分 `P6-02` 至 `P6-08`。
+- 明确真实源工作区只读、导入根目录白名单、大媒体不复制、historical mutation 409、
+  Codex attempt workspace、超时/取消、fake/real 双层验收和 Orchestrator 单写入约束。
+- 同步 README、路线图、AI 阅读导航、操作手册与 task-baseline；`P6-01` 标记完成，
+  `current_node_id` 推进到 `p6-02`。
+- 本次仅新增工程实施计划，不新增用户可运行功能，不升级 `v0.7.0`。
+- 新增 `48_P6-02HistoricalImporter与Projection交付说明.md`，实现 W24/W23 historical
+  preview/commit、source_meta、staging 原子写入、fingerprint 幂等和真实样本 smoke。
+- 新增 `content-production-real-v0` WorkflowSpec 和 W24/W23 最小合成测试样本；真实交付包、
+  大媒体和凭证不进入 Git。
+- 将 RunSpec 收口为 executable/historical_readonly discriminated union；historical scheduler、
+  node execute、Gate decision 和 rework 返回 `409 historical_run_read_only`。
+- importer 改用流式内容 SHA-256 指纹，增加 import 级互斥锁、缺失回执自愈和仓库外
+  runtime workspace 强制校验；Gate decision/rework 纳入 historical 只读保护回归。
+- 修复 Artifact/Gate 缺少审批证据仍被投影为 `approved/decided` 的事实错误；增加 symlink
+  workspace 防护、stale/corrupt lock 恢复、损坏控制数据 422 和缺失回执 404。
+- 测试增至 Sidecar 34 项、Core 10 项；真实 W24 导入得到 27 条 source event 和 10 个
+  historical attempt，W23 保持 0 source event/0 attempt，源文件哨兵未变化。
+- 同步 task-baseline：`P6-02` 标记完成，`current_node_id` 推进到 `p6-03`。
+- 本次新增 Sidecar API，但 Web 尚未展示真实 historical run，运行版本继续保持 `v0.7.0`。
 
 ## 5. 里程碑
 
@@ -515,11 +536,13 @@ ArtifactSpec 表示运行产物的设计均废止。
 
 ## 7. 下一版本规划
 
-下一次完成产品信息架构和核心原型设计时，建议发布：
+P6 完成 historical importer、RunDraft 和 Codex 单节点真实执行并通过验收后，建议评估发布：
 
 ```text
-v0.6.0 产品信息架构与原型基线
+v0.8.0 真实工作流工程接入基线
 ```
+
+若 P6-08 仍有真实执行阻塞项，则继续保持 `v0.7.0`，不得只因文档或部分模块完成而升级。
 
 首个具备真实 Schema 校验器、Event Journal 和本地 runner 的可执行技术版本，建议发布：
 

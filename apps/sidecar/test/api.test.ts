@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const fixtureWorkspace = path.join(repoRoot, "fixtures/mvp-workspace/.miracle");
+const historicalFixtures = path.join(repoRoot, "apps/sidecar/test/fixtures/historical");
 
 let tempRoot = "";
 let tempWorkspace = "";
@@ -52,6 +53,7 @@ describe("sidecar api", () => {
         ...process.env,
         MIRACLE_WORKSPACE_DIR: tempWorkspace,
         MIRACLE_SIDECAR_PORT: String(port),
+        MIRACLE_IMPORT_ROOTS: historicalFixtures,
         npm_config_cache: path.join(repoRoot, ".npm-cache")
       }
     });
@@ -68,6 +70,98 @@ describe("sidecar api", () => {
     sidecar?.kill("SIGTERM");
     await new Promise((resolve) => setTimeout(resolve, 250));
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it("previews and commits an allowlisted historical run while rejecting an outside source", async () => {
+    const sourceRunDir = path.join(historicalFixtures, "w24-minimal");
+    const workflowValidation = await fetchJson<{ valid: boolean; errors: unknown[] }>("/api/v0/workflows/content-production-real-v0/validate", { method: "POST", body: JSON.stringify({}) });
+    expect(workflowValidation).toMatchObject({ valid: true, errors: [] });
+
+    const preview = await fetchJson<{
+      preview: { import_id: string; run_id: string; valid: boolean; projected_counts: { nodes: number; gates: number } };
+    }>("/api/v0/historical-imports/preview", {
+      method: "POST",
+      body: JSON.stringify({ source_run_dir: sourceRunDir, workflow_id: "content-production-real-v0", sample_kind: "w24" })
+    });
+    expect(preview.preview).toMatchObject({ valid: true, projected_counts: { nodes: 8, gates: 3 } });
+
+    const committed = await fetchJson<{ import_id: string; run_id: string; reused: boolean }>("/api/v0/historical-imports", {
+      method: "POST",
+      body: JSON.stringify({ source_run_dir: sourceRunDir, workflow_id: "content-production-real-v0", sample_kind: "w24" })
+    });
+    expect(committed.reused).toBe(false);
+
+    const imported = await fetchJson<{ import_id: string; run_id: string; status: string }>(`/api/v0/historical-imports/${committed.import_id}`);
+    expect(imported).toMatchObject({ import_id: committed.import_id, run_id: committed.run_id, status: "committed" });
+
+    const missingImport = await fetch(`${baseUrl}/api/v0/historical-imports/import_0000000000000000`);
+    expect(missingImport.status).toBe(404);
+    expect(await missingImport.json()).toMatchObject({ error: { code: "historical_import_not_found" } });
+
+    const runs = await fetchJson<{ runs: Array<{ run_id: string }> }>("/api/v0/runs");
+    expect(runs.runs.some((run) => run.run_id === committed.run_id)).toBe(true);
+
+    const schedulerWrite = await fetch(`${baseUrl}/api/v0/runs/${committed.run_id}/scheduler/tick`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dry_run: false })
+    });
+    expect(schedulerWrite.status).toBe(409);
+    expect(await schedulerWrite.json()).toMatchObject({ error: { code: "historical_run_read_only" } });
+
+    const importedRun = await fetchJson<{
+      nodes: Array<{ node_run_id: string }>;
+      gates: Array<{ gate_instance_id: string }>;
+      artifacts: unknown[];
+    }>(`/api/v0/runs/${committed.run_id}`);
+    const nodeWrite = await fetch(`${baseUrl}/api/v0/runs/${committed.run_id}/nodes/${importedRun.nodes[0]?.node_run_id}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(nodeWrite.status).toBe(409);
+    expect(await nodeWrite.json()).toMatchObject({ error: { code: "historical_run_read_only" } });
+
+    const factsBefore = await fetchJson<{ events: unknown[] }>(`/api/v0/runs/${committed.run_id}/events`);
+    const gateId = importedRun.gates[0]?.gate_instance_id;
+    expect(gateId).toBeTruthy();
+    const gateDecision = await fetch(`${baseUrl}/api/v0/gates/${gateId}/decision?run_id=${committed.run_id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ actor: "reviewer", decision: "approve", comment: "must remain read-only" })
+    });
+    expect(gateDecision.status).toBe(409);
+    expect(await gateDecision.json()).toMatchObject({ error: { code: "historical_run_read_only" } });
+
+    const gateRework = await fetch(`${baseUrl}/api/v0/gates/${gateId}/rework?run_id=${committed.run_id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ actor: "reviewer", comment: "must remain read-only" })
+    });
+    expect(gateRework.status).toBe(409);
+    expect(await gateRework.json()).toMatchObject({ error: { code: "historical_run_read_only" } });
+
+    const factsAfter = await fetchJson<{ events: unknown[]; gates: unknown[]; artifacts: unknown[] }>(`/api/v0/runs/${committed.run_id}`);
+    const eventsAfter = await fetchJson<{ events: unknown[] }>(`/api/v0/runs/${committed.run_id}/events`);
+    expect(eventsAfter.events).toEqual(factsBefore.events);
+    expect(factsAfter.gates).toEqual(importedRun.gates);
+    expect(factsAfter.artifacts).toEqual(importedRun.artifacts);
+
+    const outside = await fetch(`${baseUrl}/api/v0/historical-imports/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source_run_dir: tempRoot, workflow_id: "content-production-real-v0", sample_kind: "w24" })
+    });
+    expect(outside.status).toBe(403);
+    expect(await outside.json()).toMatchObject({ error: { code: "source_path_not_allowed" } });
+
+    const unsafeWorkflow = await fetch(`${baseUrl}/api/v0/historical-imports/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source_run_dir: sourceRunDir, workflow_id: "../../outside", sample_kind: "w24" })
+    });
+    expect(unsafeWorkflow.status).toBe(400);
+    expect(await unsafeWorkflow.json()).toMatchObject({ error: { code: "invalid_workflow_id" } });
   });
 
   it("returns a DAG projection with required and optional edges", async () => {

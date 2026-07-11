@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "run_id": "2026-W24_Test",
+  "title": "W24 minimal historical run",
+  "date": "2026-06-12",
+  "mode": "real",
+  "steps": [
+    {
+      "id": "D1",
+      "phase": "timeline",
+      "agent": "tts-agent",
+      "status": "done",
+      "duration_sec": 3,
+      "question": "build timeline",
+      "answer": "timeline generated",
+      "inputs": [],
+      "outputs": ["04_PPT视频/TTS字幕/audio_manifest.json"],
+      "tool_calls": ["fixture-tool"],
+      "issues": []
+    },
+    {
+      "id": "F4_FINAL_RENDER_V3",
+      "phase": "Final Render v3",
+      "agent": "video-agent",
+      "status": "done_pending_human_visual_review",
+      "duration_sec": 12,
+      "question": "render video",
+      "answer": "rendered and waiting review",
+      "inputs": [],
+      "outputs": ["04_PPT视频/render_manifest.json"],
+      "tool_calls": ["fixture-render"],
+      "issues": [],
+      "review_gate": "pending_human_visual_review"
+    }
+  ],
+  "artifacts": []
+}

@@ -34,11 +34,13 @@
 | P5-07 | 半自动新 Run 草案已完成，确认 RunDraft、Dry-run、启动确认和不写执行事实的边界 | `44_P5-07半自动新Run草案设计.md` |
 | P5-08 | 首个真实 Adapter 边界评估已完成，推荐 Codex CLI 首接、官方 API 第二阶段接入 | `45_P5-08首个真实Adapter边界评估.md` |
 | P5-09 | P5 回归验收已通过，完成测试、API smoke、截图、真实范围核验和阶段收口 | `46_P5回归验收与阶段收口报告.md` |
+| P6-01 | 真实工作流工程实施计划已完成，形成三轨并行、接口、测试和验收基线 | `47_P6真实工作流工程实施计划与任务拆解.md` |
+| P6-02 | Historical Importer 与 Projection 已完成，W24/W23 preview/commit、幂等和只读保护通过 | `48_P6-02HistoricalImporter与Projection交付说明.md` |
 
 当前红点：
 
 ```text
-P6-01 真实工作流工程实施计划：拆解 importer、真实 Run UI、RunDraft 和 Codex Adapter
+P6-03 真实 Run API 与 Web 展示：把 historical run 接入首页、Run、Attention、Artifact、Gate 和 Agent
 ```
 
 ## 2. 可视化实现方式
@@ -90,7 +92,14 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 | P5-07 | 半自动新 Run 草案 | 已完成 | Agent D | Run draft、Dry-run、人工确认门 |
 | P5-08 | 首个真实 Adapter 边界 | 已完成 | Agent E | Codex/API Adapter 评估和边界 |
 | P5-09 | P5 回归验收 | 已完成 | Lead | P5 验收报告、API smoke、截图、版本记录、task-baseline 同步 |
-| P6-01 | 真实工作流工程实施计划 | 当前主线任务 | Lead | P6 详细计划、依赖、任务拆解和验收标准 |
+| P6-01 | 真实工作流工程实施计划 | 已完成 | Lead | `47`、依赖、三轨并行边界和验收标准 |
+| P6-02 | Historical Importer 与 Projection | 已完成 | Agent A | W24/W23 projection、source_meta、preview/commit API、`48` |
+| P6-03 | 真实 Run API 与 Web 展示 | 当前主线任务 | Agent A | historical Run/Attention/Artifact/Gate/Agent UI |
+| P6-04 | RunDraft API 与 Web | 可并行，依赖 P6-01 | Agent B | 草案、Dry-run、确认、审计 |
+| P6-05 | Adapter Contract Schema 与注册表 | 可并行，依赖 P6-01 | Agent C | Invocation/Result/Receipt 和 real manifest |
+| P6-06 | Codex CLI Health 与 Attempt Workspace | 依赖 P6-05 | Agent C | health、隔离 workspace、timeout/cancel |
+| P6-07 | C_md_master 单节点真实执行 | 依赖 P6-03/P6-04/P6-06 | Lead | 正式 Run、Markdown Artifact、Gate、Trace |
+| P6-08 | P6 回归验收与版本收口 | 依赖 P6-07 | Lead | 验收报告、截图和版本决策 |
 
 ## 4. 串行与并行边界
 
@@ -134,8 +143,8 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 
 1. 通过 Sidecar 独立地址 `/task-baseline` 访问，不进入 `apps/web` 侧边栏。
 2. 总体阶段用绿色、红色、灰色展示完成、当前和计划。
-3. 当前红点指向 `P6-01 真实工作流工程实施计划`。
-4. D1-D10、P5-01 至 P5-09 和 P6 入口能区分串行、依赖和可并行任务。
+3. 当前红点指向 `P6-03 真实 Run API 与 Web 展示`。
+4. D1-D10、P5-01 至 P5-09 和 P6-01 至 P6-08 能区分串行、依赖和可并行任务。
 5. 能看到最近 Git 提交。
 6. 能看到工作区是否有未提交修改。
 7. 能看到证据文件是否存在、是否被 Git 跟踪、最后关联 commit。

@@ -16,6 +16,7 @@ export function createRunFromWorkflow(workflow: WorkflowSpec, options: { runId: 
     workflow_version: workflow.version,
     workflow_snapshot_id: snapshotId,
     status: "created",
+    run_mode: "executable",
     execution_policy: options.executionPolicy,
     role_profile: options.roleProfile,
     resolved_components: Array.from(new Set(workflow.nodes.flatMap((node) => node.recommended_libraries))),

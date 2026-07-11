@@ -1,0 +1,151 @@
+{
+  "id": "content-production-real-v0",
+  "name": "真实内容生产工作流 A-G",
+  "version": "0.1.0",
+  "domain": "content-production",
+  "category": "media",
+  "nodes": [
+    {
+      "id": "A_fact_intelligence",
+      "name": "情报采集与事实核验",
+      "type": "source",
+      "capability_requirements": ["source.collect", "fact.verify"],
+      "recommended_libraries": ["official-source-library", "fact-check-library"],
+      "agent_candidates": ["intelligence-agent", "fact-verification-agent"],
+      "inputs": [],
+      "outputs": [{ "id": "clean_events", "kind": "artifact", "artifact_type": "markdown", "required": true, "artifact_spec_ref": "clean_events_artifact" }],
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "B_md_master",
+      "name": "内容 MD 母稿",
+      "type": "transform",
+      "capability_requirements": ["content.longform_draft", "fact.safe_writing"],
+      "recommended_libraries": ["content-packaging-library"],
+      "agent_candidates": ["content-agent", "review-agent"],
+      "inputs": [{ "id": "clean_events", "kind": "artifact", "artifact_type": "markdown", "required": true }],
+      "outputs": [{ "id": "md_master", "kind": "artifact", "artifact_type": "markdown", "required": true, "artifact_spec_ref": "md_master_artifact" }],
+      "review_gate_ref": "B_md_master_gate",
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "C0_script_pool_selection",
+      "name": "脚本池生成与评审",
+      "type": "transform",
+      "capability_requirements": ["script.generate_candidates", "script.evaluate", "script.route"],
+      "recommended_libraries": ["content-packaging-library", "script-routing-library"],
+      "agent_candidates": ["script-agent", "review-agent"],
+      "inputs": [{ "id": "md_master", "kind": "artifact", "artifact_type": "markdown", "required": true }],
+      "outputs": [{ "id": "script_selection", "kind": "artifact", "artifact_type": "json", "required": true, "artifact_spec_ref": "script_selection_artifact" }],
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "C_ppt_storyboard",
+      "name": "PPT 与视频分镜",
+      "type": "transform",
+      "capability_requirements": ["storyboard.plan", "ppt.outline", "visual.script_adapt"],
+      "recommended_libraries": ["storyboard-library", "content-packaging-library"],
+      "agent_candidates": ["ppt-agent", "storyboard-agent"],
+      "inputs": [{ "id": "script_selection", "kind": "artifact", "artifact_type": "json", "required": true }],
+      "outputs": [{ "id": "storyboard_manifest", "kind": "artifact", "artifact_type": "json", "required": true, "artifact_spec_ref": "storyboard_manifest_artifact" }],
+      "review_gate_ref": "C_ppt_storyboard_gate",
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "D_voiceover_audio",
+      "name": "配音脚本与声音生成",
+      "type": "agent",
+      "capability_requirements": ["tts.generate", "subtitle.generate", "voiceover.timeline"],
+      "recommended_libraries": ["tts-caption-library"],
+      "agent_candidates": ["tts-agent", "caption-agent"],
+      "inputs": [{ "id": "storyboard_manifest", "kind": "artifact", "artifact_type": "json", "required": true }],
+      "outputs": [{ "id": "audio_manifest", "kind": "artifact", "artifact_type": "json", "required": true, "artifact_spec_ref": "audio_manifest_artifact" }],
+      "review_gate_ref": "D_voiceover_audio_gate",
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "E_visual_video",
+      "name": "HyperFrames 视觉视频",
+      "type": "tool",
+      "capability_requirements": ["video.compose", "hyperframes.bridge", "video.inspect"],
+      "recommended_libraries": ["video-render-library", "hyperframes-library"],
+      "agent_candidates": ["video-agent"],
+      "inputs": [{ "id": "audio_manifest", "kind": "artifact", "artifact_type": "json", "required": true }],
+      "outputs": [{ "id": "hyperframes_handoff", "kind": "artifact", "artifact_type": "json", "required": true, "artifact_spec_ref": "hyperframes_handoff_artifact" }],
+      "review_gate_ref": "E_visual_video_gate",
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "F_final_render",
+      "name": "音画整合与最终渲染",
+      "type": "tool",
+      "capability_requirements": ["video.render", "media.validate", "ffprobe.inspect"],
+      "recommended_libraries": ["video-render-library", "media-qc-library"],
+      "agent_candidates": ["video-agent", "review-agent"],
+      "inputs": [{ "id": "hyperframes_handoff", "kind": "artifact", "artifact_type": "json", "required": true }],
+      "outputs": [{ "id": "render_manifest", "kind": "artifact", "artifact_type": "json", "required": true, "artifact_spec_ref": "render_manifest_artifact" }],
+      "review_gate_ref": "F_final_render_gate",
+      "failure_policy": { "retry": 1, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "G_distribution_retro",
+      "name": "分发与复盘",
+      "type": "artifact",
+      "capability_requirements": ["publish.package", "retro.collect", "quality.review"],
+      "recommended_libraries": ["distribution-library", "review-retro-library"],
+      "agent_candidates": ["distribution-agent", "retro-agent"],
+      "inputs": [{ "id": "md_master", "kind": "artifact", "artifact_type": "markdown", "required": true }],
+      "outputs": [{ "id": "publish_package", "kind": "artifact", "artifact_type": "publish_package", "required": true, "artifact_spec_ref": "publish_package_artifact" }],
+      "review_gate_ref": "G_distribution_gate",
+      "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    }
+  ],
+  "edges": [
+    { "from": "A_fact_intelligence", "to": "B_md_master", "required": true, "artifact_selector": { "artifact_type": "markdown" }, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "B_md_master", "to": "C0_script_pool_selection", "required": true, "artifact_selector": { "artifact_type": "markdown", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "C0_script_pool_selection", "to": "C_ppt_storyboard", "required": true, "artifact_selector": { "artifact_type": "json" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "C_ppt_storyboard", "to": "D_voiceover_audio", "required": true, "artifact_selector": { "artifact_type": "json", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "D_voiceover_audio", "to": "E_visual_video", "required": true, "artifact_selector": { "artifact_type": "json", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "E_visual_video", "to": "F_final_render", "required": true, "artifact_selector": { "artifact_type": "json", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "B_md_master", "to": "G_distribution_retro", "required": true, "artifact_selector": { "artifact_type": "markdown", "review_status": "approved" }, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "F_final_render", "to": "G_distribution_retro", "required": false, "artifact_selector": { "artifact_type": "video", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT5M", "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "ignore_optional" } }
+  ],
+  "gates": [
+    { "id": "B_md_master_gate", "name": "母稿审核", "target_artifact_ref": "md_master_artifact", "required_before": ["C0_script_pool_selection", "G_distribution_retro"], "actions": ["approve", "reject", "request_changes"] },
+    { "id": "C_ppt_storyboard_gate", "name": "分镜审核", "target_artifact_ref": "storyboard_manifest_artifact", "required_before": ["D_voiceover_audio"], "actions": ["approve", "reject", "request_changes"] },
+    { "id": "D_voiceover_audio_gate", "name": "配音审核", "target_artifact_ref": "audio_manifest_artifact", "required_before": ["E_visual_video"], "actions": ["approve", "reject", "request_changes"] },
+    { "id": "E_visual_video_gate", "name": "视觉视频审核", "target_artifact_ref": "hyperframes_handoff_artifact", "required_before": ["F_final_render"], "actions": ["approve", "reject", "request_changes"] },
+    { "id": "F_final_render_gate", "name": "最终渲染审核", "target_artifact_ref": "render_manifest_artifact", "required_before": ["G_distribution_retro"], "actions": ["approve", "reject", "request_changes"] },
+    { "id": "G_distribution_gate", "name": "外部分发审核", "target_artifact_ref": "publish_package_artifact", "required_before": [], "actions": ["approve", "reject", "request_changes"] }
+  ],
+  "artifacts": [
+    { "id": "clean_events_artifact", "type": "markdown", "produced_by": "A_fact_intelligence", "review_policy": { "mode": "auto" }, "required_for": ["B_md_master"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "md_master_artifact", "type": "markdown", "produced_by": "B_md_master", "review_policy": { "mode": "manual", "gate_spec_id": "B_md_master_gate" }, "required_for": ["C0_script_pool_selection", "G_distribution_retro"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "script_selection_artifact", "type": "json", "produced_by": "C0_script_pool_selection", "review_policy": { "mode": "auto" }, "required_for": ["C_ppt_storyboard"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "storyboard_manifest_artifact", "type": "json", "produced_by": "C_ppt_storyboard", "review_policy": { "mode": "manual", "gate_spec_id": "C_ppt_storyboard_gate" }, "required_for": ["D_voiceover_audio"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "audio_manifest_artifact", "type": "json", "produced_by": "D_voiceover_audio", "review_policy": { "mode": "manual", "gate_spec_id": "D_voiceover_audio_gate" }, "required_for": ["E_visual_video"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "hyperframes_handoff_artifact", "type": "json", "produced_by": "E_visual_video", "review_policy": { "mode": "conditional", "gate_spec_id": "E_visual_video_gate" }, "required_for": ["F_final_render"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "render_manifest_artifact", "type": "json", "produced_by": "F_final_render", "review_policy": { "mode": "manual", "gate_spec_id": "F_final_render_gate" }, "required_for": ["G_distribution_retro"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "video_master_artifact", "type": "video", "produced_by": "F_final_render", "review_policy": { "mode": "manual", "gate_spec_id": "F_final_render_gate" }, "required_for": ["G_distribution_retro"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "publish_package_artifact", "type": "publish_package", "produced_by": "G_distribution_retro", "review_policy": { "mode": "conditional", "gate_spec_id": "G_distribution_gate" }, "required_for": [], "versioning": { "immutable": true, "compare_by": "hash" } }
+  ],
+  "provider_policy": {
+    "default_provider": "codex-local",
+    "allowed_providers": ["codex-local", "official-api", "mock-provider", "manual-upload"],
+    "required_credentials": ["VOLC_TTS_API_KEY", "VOLC_TTS_VOICE_TYPE"],
+    "fallback_providers": ["mock-tts", "manual-upload"]
+  },
+  "layouts": {
+    "dag": {
+      "A_fact_intelligence": { "x": 60, "y": 80, "stage": "情报采集" },
+      "B_md_master": { "x": 300, "y": 80, "stage": "内容母稿" },
+      "C0_script_pool_selection": { "x": 540, "y": 80, "stage": "脚本池" },
+      "C_ppt_storyboard": { "x": 780, "y": 80, "stage": "分镜" },
+      "D_voiceover_audio": { "x": 1020, "y": 80, "stage": "音频字幕" },
+      "E_visual_video": { "x": 1260, "y": 80, "stage": "视觉视频" },
+      "F_final_render": { "x": 1500, "y": 80, "stage": "最终渲染" },
+      "G_distribution_retro": { "x": 1020, "y": 300, "stage": "分发复盘" }
+    }
+  },
+  "registry_meta": { "source": "local_registry", "status": "experimental" }
+}
