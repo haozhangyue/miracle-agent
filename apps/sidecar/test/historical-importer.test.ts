@@ -191,4 +191,18 @@ describe("historical importer", () => {
     expect(attempts).toEqual([]);
     expect(events.map((event) => event.type)).toEqual(["historical_run_imported"]);
   });
+
+  it("keeps artifact ids unique when non-ASCII media names normalize to the same safe id", async () => {
+    const sourceRunDir = path.join(importRoot, "w24-minimal");
+    await mkdir(path.join(sourceRunDir, "media"), { recursive: true });
+    await writeFile(path.join(sourceRunDir, "media/版本甲.mp4"), "video-a", "utf8");
+    await writeFile(path.join(sourceRunDir, "media/版本乙.mp4"), "video-b", "utf8");
+
+    const result = await commitHistoricalImport(
+      { source_run_dir: sourceRunDir, workflow_id: "content-production-real-v0", sample_kind: "w24" },
+      { workspaceDir, allowedRoots: [importRoot], workflowPath, repositoryRoot: repoRoot }
+    );
+    const artifacts = JSON.parse(await readFile(path.join(workspaceDir, "runs", result.run_id, "artifacts.json"), "utf8")) as Array<{ artifact_id: string }>;
+    expect(new Set(artifacts.map((artifact) => artifact.artifact_id)).size).toBe(artifacts.length);
+  });
 });

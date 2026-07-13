@@ -36,11 +36,12 @@
 | P5-09 | P5 回归验收已通过，完成测试、API smoke、截图、真实范围核验和阶段收口 | `46_P5回归验收与阶段收口报告.md` |
 | P6-01 | 真实工作流工程实施计划已完成，形成三轨并行、接口、测试和验收基线 | `47_P6真实工作流工程实施计划与任务拆解.md` |
 | P6-02 | Historical Importer 与 Projection 已完成，W24/W23 preview/commit、幂等和只读保护通过 | `48_P6-02HistoricalImporter与Projection交付说明.md` |
+| P6-03 | 真实 Run API 与 Web 展示已完成，W24/W23 historical Run 接入 Run、Attention、Agent、Artifact、Gate | `49_P6-03真实Run_API与Web展示交付说明.md`、`assets/reviews/p6-real-run-ui/` |
 
 当前红点：
 
 ```text
-P6-03 真实 Run API 与 Web 展示：把 historical run 接入首页、Run、Attention、Artifact、Gate 和 Agent
+P6-04 RunDraft API 与 Web：在不写入执行事实的前提下实现草案、Dry-run、启动确认和审计
 ```
 
 ## 2. 可视化实现方式
@@ -94,8 +95,8 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 | P5-09 | P5 回归验收 | 已完成 | Lead | P5 验收报告、API smoke、截图、版本记录、task-baseline 同步 |
 | P6-01 | 真实工作流工程实施计划 | 已完成 | Lead | `47`、依赖、三轨并行边界和验收标准 |
 | P6-02 | Historical Importer 与 Projection | 已完成 | Agent A | W24/W23 projection、source_meta、preview/commit API、`48` |
-| P6-03 | 真实 Run API 与 Web 展示 | 当前主线任务 | Agent A | historical Run/Attention/Artifact/Gate/Agent UI |
-| P6-04 | RunDraft API 与 Web | 可并行，依赖 P6-01 | Agent B | 草案、Dry-run、确认、审计 |
+| P6-03 | 真实 Run API 与 Web 展示 | 已完成 | Agent A | historical Run/Attention/Artifact/Gate/Agent UI |
+| P6-04 | RunDraft API 与 Web | 当前主线任务 | Agent B | 草案、Dry-run、确认、审计 |
 | P6-05 | Adapter Contract Schema 与注册表 | 可并行，依赖 P6-01 | Agent C | Invocation/Result/Receipt 和 real manifest |
 | P6-06 | Codex CLI Health 与 Attempt Workspace | 依赖 P6-05 | Agent C | health、隔离 workspace、timeout/cancel |
 | P6-07 | C_md_master 单节点真实执行 | 依赖 P6-03/P6-04/P6-06 | Lead | 正式 Run、Markdown Artifact、Gate、Trace |
@@ -143,7 +144,7 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 
 1. 通过 Sidecar 独立地址 `/task-baseline` 访问，不进入 `apps/web` 侧边栏。
 2. 总体阶段用绿色、红色、灰色展示完成、当前和计划。
-3. 当前红点指向 `P6-03 真实 Run API 与 Web 展示`。
+3. 当前红点指向 `P6-04 RunDraft API 与 Web`。
 4. D1-D10、P5-01 至 P5-09 和 P6-01 至 P6-08 能区分串行、依赖和可并行任务。
 5. 能看到最近 Git 提交。
 6. 能看到工作区是否有未提交修改。

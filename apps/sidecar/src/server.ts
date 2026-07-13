@@ -276,6 +276,31 @@ async function readAdapterRegistry(): Promise<AdapterRegistryEntry[]> {
   return buildAdapterRegistry({ manifests: await readAdapterManifests(), availableCredentials: availableCredentialKeys() });
 }
 
+type RunViewMeta = {
+  origin: "native" | "historical_import";
+  mode: "executable" | "historical_readonly";
+  source_confidence: "high" | "mixed" | "low";
+  source_meta_available: boolean;
+};
+
+type HistoricalSourceMetaProjection = {
+  mode: "historical_readonly";
+  source_run_dir: string;
+  source_fingerprint: string;
+  imported_at: string;
+  gaps: Array<{ code: string; severity: string; message: string }>;
+  objects: Record<string, { confidence?: string; source_paths?: string[] }>;
+};
+
+function buildRunViewMeta(run: Record<string, unknown>, sourceMeta?: HistoricalSourceMetaProjection): RunViewMeta {
+  if (run.run_mode !== "historical_readonly") {
+    return { origin: "native", mode: "executable", source_confidence: "high", source_meta_available: false };
+  }
+  const gaps = sourceMeta?.gaps ?? [];
+  const sourceConfidence = gaps.some((gap) => gap.severity === "error") ? "low" : gaps.length > 0 ? "mixed" : "high";
+  return { origin: "historical_import", mode: "historical_readonly", source_confidence: sourceConfidence, source_meta_available: Boolean(sourceMeta) };
+}
+
 async function listRuns() {
   const entries = await readdir(path.join(workspaceDir, "runs"), { withFileTypes: true });
   const runs = [];
@@ -283,14 +308,16 @@ async function listRuns() {
     const run = await readJson<Record<string, unknown>>(path.join("runs", entry.name, "run_spec.json"));
     const nodes = await readJson<Array<{ status: string; updated_at?: string }>>(path.join("runs", entry.name, "nodes.json"));
     const attention = await readJson<Array<unknown>>(path.join("runs", entry.name, "attention.json")).catch(() => []);
+    const sourceMeta = await readJsonOptional<HistoricalSourceMetaProjection>(path.join("runs", entry.name, "source_meta.json"));
     runs.push({
       run_id: run.run_id,
       workflow_id: run.workflow_id,
       domain: String(run.workflow_id).replace("-v0", ""),
       status: run.status,
-      progress: { done: nodes.filter((node) => node.status === "done").length, total: nodes.length },
+      progress: { done: nodes.filter((node) => ["done", "completed"].includes(node.status)).length, total: nodes.length },
       attention_count: attention.length,
-      updated_at: nodes[0]?.["updated_at"] ?? run.created_at
+      updated_at: nodes[0]?.["updated_at"] ?? run.created_at,
+      view_meta: buildRunViewMeta(run, sourceMeta)
     });
   }
   return runs;
@@ -309,7 +336,8 @@ async function readRunBundle(runId: string) {
   const artifacts = await readJson<JsonValue>(`runs/${runId}/artifacts.json`);
   const gates = await readJson<JsonValue>(`runs/${runId}/gates.json`);
   const attention = await readJson<JsonValue>(`runs/${runId}/attention.json`).catch(() => []);
-  return { run, snapshot, workflow, nodes, artifacts, gates, attention };
+  const sourceMeta = await readJsonOptional<HistoricalSourceMetaProjection>(`runs/${runId}/source_meta.json`);
+  return { run, snapshot, workflow, nodes, artifacts, gates, attention, source_meta: sourceMeta, view_meta: buildRunViewMeta(run, sourceMeta) };
 }
 
 async function isHistoricalReadOnlyRun(runId: string) {
@@ -1577,6 +1605,37 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/v0/agents/collaboration") {
+    const runId = url.searchParams.get("run_id");
+    if (runId) {
+      const bundle = await readRunBundle(runId);
+      const configuredAgents = await readJson<Array<Record<string, unknown>>>("agents/agents.json");
+      const agentMap = new Map(configuredAgents.map((agent) => [String(agent.agent_id), { ...agent }]));
+      const sourceMeta = bundle.source_meta as HistoricalSourceMetaProjection | undefined;
+      for (const node of bundle.nodes as NodeRun[]) {
+        const agentId = node.agent_id ?? `agent-${node.node_id}`;
+        const configured = agentMap.get(agentId) ?? { agent_id: agentId, name: agentId, equipped_libraries: [] };
+        const source = sourceMeta?.objects?.[node.node_run_id];
+        const status = node.status === "done" ? "done" : node.status === "reviewing" ? "reviewing" : node.status;
+        const currentNodeRuns = ["running", "reviewing", "blocked", "failed"].includes(node.status) ? [node.node_run_id] : [];
+        const queuedNodeRuns = node.status === "queued" ? [node.node_run_id] : [];
+        agentMap.set(agentId, {
+          ...configured,
+          status,
+          active_runs: [runId],
+          current_node_runs: currentNodeRuns,
+          queued_node_runs: queuedNodeRuns,
+          waiting_for: node.status === "waiting" ? node.upstream_artifacts : [],
+          blocked_reason: node.status === "blocked" ? "历史证据显示节点处于 blocked" : null,
+          source_confidence: source?.confidence?.startsWith("observed") ? "observed" : source ? "inferred" : "unknown"
+        });
+      }
+      return sendJson(res, 200, {
+        run_id: runId,
+        view_meta: bundle.view_meta,
+        agents: Array.from(agentMap.values()),
+        links: bundle.workflow.edges.map((edge) => ({ from: edge.from, to: edge.to, required: edge.required }))
+      });
+    }
     const agents = await readJson<Array<Record<string, unknown>>>("agents/agents.json");
     return sendJson(res, 200, {
       agents,

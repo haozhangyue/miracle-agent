@@ -104,6 +104,11 @@ function safeId(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+function stableArtifactId(nodeId: string, relativePath: string) {
+  const suffix = createHash("sha256").update(relativePath).digest("hex").slice(0, 10);
+  return `art_${safeId(nodeId)}_${safeId(relativePath)}_${suffix}`;
+}
+
 async function exists(target: string) {
   try {
     await access(target);
@@ -266,7 +271,7 @@ async function buildArtifacts(
     if (!file) continue;
     const confidence = sampleKind === "w23" || ["A_fact_intelligence", "B_md_master", "G_distribution_retro"].includes(definition.nodeId) ? "inferred" : "observed_from_artifact";
     artifacts.push({
-      artifact_id: `art_${safeId(definition.nodeId)}_${safeId(definition.relativePath)}`,
+      artifact_id: stableArtifactId(definition.nodeId, definition.relativePath),
       node_id: definition.nodeId,
       type: definition.type,
       path: file.absolute_path,

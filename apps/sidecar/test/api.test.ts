@@ -98,8 +98,9 @@ describe("sidecar api", () => {
     expect(missingImport.status).toBe(404);
     expect(await missingImport.json()).toMatchObject({ error: { code: "historical_import_not_found" } });
 
-    const runs = await fetchJson<{ runs: Array<{ run_id: string }> }>("/api/v0/runs");
+    const runs = await fetchJson<{ runs: Array<{ run_id: string; view_meta: { origin: string; mode: string; source_confidence: string; source_meta_available: boolean } }> }>("/api/v0/runs");
     expect(runs.runs.some((run) => run.run_id === committed.run_id)).toBe(true);
+    expect(runs.runs.find((run) => run.run_id === committed.run_id)?.view_meta).toEqual({ origin: "historical_import", mode: "historical_readonly", source_confidence: "mixed", source_meta_available: true });
 
     const schedulerWrite = await fetch(`${baseUrl}/api/v0/runs/${committed.run_id}/scheduler/tick`, {
       method: "POST",
@@ -110,10 +111,14 @@ describe("sidecar api", () => {
     expect(await schedulerWrite.json()).toMatchObject({ error: { code: "historical_run_read_only" } });
 
     const importedRun = await fetchJson<{
+      view_meta: { origin: string; mode: string; source_confidence: string; source_meta_available: boolean };
+      source_meta: { mode: string; source_run_dir: string; gaps: unknown[] };
       nodes: Array<{ node_run_id: string }>;
       gates: Array<{ gate_instance_id: string }>;
       artifacts: unknown[];
     }>(`/api/v0/runs/${committed.run_id}`);
+    expect(importedRun.view_meta).toEqual({ origin: "historical_import", mode: "historical_readonly", source_confidence: "mixed", source_meta_available: true });
+    expect(importedRun.source_meta).toMatchObject({ mode: "historical_readonly", source_run_dir: sourceRunDir });
     const nodeWrite = await fetch(`${baseUrl}/api/v0/runs/${committed.run_id}/nodes/${importedRun.nodes[0]?.node_run_id}/execute`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -146,6 +151,10 @@ describe("sidecar api", () => {
     expect(eventsAfter.events).toEqual(factsBefore.events);
     expect(factsAfter.gates).toEqual(importedRun.gates);
     expect(factsAfter.artifacts).toEqual(importedRun.artifacts);
+
+    const collaboration = await fetchJson<{ run_id: string; view_meta: { mode: string }; agents: Array<{ active_runs: string[]; current_node_runs: string[]; source_confidence?: string }> }>(`/api/v0/agents/collaboration?run_id=${committed.run_id}`);
+    expect(collaboration).toMatchObject({ run_id: committed.run_id, view_meta: { mode: "historical_readonly" } });
+    expect(collaboration.agents.some((agent) => agent.active_runs.includes(committed.run_id) && agent.current_node_runs.length > 0 && agent.source_confidence === "observed")).toBe(true);
 
     const outside = await fetch(`${baseUrl}/api/v0/historical-imports/preview`, {
       method: "POST",

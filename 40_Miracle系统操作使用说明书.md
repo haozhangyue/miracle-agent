@@ -33,7 +33,7 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 | 当前产品版本 | `v0.7.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
 | 当前阶段 | P5 已验收，进入 P6 真实工作流工程接入 |
-| 当前任务焦点 | `P6-03` 真实 Run API 与 Web 展示 |
+| 当前任务焦点 | `P6-04` RunDraft API 与 Web |
 | 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
 | P6 执行基线 | `47_P6真实工作流工程实施计划与任务拆解.md` |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
@@ -236,8 +236,8 @@ Attention 的原则是“一个根因对应一个主 Attention Item”，避免�
 
 ### 5.10 Preview 和导入历史 Run
 
-P6-02 已提供 Sidecar API，Web 入口将在 P6-03 完成。真实导入必须使用仓库外 runtime
-workspace，并显式设置允许读取的根目录：
+P6-03 已将 historical Run 接入 Web。真实导入必须使用仓库外 runtime workspace，并显式设置
+允许读取的根目录：
 
 ```bash
 cd /Users/zhangyue/miracle-agent
@@ -251,7 +251,8 @@ npm run dev:sidecar
 
 先调用 `POST /api/v0/historical-imports/preview` 查看 valid、gaps 和 projected counts，确认后
 再调用 `POST /api/v0/historical-imports`。详细请求示例见
-`48_P6-02HistoricalImporter与Projection交付说明.md`。
+`48_P6-02HistoricalImporter与Projection交付说明.md` 和
+`49_P6-03真实Run_API与Web展示交付说明.md`。
 
 Historical run 是只读对象：不能调度、执行节点、提交 GateDecision 或创建返工版本。
 Sidecar 会强制要求仓库外 runtime workspace；若 `MIRACLE_WORKSPACE_DIR` 位于 Miracle
@@ -316,7 +317,8 @@ Sidecar 会强制要求仓库外 runtime workspace；若 `MIRACLE_WORKSPACE_DIR`
 | P5-04 | 审核策略映射设计 | 明确 approval policy 到 Gate 模型和 F_final_render 待审边界 | 无用户界面 bug 修复 | 暂不新增 UI 操作，后续 P5-06 展示验收会使用该规则 | 否 |
 | P5-05 | Trace 映射设计 | 明确 task_trace 到 NodeAttempt、task_events 到 TraceEvent 和 W23 缺 trace 降级规则 | 无用户界面 bug 修复 | 暂不新增 UI 操作，后续 P5-06 展示验收会使用该规则 | 否 |
 | P5-06 | UI 展示验收方案 | 明确真实历史 Run 在 Run、DAG、Agent、Artifact、Gate、Attention 中的展示口径 | 无用户界面 bug 修复 | 暂不新增 UI 操作，作为后续 importer 和截图验收标准 | 否 |
-| P6-02 | Historical Importer 与 Projection | 增加 allowlist、preview/commit、事实型审核投影、内容哈希幂等、可恢复并发锁、回执自愈、只读保护和 source confidence | 修复伪造 approved/decided、historical mutation、symlink 绕过、残留锁、错误 500、并发冲突、缺失回执、仓库污染和路径逃逸风险 | 新增 Sidecar API 操作及稳定 404/409/422 错误；Web 入口等待 P6-03 | 是，真实导入需设置仓库外 `MIRACLE_WORKSPACE_DIR` 和 `MIRACLE_IMPORT_ROOTS` |
+| P6-02 | Historical Importer 与 Projection | 增加 allowlist、preview/commit、事实型审核投影、内容哈希幂等、可恢复并发锁、回执自愈、只读保护和 source confidence | 修复伪造 approved/decided、historical mutation、symlink 绕过、残留锁、错误 500、并发冲突、缺失回执、仓库污染和路径逃逸风险 | 新增 Sidecar API 操作及稳定 404/409/422 错误；P6-03 已补充 Web historical 展示 | 是，真实导入需设置仓库外 `MIRACLE_WORKSPACE_DIR` 和 `MIRACLE_IMPORT_ROOTS` |
+| P6-03 | 真实 Run API 与 Web 展示 | Run 列表/详情增加 historical read-only、证据等级和来源缺口；Attention、Agent、Artifact、Gate 跟随选中 Run | 修复跨 Run 切换时旧 NodeRun/Artifact/Gate 请求、非 ASCII 产物路径导致 Artifact ID 重复 | 首页选择 W24/W23 后进入 Run、Attention、智能体、产物和审核页面；历史 Run 隐藏执行、调度、审核和返工操作 | 否，仍需使用仓库外 runtime workspace；截图证据见 `assets/reviews/p6-real-run-ui/` |
 
 ### 8.3 提交前同步检查
 
@@ -341,13 +343,14 @@ Sidecar 会强制要求仓库外 runtime workspace；若 `MIRACLE_WORKSPACE_DIR`
 | Scheduler 不继续推进 | Run 停在 pending_review Gate 或失败节点 | 先处理 Gate 审核或 Attention 根因，再重新调度 |
 | Gate 不能创建返工 | 按钮不可用或接口返回冲突 | 只有已 `reject` 或 `request_changes` 的 Gate 可以创建返工 |
 | Artifact 不可预览 | 预览区域显示 missing、binary 或路径拒绝 | 检查 ArtifactManifest 路径、文件是否存在、是否在 workspace 内 |
-| 真实工作流没有进入 UI | P6-02 importer 已实现，但 P6-03 Web read model 尚未完成 | 可先用 Sidecar API 查询，等待 P6-03 增加页面入口和截图验收 |
+| 真实工作流没有进入 UI | 检查首页“继续运行”是否出现 `content-production-real-v0` | 确认 Sidecar 使用同一个包含 historical Run 的 runtime workspace，并刷新页面；W24/W23 页面应显示 `Historical · Read-only` |
 
 ## 10. 当前限制
 
 当前版本仍有明确边界：
 
-1. 真实“热点工具更新”历史 Run importer 已实现 Sidecar API，但 Web 仍默认展示 demo run。
+1. 真实“热点工具更新”历史 Run importer 已实现 Sidecar API，Web 已支持 W24/W23 historical Run
+   只读展示，但仍需使用仓库外 runtime workspace 才能看到真实导入数据。
 2. 当前 Runner 仍以 mock/local 协议为主，不调用真实 Codex/Hermes/OpenClaw 执行链路。
 3. 没有云端控制平面、多租户、账号、权限、计费和团队协作。
 4. 没有移动端或 APP 适配，本阶段只面向 Web 工作台。

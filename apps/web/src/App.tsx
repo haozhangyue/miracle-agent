@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { Background, Controls, MarkerType, ReactFlow, type Edge as FlowEdge, type Node as FlowNode } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
+import { artifactPreviewCapability, confidenceLabel, eventSortDescending, gapLabel, isHistoricalRun } from "./historical";
 
 type Page = "home" | "new" | "dryrun" | "run" | "attention" | "agents" | "artifacts" | "review" | "canvas" | "sync" | "evolution";
 type ApiState<T> = { loading: boolean; data?: T; error?: string; refreshing?: boolean; updatedAt?: number };
@@ -44,9 +45,13 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-function useApi<T>(path: string, deps: unknown[] = []): ApiState<T> {
+function useApi<T>(path: string, deps: unknown[] = [], enabled = true): ApiState<T> {
   const [state, setState] = useState<ApiState<T>>({ loading: true });
   useEffect(() => {
+    if (!enabled) {
+      setState({ loading: false });
+      return;
+    }
     let alive = true;
     setState((current) => current.data ? { ...current, loading: false, refreshing: true, error: undefined } : { loading: true });
     api<T>(path)
@@ -55,7 +60,7 @@ function useApi<T>(path: string, deps: unknown[] = []): ApiState<T> {
     return () => {
       alive = false;
     };
-  }, deps);
+  }, [...deps, enabled]);
   return state;
 }
 
@@ -207,10 +212,10 @@ export function App() {
         {page === "home" && <HomePage go={setPage} setRunId={setRunId} setAttention={setSelectedAttention} />}
         {page === "new" && <NewTaskPage workflowId={workflowId} setWorkflowId={setWorkflowId} go={setPage} />}
         {page === "dryrun" && <DryRunPage workflowId={workflowId} setRunId={setRunId} go={setPage} />}
-        {page === "run" && <RunPage runId={runId} selectedNode={selectedNode} setSelectedNode={setSelectedNode} go={setPage} />}
-        {page === "attention" && <AttentionPage selected={selectedAttention} setSelected={setSelectedAttention} setSelectedGate={setSelectedGate} go={setPage} />}
-        {page === "agents" && <AgentsPage />}
-        {page === "artifacts" && <ArtifactsPage selectedArtifact={selectedArtifact} setSelectedArtifact={setSelectedArtifact} />}
+        {page === "run" && <RunPage runId={runId} setRunId={setRunId} selectedNode={selectedNode} setSelectedNode={setSelectedNode} go={setPage} />}
+        {page === "attention" && <AttentionPage runId={runId} selected={selectedAttention} setSelected={setSelectedAttention} setSelectedGate={setSelectedGate} go={setPage} />}
+        {page === "agents" && <AgentsPage runId={runId} />}
+        {page === "artifacts" && <ArtifactsPage runId={runId} selectedArtifact={selectedArtifact} setSelectedArtifact={setSelectedArtifact} />}
         {page === "review" && <ReviewPage runId={runId} selectedGate={selectedGate} setSelectedGate={setSelectedGate} />}
         {page === "canvas" && <CanvasPage workflowId={workflowId} />}
         {page === "sync" && <Placeholder title="Visual / Spec Sync" description="MVPS09 第一轮只保留入口和 spec diff 概念。文件 watcher 和冲突合并在后续实现。" />}
@@ -255,7 +260,7 @@ function HomePage({ go, setRunId, setAttention }: { go: (page: Page) => void; se
             {runs.data?.runs.map((run) => (
               <button className="runRow" key={run.run_id} onClick={() => { setRunId(run.run_id); go("run"); }}>
                 <Play size={16} />
-                <div><strong>{run.workflow_id}</strong><span>{run.run_id}</span></div>
+                <div><strong>{run.workflow_id}</strong><span>{run.run_id}</span>{run.view_meta?.origin === "historical_import" && <small className="historicalInline">Historical · {confidenceLabel(run.view_meta.source_confidence)}</small>}</div>
                 <progress value={run.progress.done} max={run.progress.total} />
                 <Pill value={run.status} />
               </button>
@@ -366,23 +371,27 @@ function DryRunPage({ workflowId, setRunId, go }: { workflowId: string; setRunId
   );
 }
 
-function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; selectedNode: string; setSelectedNode: (id: string) => void; go: (page: Page) => void }) {
+function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId: string; setRunId: (id: string) => void; selectedNode: string; setSelectedNode: (id: string) => void; go: (page: Page) => void }) {
   const [refresh, setRefresh] = useState(0);
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<number>();
   const [executeState, setExecuteState] = useState<string>("");
   const [schedulerState, setSchedulerState] = useState<string>("");
+  const runs = useApi<{ runs: any[] }>("/runs", []);
   const run = useApi<any>(`/runs/${runId}`, [runId, refresh]);
   const dag = useApi<any>(`/runs/${runId}/dag`, [runId, refresh]);
   const events = useApi<any>(`/runs/${runId}/events`, [runId, refresh]);
   const attention = useApi<any>(`/attention?run_id=${runId}`, [runId, refresh]);
-  const node = selectedNode ? useApi<any>(`/runs/${runId}/nodes/${selectedNode}`, [runId, selectedNode, refresh]) : { loading: false } as ApiState<any>;
+  const nodesForRun = (dag.data?.dag.nodes ?? []).filter((item: any) => String(item.node_run_id ?? "").startsWith(`nr_${runId}_`));
+  const selectedNodeForRun = selectedNode.startsWith(`nr_${runId}_`) && nodesForRun.some((item: any) => item.node_run_id === selectedNode) ? selectedNode : (nodesForRun[0]?.node_run_id ?? "");
+  const node = useApi<any>(`/runs/${runId}/nodes/${selectedNodeForRun}`, [runId, selectedNodeForRun, refresh], Boolean(selectedNodeForRun));
+  const historical = isHistoricalRun(run.data?.run, run.data?.view_meta);
   const statusSummary = useMemo(() => nodeStatusSummary(run.data?.nodes ?? []), [run.data?.nodes]);
   const attentionCount = attention.data?.attention?.length ?? run.data?.attention?.length ?? 0;
   const stages = useMemo(() => {
     const workflow = run.data?.workflow;
     if (!workflow) return [];
-    return Array.from(new Set(Object.values(workflow.layouts.dag).map((item: any) => item.stage ?? "默认阶段")));
+    return Array.from(new Set(Object.values(workflow.layouts?.dag ?? {}).map((item: any) => item.stage ?? "默认阶段")));
   }, [run.data]);
   const flowNodes = useMemo<FlowNode[]>(() => {
     return (dag.data?.dag.nodes ?? []).map((item: any) => ({
@@ -399,9 +408,9 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
         ),
         nodeRunId: item.node_run_id
       },
-      className: item.node_run_id === selectedNode ? "flowShell selected" : "flowShell"
+      className: item.node_run_id === selectedNodeForRun ? "flowShell selected" : "flowShell"
     }));
-  }, [dag.data, selectedNode]);
+  }, [dag.data, selectedNodeForRun]);
   const flowEdges = useMemo<FlowEdge[]>(() => {
     return (dag.data?.dag.edges ?? []).map((item: any) => ({
       id: item.id,
@@ -415,10 +424,10 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
     }));
   }, [dag.data]);
   useEffect(() => {
-    const firstNodeRunId = dag.data?.dag.nodes[0]?.node_run_id;
-    const selectedExists = dag.data?.dag.nodes.some((item: any) => item.node_run_id === selectedNode);
+    const firstNodeRunId = nodesForRun[0]?.node_run_id;
+    const selectedExists = nodesForRun.some((item: any) => item.node_run_id === selectedNode);
     if (firstNodeRunId && !selectedExists) setSelectedNode(firstNodeRunId);
-  }, [dag.data, selectedNode, setSelectedNode]);
+  }, [nodesForRun, selectedNode, setSelectedNode]);
   useEffect(() => {
     if (!autoRefreshEnabled || !runId) return;
     const intervalId = window.setInterval(() => {
@@ -429,10 +438,10 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
   }, [autoRefreshEnabled, runId]);
 
   async function executeSelectedNode() {
-    if (!selectedNode) return;
+    if (!selectedNodeForRun || historical) return;
     setExecuteState("执行中");
     try {
-      const result = await api<any>(`/runs/${runId}/nodes/${selectedNode}/execute`, { method: "POST", body: JSON.stringify({}) });
+      const result = await api<any>(`/runs/${runId}/nodes/${selectedNodeForRun}/execute`, { method: "POST", body: JSON.stringify({}) });
       setExecuteState(`已提交 · ${result.adapter_result.status}`);
       setRefresh((value) => value + 1);
     } catch (error) {
@@ -440,6 +449,7 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
     }
   }
   async function runSchedulerTick() {
+    if (historical) return;
     setSchedulerState("Scheduler tick 执行中");
     try {
       const result = await api<any>(`/runs/${runId}/scheduler/tick`, { method: "POST", body: JSON.stringify({ max_nodes: 1 }) });
@@ -450,6 +460,7 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
     }
   }
   async function runSchedulerLoop() {
+    if (historical) return;
     setSchedulerState("Scheduler 自动推进中");
     try {
       const result = await api<any>(`/runs/${runId}/scheduler/run`, { method: "POST", body: JSON.stringify({ max_ticks: 8, max_nodes_per_tick: 1 }) });
@@ -465,7 +476,16 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
   return (
     <section className="page">
       <PageTitle eyebrow="Run Workspace" title={String(run.data?.run.workflow_id ?? runId)} subtitle={`${runId} · RunSpec / WorkflowSnapshot 只读`} />
+      {historical && (
+        <div className="historicalBanner">
+          <div><strong>Historical · Read-only</strong><span>本次 Run 来自历史工作区投影，不会调用 Runner，也不会修改源文件。</span></div>
+          <Pill value={confidenceLabel(run.data?.view_meta?.source_confidence)} />
+          {run.data?.source_meta?.gaps?.length > 0 && <small>{run.data.source_meta.gaps.length} 个证据缺口</small>}
+          {run.data?.source_meta?.gaps?.length > 0 && <div className="historicalGaps">{run.data.source_meta.gaps.map((gap: any) => <span key={gap.code}>{gapLabel(gap)}</span>)}</div>}
+        </div>
+      )}
       <div className="runHeader">
+        <label className="runSelector"><span>当前 Run</span><select value={runId} onChange={(event) => setRunId(event.target.value)}>{runs.data?.runs.map((item) => <option key={item.run_id} value={item.run_id}>{item.run_id}</option>)}</select></label>
         <Metric label="状态" value={String(run.data?.run.status ?? "-")} />
         <Metric label="节点" value={String((run.data?.nodes ?? []).length)} />
         <Metric label="Attention" value={String(attentionCount)} />
@@ -481,8 +501,8 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
           </div>
         </div>
         <button onClick={() => go("attention")}>查看 Attention</button>
-        <button onClick={runSchedulerTick}>调度一次</button>
-        <button onClick={runSchedulerLoop}>自动推进</button>
+        {!historical && <button onClick={runSchedulerTick}>调度一次</button>}
+        {!historical && <button onClick={runSchedulerLoop}>自动推进</button>}
       </div>
       <div className="statusStrip">
         <StatusCounter label="running" value={statusSummary.running} />
@@ -519,16 +539,17 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
               <div className="detailHeader">
                 <Workflow size={22} />
                 <div>
-                  <strong>{node.data?.node?.node_id ?? selectedNode}</strong>
+                  <strong>{node.data?.node?.node_id ?? selectedNodeForRun}</strong>
                   <span>{node.data?.node?.node_run_id}</span>
                 </div>
                 <Pill value={selectedStatus} />
               </div>
               <ExecutionFeedback status={selectedStatus} go={go} onRefresh={() => setRefresh((value) => value + 1)} />
               <div className="safeActions">
-                <button onClick={executeSelectedNode} disabled={!executable}><Play size={16} /> 执行当前节点</button>
+                {!historical && <button onClick={executeSelectedNode} disabled={!executable}><Play size={16} /> 执行当前节点</button>}
                 <button onClick={() => setRefresh((value) => value + 1)}>刷新</button>
               </div>
+              {historical && <div className="readOnlyNote">Historical Run 仅供查看，节点执行与调度操作已隐藏。</div>}
               {executeState && <div className="receiptLine">{executeState}</div>}
               <h3>NodeRun</h3>
               <pre className="jsonBlock compact">{JSON.stringify(node.data?.node, null, 2)}</pre>
@@ -552,7 +573,7 @@ function RunPage({ runId, selectedNode, setSelectedNode, go }: { runId: string; 
       </div>
       <Panel title="事件与审计">
         <DataState state={events}>
-          {events.data?.events.map((event: any) => {
+          {eventSortDescending(events.data?.events ?? []).map((event: any) => {
             const meta = eventAuditMeta(event.type);
             return (
               <div className={`eventRow ${meta.className}`} key={event.event_id}>
@@ -588,9 +609,12 @@ function ExecutionFeedback({ status, go, onRefresh }: { status: string; go: (pag
   );
 }
 
-function AttentionPage({ selected, setSelected, setSelectedGate, go }: { selected: string; setSelected: (id: string) => void; setSelectedGate: (id: string) => void; go: (page: Page) => void }) {
-  const attention = useApi<{ attention: any[] }>("/attention", []);
+function AttentionPage({ runId, selected, setSelected, setSelectedGate, go }: { runId: string; selected: string; setSelected: (id: string) => void; setSelectedGate: (id: string) => void; go: (page: Page) => void }) {
+  const attention = useApi<{ attention: any[] }>(`/attention?run_id=${runId}`, [runId]);
   const current = attention.data?.attention.find((item) => item.attention_id === selected) ?? attention.data?.attention[0];
+  useEffect(() => {
+    if (attention.data?.attention[0] && !attention.data.attention.some((item) => item.attention_id === selected)) setSelected(attention.data.attention[0].attention_id);
+  }, [attention.data, selected, setSelected]);
   function openReviewFromAttention() {
     const gateObject = current?.related_objects.find((object: any) => object.type === "GateInstance");
     if (gateObject?.id) setSelectedGate(gateObject.id);
@@ -598,7 +622,7 @@ function AttentionPage({ selected, setSelected, setSelectedGate, go }: { selecte
   }
   return (
     <section className="page">
-      <PageTitle eyebrow="Attention Queue" title="根因联动处置" subtitle="一个根因对应一个主 Attention Item，关联对象展开显示。" />
+      <PageTitle eyebrow="Attention Queue" title="根因联动处置" subtitle={`${runId} · 一个根因对应一个主 Attention Item，关联对象展开显示。`} />
       <div className="attentionGrid">
         <Panel title="关注队列" count={attention.data?.attention.length}>
           <DataState state={attention}>
@@ -632,11 +656,11 @@ function AttentionPage({ selected, setSelected, setSelectedGate, go }: { selecte
   );
 }
 
-function AgentsPage() {
-  const collaboration = useApi<any>("/agents/collaboration", []);
+function AgentsPage({ runId }: { runId: string }) {
+  const collaboration = useApi<any>(`/agents/collaboration?run_id=${runId}`, [runId]);
   return (
     <section className="page">
-      <PageTitle eyebrow="Agent Collaboration" title="多 Agent 协同态势" subtitle="展示 Agent 健康、等待对象、阻塞传播和交接合同。" />
+      <PageTitle eyebrow="Agent Collaboration" title="多 Agent 协同态势" subtitle={`${runId} · 展示 Agent 健康、等待对象、阻塞传播和交接合同。`} />
       <Panel title="Agent Map">
         <DataState state={collaboration}>
           <div className="agentGrid">
@@ -645,8 +669,11 @@ function AgentsPage() {
                 <Bot size={20} />
                 <strong>{agent.name}</strong>
                 <Pill value={agent.status} />
-                <small>active: {agent.active_runs.join(", ") || "-"}</small>
-                <small>waiting: {agent.waiting_for.join(", ") || "-"}</small>
+                <small>active: {agent.active_runs?.join(", ") || "-"}</small>
+                <small>current: {agent.current_node_runs?.join(", ") || "-"}</small>
+                <small>queued: {agent.queued_node_runs?.join(", ") || "-"}</small>
+                <small>waiting: {agent.waiting_for?.join(", ") || "-"}</small>
+                {agent.source_confidence && <small>证据：{agent.source_confidence}</small>}
               </div>
             ))}
           </div>
@@ -656,12 +683,16 @@ function AgentsPage() {
   );
 }
 
-function ArtifactsPage({ selectedArtifact, setSelectedArtifact }: { selectedArtifact: string; setSelectedArtifact: (id: string) => void }) {
-  const artifacts = useApi<{ artifacts: any[] }>("/artifacts", []);
-  const detail = useApi<any>(`/artifacts/${selectedArtifact}`, [selectedArtifact]);
+function ArtifactsPage({ runId, selectedArtifact, setSelectedArtifact }: { runId: string; selectedArtifact: string; setSelectedArtifact: (id: string) => void }) {
+  const artifacts = useApi<{ artifacts: any[] }>(`/artifacts?run_id=${runId}`, [runId]);
+  const selectedArtifactForRun = artifacts.data?.artifacts.some((item) => item.artifact_id === selectedArtifact) ? selectedArtifact : (artifacts.data?.artifacts[0]?.artifact_id ?? "");
+  const detail = useApi<any>(`/artifacts/${selectedArtifactForRun}?run_id=${runId}`, [runId, selectedArtifactForRun], Boolean(selectedArtifactForRun));
+  useEffect(() => {
+    if (artifacts.data?.artifacts[0] && !artifacts.data.artifacts.some((item) => item.artifact_id === selectedArtifact)) setSelectedArtifact(artifacts.data.artifacts[0].artifact_id);
+  }, [artifacts.data, selectedArtifact, setSelectedArtifact]);
   return (
     <section className="page">
-      <PageTitle eyebrow="Artifact Board" title="产物资产" subtitle="按类型、版本、审核状态和 producer 查看产物。" />
+      <PageTitle eyebrow="Artifact Board" title="产物资产" subtitle={`${runId} · 按类型、版本、审核状态和 producer 查看产物。`} />
       <div className="artifactGrid">
         <Panel title="Artifact Manifest" count={artifacts.data?.artifacts.length}>
           <DataState state={artifacts}>
@@ -683,10 +714,10 @@ function ArtifactsPage({ selectedArtifact, setSelectedArtifact }: { selectedArti
               <div className="detailHeader">
                 <FileSearch size={22} />
                 <div>
-                  <strong>{detail.data?.artifact.artifact_id}</strong>
+                <strong>{detail.data?.artifact.artifact_id}</strong>
                   <span>{detail.data?.artifact.path}</span>
                 </div>
-                <Pill value={detail.data?.preview.mode} />
+                <Pill value={artifactPreviewCapability(detail.data?.artifact ?? {}).label} />
               </div>
               <div className="manifestGrid">
                 <Metric label="类型" value={String(detail.data?.artifact.type)} />
@@ -725,11 +756,16 @@ function ReviewPage({ runId, selectedGate, setSelectedGate }: { runId: string; s
   const [reworkResult, setReworkResult] = useState<any>();
   const [actionState, setActionState] = useState("");
   const run = useApi<any>(`/runs/${runId}`, [runId, refresh]);
-  const gate = useApi<any>(`/gates/${selectedGate}?run_id=${runId}`, [runId, selectedGate, refresh]);
+  const selectedGateForRun = run.data?.gates?.some((item: any) => item.gate_instance_id === selectedGate) ? selectedGate : (run.data?.gates?.[0]?.gate_instance_id ?? "");
+  const gate = useApi<any>(`/gates/${selectedGateForRun}?run_id=${runId}`, [runId, selectedGateForRun, refresh], Boolean(selectedGateForRun));
   const currentGate = gate.data?.gate;
+  const historical = isHistoricalRun(run.data?.run, run.data?.view_meta);
   const currentDecision = latestDecision(currentGate);
-  const canDecide = currentGate?.status === "pending_review";
-  const canCreateRework = currentGate?.status === "decided" && ["reject", "request_changes"].includes(currentDecision?.decision ?? "");
+  const canDecide = !historical && currentGate?.status === "pending_review";
+  const canCreateRework = !historical && currentGate?.status === "decided" && ["reject", "request_changes"].includes(currentDecision?.decision ?? "");
+  useEffect(() => {
+    if (run.data?.gates?.[0] && !run.data.gates.some((item: any) => item.gate_instance_id === selectedGate)) setSelectedGate(run.data.gates[0].gate_instance_id);
+  }, [run.data, selectedGate, setSelectedGate]);
 
   function clearGateActionState() {
     setDecisionResult(undefined);
@@ -738,14 +774,14 @@ function ReviewPage({ runId, selectedGate, setSelectedGate }: { runId: string; s
   }
 
   function selectGateForReview(gateId: string) {
-    if (gateId === selectedGate) return;
+    if (gateId === selectedGateForRun) return;
     clearGateActionState();
     setSelectedGate(gateId);
   }
 
   async function decide(decision: "approve" | "reject" | "request_changes") {
     setActionState("提交 GateDecision 中");
-    const result = await api<any>(`/gates/${selectedGate}/decision?run_id=${runId}`, {
+    const result = await api<any>(`/gates/${selectedGateForRun}/decision?run_id=${runId}`, {
       method: "POST",
       body: JSON.stringify({
         decision,
@@ -761,7 +797,7 @@ function ReviewPage({ runId, selectedGate, setSelectedGate }: { runId: string; s
 
   async function createRework() {
     setActionState("创建返工版本中");
-    const result = await api<any>(`/gates/${selectedGate}/rework?run_id=${runId}`, {
+    const result = await api<any>(`/gates/${selectedGateForRun}/rework?run_id=${runId}`, {
       method: "POST",
       body: JSON.stringify({ actor: "local_user", comment: currentDecision?.comment ?? "审核驳回后创建返工版本" })
     });
@@ -774,7 +810,8 @@ function ReviewPage({ runId, selectedGate, setSelectedGate }: { runId: string; s
 
   return (
     <section className="page">
-      <PageTitle eyebrow="Gate Review" title="审核抽屉" subtitle="GateDecision、返工 attempt 和 TraceEvent 由 Sidecar Orchestrator 单写入。" />
+      <PageTitle eyebrow="Gate Review" title="审核抽屉" subtitle={`${runId} · GateDecision、返工 attempt 和 TraceEvent 由 Sidecar Orchestrator 单写入。`} />
+      {historical && <div className="historicalBanner"><div><strong>Historical · Read-only</strong><span>历史审核证据仅供查看，不能提交决策或创建返工。</span></div><Pill value={confidenceLabel(run.data?.view_meta?.source_confidence)} /></div>}
       <div className="reviewGrid">
         <Panel title="Gate 列表" count={run.data?.gates?.length}>
           <DataState state={run}>
@@ -782,7 +819,7 @@ function ReviewPage({ runId, selectedGate, setSelectedGate }: { runId: string; s
               {run.data?.gates.map((item: any) => {
                 const decision = latestDecision(item);
                 return (
-                  <button className={item.gate_instance_id === selectedGate ? "gateSelector active" : "gateSelector"} key={item.gate_instance_id} onClick={() => selectGateForReview(item.gate_instance_id)}>
+                  <button className={item.gate_instance_id === selectedGateForRun ? "gateSelector active" : "gateSelector"} key={item.gate_instance_id} onClick={() => selectGateForReview(item.gate_instance_id)}>
                     <ClipboardCheck size={16} />
                     <span>
                       <strong>{item.gate_instance_id}</strong>

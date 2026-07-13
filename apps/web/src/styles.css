@@ -74,8 +74,18 @@ progress { width: 100%; height: 8px; accent-color: #1264e8; }
 .metric span { display: block; color: #758399; font-size: 12px; }
 .metric strong { font-size: 20px; }
 .riskCard { display: grid; gap: 6px; }
-.runHeader { display: grid; grid-template-columns: repeat(3, 1fr) minmax(270px, 1fr) auto auto auto; gap: 12px; align-items: stretch; }
+.runHeader { display: grid; grid-template-columns: minmax(190px, .85fr) repeat(3, minmax(110px, 1fr)) minmax(270px, 1fr) auto auto auto; gap: 12px; align-items: stretch; }
 .runHeader button { border: 1px solid #dbe4f2; background: white; border-radius: 8px; padding: 0 16px; }
+.runSelector { border: 1px solid #dfe7f3; border-radius: 8px; padding: 8px 10px; background: #fbfdff; display: grid; gap: 4px; min-width: 190px; }
+.runSelector span { color: #64748b; font-size: 11px; font-weight: 800; }
+.runSelector select { border: 0; background: transparent; color: #172033; font-weight: 700; min-width: 0; }
+.historicalBanner { border: 1px solid #c9d9ef; border-left: 4px solid #7c5cff; border-radius: 8px; background: #fbfaff; padding: 12px 14px; display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; color: #4b3c9b; }
+.historicalBanner div:first-child { display: grid; gap: 4px; flex: 1; min-width: 280px; }
+.historicalBanner strong { color: #5636c4; }
+.historicalBanner span, .historicalBanner small { color: #6c6590; }
+.historicalGaps { flex-basis: 100%; display: grid; gap: 4px; padding-top: 6px; border-top: 1px solid #e7e1ff; font-size: 12px; }
+.historicalInline { color: #6e4ed6 !important; }
+.readOnlyNote { border: 1px solid #e7e1ff; border-radius: 7px; padding: 8px 10px; background: #fbfaff; color: #6c6590; font-size: 12px; }
 .refreshPanel { border: 1px solid #dfe7f3; border-radius: 8px; padding: 10px 12px; background: #fbfdff; display: grid; gap: 7px; }
 .refreshPanel div:first-child { display: flex; align-items: center; gap: 7px; color: #075fe8; }
 .refreshPanel small { color: #64748b; }

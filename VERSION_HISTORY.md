@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.7.0` |
 | 版本名称 | P4 MVP 本地闭环验收基线 |
-| 当前阶段 | P6-02 Historical Importer 与 Projection 已完成；运行版本仍为 v0.7.0，当前任务为 `P6-03` 真实 Run API 与 Web 展示 |
+| 当前阶段 | P6-03 真实 Run API 与 Web 展示已完成；运行版本仍为 v0.7.0，当前任务为 `P6-04` RunDraft API 与 Web |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -311,6 +311,13 @@
   historical attempt，W23 保持 0 source event/0 attempt，源文件哨兵未变化。
 - 同步 task-baseline：`P6-02` 标记完成，`current_node_id` 推进到 `p6-03`。
 - 本次新增 Sidecar API，但 Web 尚未展示真实 historical run，运行版本继续保持 `v0.7.0`。
+- 新增 `49_P6-03真实Run_API与Web展示交付说明.md`，完成 W24/W23 historical Run 的只读
+  Run API、Run/Attention/Agent/Artifact/Gate Web 展示、证据等级和来源缺口提示。
+- 历史 Run 的跨页面选择会保持同一 `run_id`，隐藏执行、调度、审核和返工操作；新增真实 Run
+  页面截图到 `assets/reviews/p6-real-run-ui/`，并补充 Artifact ID 稳定路径哈希避免非 ASCII
+  路径归一化冲突。
+- 测试增至 Sidecar 35 项、Core 10 项、Web 3 项；同步 task-baseline：`P6-03` 标记完成，
+  `current_node_id` 推进到 `p6-04`，当前进入 P6-04 RunDraft API 与 Web。
 
 ## 5. 里程碑
 
