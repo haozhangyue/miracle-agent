@@ -48,6 +48,7 @@ import {
   readHistoricalImport
 } from "./historical-importer";
 import { RunDraftStore, RunDraftStoreError } from "./run-draft-store";
+import { CodexCliAdapter, CodexCliAdapterError } from "./codex-cli-adapter";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
@@ -59,6 +60,13 @@ const historicalImportRoots = (process.env.MIRACLE_IMPORT_ROOTS ?? "")
   .filter(Boolean);
 const execGit = promisify(execFile);
 const runDraftStore = new RunDraftStore({ workspace_dir: workspaceDir, workflows_dir: workflowRegistryDir });
+const codexCliAdapter = new CodexCliAdapter({
+  workspace_dir: workspaceDir,
+  repository_root: rootDir,
+  executable_path: process.env.MIRACLE_CODEX_CLI_PATH,
+  command_prefix_args: process.env.MIRACLE_CODEX_CLI_ARGUMENT_PREFIX ? [process.env.MIRACLE_CODEX_CLI_ARGUMENT_PREFIX] : []
+});
+void codexCliAdapter.recoverOrphanedOperations();
 
 type JsonValue = Record<string, unknown> | unknown[];
 type SchedulerDecision = {
@@ -1357,6 +1365,19 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return sendJson(res, 200, { status: "ok", mode: "local-sidecar", workspace: workspaceDir });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/v0/adapters/codex-cli/health") {
+    return sendJson(res, 200, await codexCliAdapter.getHealth());
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/v0/adapters/codex-cli/health/refresh") {
+    return sendJson(res, 200, await codexCliAdapter.refreshHealth());
+  }
+
+  if (req.method === "POST" && parts[0] === "api" && parts[1] === "v0" && parts[2] === "operations" && parts[3] && parts[4] === "cancel") {
+    const result = await codexCliAdapter.cancelOperation(getId(parts, 3));
+    return sendJson(res, 200, { operation_id: getId(parts, 3), status: result });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/v0/domains") {
     return sendJson(res, 200, { domains: await listJsonFiles("domains") });
   }
@@ -1371,13 +1392,25 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
   if (req.method === "GET" && url.pathname === "/api/v0/adapters") {
     const adapters = await readAdapterRegistry();
+    const codexHealth = await codexCliAdapter.getHealth();
+    const projectedAdapters = adapters.map((adapter) => adapter.id === "codex-cli-real"
+      ? {
+          ...adapter,
+          health: {
+            ready: codexHealth.status === "healthy" && codexHealth.authenticated,
+            status: codexHealth.status,
+            authenticated: codexHealth.authenticated,
+            reasons: codexHealth.reasons
+          }
+        }
+      : adapter);
     return sendJson(res, 200, {
-      adapters,
+      adapters: projectedAdapters,
       summary: {
-        total: adapters.length,
-        executable: adapters.filter((adapter) => adapter.executable).length,
-        blocked: adapters.filter((adapter) => adapter.status === "blocked").length,
-        missing_credentials: adapters.flatMap((adapter) => adapter.credential_status.filter((credential) => credential.required && !credential.configured).map((credential) => credential.key))
+        total: projectedAdapters.length,
+        executable: projectedAdapters.filter((adapter) => adapter.executable).length,
+        blocked: projectedAdapters.filter((adapter) => adapter.status === "blocked").length,
+        missing_credentials: projectedAdapters.flatMap((adapter) => adapter.credential_status.filter((credential) => credential.required && !credential.configured).map((credential) => credential.key))
       }
     });
   }
@@ -2055,6 +2088,14 @@ const server = createServer((req, res) => {
     }
     if (error instanceof RunDraftError) {
       return sendError(res, 409, error.code, error.message);
+    }
+    if (error instanceof CodexCliAdapterError) {
+      const status = error.code === "operation_not_found"
+        ? 404
+        : error.code === "input_path_not_allowed" || error.code === "workspace_escape_detected" || error.code === "invalid_attempt_id"
+          ? 400
+          : 409;
+      return sendError(res, status, error.code, error.message);
     }
     const message = error instanceof Error ? error.message : "Unknown sidecar error";
     sendError(res, 500, "sidecar_error", message);

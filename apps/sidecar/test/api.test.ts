@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const fixtureWorkspace = path.join(repoRoot, "fixtures/mvp-workspace/.miracle");
 const historicalFixtures = path.join(repoRoot, "apps/sidecar/test/fixtures/historical");
+const fakeCodex = path.join(repoRoot, "apps/sidecar/test/fixtures/bin/fake-codex.mjs");
 
 let tempRoot = "";
 let tempWorkspace = "";
@@ -54,6 +55,8 @@ describe("sidecar api", () => {
         MIRACLE_WORKSPACE_DIR: tempWorkspace,
         MIRACLE_SIDECAR_PORT: String(port),
         MIRACLE_IMPORT_ROOTS: historicalFixtures,
+        MIRACLE_CODEX_CLI_PATH: process.execPath,
+        MIRACLE_CODEX_CLI_ARGUMENT_PREFIX: fakeCodex,
         npm_config_cache: path.join(repoRoot, ".npm-cache")
       }
     });
@@ -171,6 +174,19 @@ describe("sidecar api", () => {
     });
     expect(unsafeWorkflow.status).toBe(400);
     expect(await unsafeWorkflow.json()).toMatchObject({ error: { code: "invalid_workflow_id" } });
+  });
+
+  it("serves Codex CLI health without returning executable secrets or starting a content task", async () => {
+    const health = await fetchJson<{ adapter_id: string; status: string; version?: string; authenticated: boolean; reasons: string[] }>("/api/v0/adapters/codex-cli/health");
+    expect(health).toEqual({ adapter_id: "codex-cli-real", status: "healthy", executable_path: path.basename(process.execPath), version: "0.142.1", authenticated: true, reasons: [], checked_at: expect.any(String) });
+
+    const refreshed = await fetchJson<{ status: string }>("/api/v0/adapters/codex-cli/health/refresh", { method: "POST", body: JSON.stringify({}) });
+    expect(refreshed.status).toBe("healthy");
+
+    const unknownCancel = await fetch(`${baseUrl}/api/v0/operations/op_missing/cancel`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+    expect(unknownCancel.status).toBe(404);
+    expect(await unknownCancel.json()).toMatchObject({ error: { code: "operation_not_found" } });
+    await expect(readFile(path.join(tempWorkspace, "runs", "run_001", "attempts.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("returns a DAG projection with required and optional edges", async () => {
@@ -450,7 +466,7 @@ describe("sidecar api", () => {
 
   it("returns adapter manifests with credential status", async () => {
     const body = await fetchJson<{
-      adapters: Array<{ id: string; kind: string; execution_mode: string; executable: boolean; credential_status: Array<{ key: string; configured: boolean }> }>;
+      adapters: Array<{ id: string; kind: string; execution_mode: string; executable: boolean; credential_status: Array<{ key: string; configured: boolean }>; health?: { ready: boolean; status: string; authenticated: boolean; reasons: string[] } }>;
       summary: { total: number; executable: number; missing_credentials: string[] };
     }>("/api/v0/adapters");
 
@@ -459,7 +475,7 @@ describe("sidecar api", () => {
     expect(body.summary.missing_credentials).toContain("PROVIDER_API_KEY");
     expect(body.adapters.map((adapter) => adapter.kind)).toEqual(expect.arrayContaining(["mock-local", "codex", "hermes", "openclaw", "official-api"]));
     expect(body.adapters.find((adapter) => adapter.id === "codex-mock-compatible-adapter")).toMatchObject({ execution_mode: "mock-compatible", executable: true });
-    expect(body.adapters.find((adapter) => adapter.id === "codex-cli-real")).toMatchObject({ execution_mode: "shell", executable: false });
+    expect(body.adapters.find((adapter) => adapter.id === "codex-cli-real")).toMatchObject({ execution_mode: "shell", executable: false, health: { ready: true, status: "healthy", authenticated: true, reasons: [] } });
     expect(body.adapters.find((adapter) => adapter.id === "official-api-adapter-shell")?.credential_status.some((credential) => credential.key === "PROVIDER_API_KEY" && !credential.configured)).toBe(true);
   });
 
