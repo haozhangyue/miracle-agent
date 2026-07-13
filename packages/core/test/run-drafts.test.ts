@@ -3,9 +3,11 @@ import {
   RunDraftError,
   canonicalPlanHash,
   confirmRunDraft,
+  cancelRunDraft,
   createRunDraft,
   createRunDraftDryRunPlan,
   refreshRunDraftWorkflowSource,
+  reviseRunDraft,
   updateRunDraft,
   type WorkflowSpec
 } from "../src";
@@ -190,5 +192,21 @@ describe("RunDraft core", () => {
 
     expect(second.confirmation).toEqual(first.confirmation);
     expect(second.draft).toEqual(first.draft);
+  });
+
+  it("revises a confirmed draft by superseding confirmation and requiring a new dry-run", () => {
+    const plan = dryRun();
+    const confirmed = confirmRunDraft({ draft: draft(), plan, actor: "operator", acknowledgements: plan.required_acknowledgements, now: "2026-07-13T01:02:00.000Z" });
+    const revised = reviseRunDraft({ draft: confirmed.draft, confirmation: confirmed.confirmation, now: "2026-07-13T01:03:00.000Z" });
+
+    expect(revised.draft).toMatchObject({ status: "ready_for_dry_run", latest_plan_hash: undefined, confirmation_id: undefined });
+    expect(revised.confirmation).toMatchObject({ decision: "superseded" });
+  });
+
+  it("cancels a draft without creating any Run facts", () => {
+    const cancelled = cancelRunDraft({ draft: draft(), now: "2026-07-13T01:02:00.000Z" });
+
+    expect(cancelled.draft.status).toBe("cancelled");
+    expect(cancelled.draft.converted_run_id).toBeUndefined();
   });
 });

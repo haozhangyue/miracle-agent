@@ -273,6 +273,41 @@ export function refreshRunDraftWorkflowSource(input: {
   return { draft, confirmation };
 }
 
+export function reviseRunDraft(input: {
+  draft: RunDraft;
+  confirmation?: LaunchConfirmation;
+  now?: string;
+}): { draft: RunDraft; confirmation?: LaunchConfirmation } {
+  const revision = input.draft.revision + 1;
+  const draft: RunDraft = {
+    ...input.draft,
+    status: "ready_for_dry_run",
+    latest_plan_id: undefined,
+    latest_plan_hash: undefined,
+    confirmation_id: undefined,
+    revision,
+    updated_at: input.now ?? new Date().toISOString()
+  };
+  const confirmation = input.confirmation?.decision === "confirmed" ? { ...input.confirmation, decision: "superseded" as const, superseded_by_revision: revision } : input.confirmation;
+  return { draft, confirmation };
+}
+
+export function cancelRunDraft(input: {
+  draft: RunDraft;
+  confirmation?: LaunchConfirmation;
+  now?: string;
+}): { draft: RunDraft; confirmation?: LaunchConfirmation } {
+  const cancelledAt = input.now ?? new Date().toISOString();
+  const draft: RunDraft = {
+    ...input.draft,
+    status: "cancelled",
+    revision: input.draft.revision + 1,
+    updated_at: cancelledAt
+  };
+  const confirmation = input.confirmation?.decision === "confirmed" ? { ...input.confirmation, decision: "cancelled" as const, superseded_by_revision: draft.revision } : input.confirmation;
+  return { draft, confirmation };
+}
+
 export function confirmRunDraft(input: {
   draft: RunDraft;
   plan: RunDraftDryRunPlan;

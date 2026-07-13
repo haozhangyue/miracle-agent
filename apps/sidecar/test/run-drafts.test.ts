@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { WorkflowSpec } from "@miracle/core";
@@ -91,6 +91,129 @@ beforeEach(async () => {
 });
 
 describe("RunDraftStore", () => {
+  async function createConfirmedDraft(draftId: string) {
+    const created = await store.create({ draft_id: draftId, workflow_id: workflow.id, enabled_optional_paths: ["video_package"], actor: "operator" });
+    const planned = await store.dryRun({
+      draft_id: created.draft.draft_id,
+      expected_revision: created.draft.revision,
+      actor: "operator",
+      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
+    });
+    return store.confirm({
+      draft_id: planned.draft.draft_id,
+      expected_revision: planned.draft.revision,
+      plan_hash: planned.plan.plan_hash,
+      actor: "operator",
+      acknowledgements: planned.plan.required_acknowledgements
+    });
+  }
+
+  it("rejects workflow path traversal and duplicate draft ids without replacing the existing draft", async () => {
+    await expect(store.create({ draft_id: "rundraft_escape_001", workflow_id: "../workflow", actor: "operator" })).rejects.toMatchObject({ code: "invalid_workflow_id" });
+    const outsideWorkflow = path.join(tempRoot, "outside-workflow.json");
+    await writeFile(outsideWorkflow, JSON.stringify(workflow), "utf8");
+    await symlink(outsideWorkflow, path.join(workflowsDir, "linked-workflow.json"));
+    await expect(store.create({ draft_id: "rundraft_symlink_001", workflow_id: "linked-workflow", actor: "operator" })).rejects.toMatchObject({ code: "invalid_workflow_id" });
+    const created = await store.create({ draft_id: "rundraft_duplicate_001", workflow_id: workflow.id, inputs: { topic_brief: "original" }, actor: "operator" });
+
+    await expect(store.create({ draft_id: created.draft.draft_id, workflow_id: workflow.id, inputs: { topic_brief: "replacement" }, actor: "operator" })).rejects.toMatchObject({ code: "draft_already_exists" });
+    expect((await store.read(created.draft.draft_id)).draft.inputs).toEqual({ topic_brief: "original" });
+  });
+
+  it("replays an identical confirmation using the original revision without a conflict or a duplicate audit record", async () => {
+    const created = await store.create({ draft_id: "rundraft_idempotent_001", workflow_id: workflow.id, enabled_optional_paths: ["video_package"], actor: "operator" });
+    const planned = await store.dryRun({
+      draft_id: created.draft.draft_id,
+      expected_revision: created.draft.revision,
+      actor: "operator",
+      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
+    });
+    const request = {
+      draft_id: planned.draft.draft_id,
+      expected_revision: planned.draft.revision,
+      plan_hash: planned.plan.plan_hash,
+      actor: "operator",
+      acknowledgements: planned.plan.required_acknowledgements
+    };
+    const first = await store.confirm(request);
+    const replayed = await store.confirm(request);
+
+    expect(replayed.draft).toEqual(first.draft);
+    expect(replayed.confirmation).toEqual(first.confirmation);
+    expect((await store.read(first.draft.draft_id)).audit.filter((entry) => entry.type === "launch_confirmation_recorded")).toHaveLength(1);
+  });
+
+  it("serializes concurrent updates so only one request with the same revision succeeds", async () => {
+    const created = await store.create({ draft_id: "rundraft_cas_001", workflow_id: workflow.id, actor: "operator" });
+    const results = await Promise.allSettled([
+      store.update({ draft_id: created.draft.draft_id, expected_revision: created.draft.revision, actor: "operator-a", patch: { inputs: { topic_brief: "A" } } }),
+      store.update({ draft_id: created.draft.draft_id, expected_revision: created.draft.revision, actor: "operator-b", patch: { inputs: { topic_brief: "B" } } })
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected" && result.reason instanceof RunDraftStoreError && result.reason.code === "revision_conflict")).toHaveLength(1);
+  });
+
+  it("invalidates the persisted plan and confirmation on update and workflow source refresh", async () => {
+    const confirmed = await createConfirmedDraft("rundraft_invalidation_001");
+    const updated = await store.update({
+      draft_id: confirmed.draft.draft_id,
+      expected_revision: confirmed.draft.revision,
+      actor: "operator",
+      patch: { inputs: { topic_brief: "revised" } }
+    });
+    const draftDir = path.join(workspaceDir, "run-drafts", confirmed.draft.draft_id);
+
+    expect(JSON.parse(await readFile(path.join(draftDir, "run_draft_dry_run_plan.json"), "utf8"))).toEqual({ draft_id: confirmed.draft.draft_id, status: "not_generated" });
+    expect(JSON.parse(await readFile(path.join(draftDir, "launch_confirmation.json"), "utf8"))).toMatchObject({ decision: "superseded" });
+
+    const replanned = await store.dryRun({
+      draft_id: updated.draft.draft_id,
+      expected_revision: updated.draft.revision,
+      actor: "operator",
+      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
+    });
+    const confirmedAgain = await store.confirm({
+      draft_id: replanned.draft.draft_id,
+      expected_revision: replanned.draft.revision,
+      plan_hash: replanned.plan.plan_hash,
+      actor: "operator",
+      acknowledgements: replanned.plan.required_acknowledgements
+    });
+    await writeFile(path.join(workflowsDir, `${workflow.id}.json`), JSON.stringify({ ...workflow, version: "0.1.1" }), "utf8");
+    await store.dryRun({
+      draft_id: confirmedAgain.draft.draft_id,
+      expected_revision: confirmedAgain.draft.revision,
+      actor: "operator",
+      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
+    });
+
+    expect((await store.read(confirmedAgain.draft.draft_id)).confirmation).toMatchObject({ decision: "superseded" });
+  });
+
+  it("rejects malformed or partial persisted state before a command can continue", async () => {
+    const created = await store.create({ draft_id: "rundraft_corrupt_001", workflow_id: workflow.id, actor: "operator" });
+    const draftDir = path.join(workspaceDir, "run-drafts", created.draft.draft_id);
+    await writeFile(path.join(draftDir, "run_draft_dry_run_plan.json"), "{not-json", "utf8");
+    await expect(store.dryRun({ draft_id: created.draft.draft_id, expected_revision: created.draft.revision, actor: "operator" })).rejects.toMatchObject({ code: "draft_state_invalid" });
+
+    await writeFile(path.join(draftDir, "run_draft_dry_run_plan.json"), JSON.stringify({ draft_id: created.draft.draft_id, status: "not_generated" }), "utf8");
+    await writeFile(path.join(draftDir, "launch_confirmation.json"), JSON.stringify({ decision: "confirmed" }), "utf8");
+    await expect(store.read(created.draft.draft_id)).rejects.toMatchObject({ code: "draft_state_invalid" });
+  });
+
+  it("revises and cancels a draft without creating formal Run facts", async () => {
+    const confirmed = await createConfirmedDraft("rundraft_decision_001");
+    const revised = await store.revise({ draft_id: confirmed.draft.draft_id, expected_revision: confirmed.draft.revision, actor: "operator" });
+
+    expect(revised.draft.status).toBe("ready_for_dry_run");
+    expect((await store.read(revised.draft.draft_id)).confirmation).toMatchObject({ decision: "superseded" });
+
+    const cancelled = await store.cancel({ draft_id: revised.draft.draft_id, expected_revision: revised.draft.revision, actor: "operator" });
+    expect(cancelled.draft.status).toBe("cancelled");
+    await expect(readdir(path.join(workspaceDir, "runs"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("writes the five draft files outside runs and appends one audit record per accepted command", async () => {
     const created = await store.create({
       draft_id: "rundraft_store_001",
@@ -133,10 +256,12 @@ describe("RunDraftStore", () => {
       patch: { inputs: { topic_brief: "revised" } }
     });
     const audit = (await readFile(path.join(draftDir, "draft_audit.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type: string });
+    const bundle = await store.read(confirmed.draft.draft_id);
 
     expect(confirmed.draft.status).toBe("confirmed");
     expect(updated.confirmation).toMatchObject({ decision: "superseded" });
     expect(audit.map((entry) => entry.type)).toEqual(["run_draft_created", "dry_run_generated", "launch_confirmation_recorded", "run_draft_updated"]);
+    expect(bundle.audit.map((entry) => entry.type)).toEqual(audit.map((entry) => entry.type));
   });
 
   it("rejects an unavailable Adapter without changing a confirmed draft", async () => {
