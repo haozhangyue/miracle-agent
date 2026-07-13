@@ -279,7 +279,9 @@ export function parseAdapterResultForInvocation(invocation: AdapterInvocation, r
     ["operation_id", parsedInvocation.operation_id, parsedResult.operation_id],
     ["attempt_id", parsedInvocation.attempt_id, parsedResult.attempt_id],
     ["node_run_id", parsedInvocation.node_run_id, parsedResult.node_run_id],
-    ["adapter_id", parsedInvocation.adapter_id, parsedResult.provider_receipt.adapter_id]
+    ["adapter_id", parsedInvocation.adapter_id, parsedResult.provider_receipt.adapter_id],
+    ["adapter_kind", parsedInvocation.adapter_kind, parsedResult.provider_receipt.adapter_kind],
+    ["provider", parsedInvocation.provider, parsedResult.provider_receipt.provider]
   ];
 
   for (const [field, expected, actual] of associations) {

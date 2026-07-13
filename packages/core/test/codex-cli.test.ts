@@ -5,6 +5,7 @@ import {
   adapterResultSchema,
   buildAdapterRegistry,
   createAdapterInvocation,
+  createNodeAttemptFromAdapterResult,
   defaultAdapterManifests,
   executeMockAdapter,
   parseAdapterResultForInvocation,
@@ -140,7 +141,7 @@ describe("P6-05 adapter contract", () => {
     expect(parseAdapterResultForInvocation(invocation, result)).toEqual(result);
   });
 
-  it.each(["timed_out", "cancelled", "unknown"] as const)("accepts terminal %s results without artifacts", (status) => {
+  it.each(["succeeded", "failed", "timed_out", "cancelled", "aborted", "unknown"] as const)("accepts %s results through the shared schema", (status) => {
     const invocation = createInvocation();
 
     expect(adapterResultSchema.parse({
@@ -159,15 +160,77 @@ describe("P6-05 adapter contract", () => {
     })).toMatchObject({ status });
   });
 
-  it("rejects a result whose invocation association or receipt operation differs", () => {
+  it.each([
+    ["operation_id", (invocation: ReturnType<typeof createInvocation>, result: ReturnType<typeof executeMockAdapter>) => ({ ...result, operation_id: `${invocation.operation_id}_other`, provider_receipt: { ...result.provider_receipt, operation_id: `${invocation.operation_id}_other` } })],
+    ["attempt_id", (invocation: ReturnType<typeof createInvocation>, result: ReturnType<typeof executeMockAdapter>) => ({ ...result, attempt_id: `${invocation.attempt_id}_other` })],
+    ["node_run_id", (_invocation: ReturnType<typeof createInvocation>, result: ReturnType<typeof executeMockAdapter>) => ({ ...result, node_run_id: "nr_other" })],
+    ["adapter_id", (_invocation: ReturnType<typeof createInvocation>, result: ReturnType<typeof executeMockAdapter>) => ({ ...result, provider_receipt: { ...result.provider_receipt, adapter_id: "adapter_other" } })],
+    ["adapter_kind", (_invocation: ReturnType<typeof createInvocation>, result: ReturnType<typeof executeMockAdapter>) => ({ ...result, provider_receipt: { ...result.provider_receipt, adapter_kind: "mock-local" as const } })],
+    ["provider", (_invocation: ReturnType<typeof createInvocation>, result: ReturnType<typeof executeMockAdapter>) => ({ ...result, provider_receipt: { ...result.provider_receipt, provider: "provider_other" } })]
+  ] as const)("rejects a result with mismatched %s", (field, mutate) => {
+    const invocation = createInvocation();
+    const result = executeMockAdapter({ invocation, workflow, receivedAt: "2026-07-13T00:00:02.000Z" });
+
+    expect(() => parseAdapterResultForInvocation(invocation, mutate(invocation, result))).toThrow(new RegExp(field));
+  });
+
+  it("rejects a receipt whose operation differs from the result", () => {
     const invocation = createInvocation();
     const result = executeMockAdapter({ invocation, workflow, receivedAt: "2026-07-13T00:00:02.000Z" });
 
     expect(() => adapterResultSchema.parse({
       ...result,
       provider_receipt: { ...result.provider_receipt, operation_id: "op_other" }
-    })).toThrow();
-    expect(() => parseAdapterResultForInvocation({ ...invocation, attempt_id: "attempt_other" }, result)).toThrow(/attempt_id/);
+    })).toThrow(/operation_id/);
+  });
+
+  it("does not manufacture an attempt id for legacy results", () => {
+    const invocation = createInvocation();
+    const result = executeMockAdapter({ invocation, workflow, receivedAt: "2026-07-13T00:00:02.000Z" });
+
+    expect(() => createNodeAttemptFromAdapterResult({ ...result, attempt_id: undefined } as unknown as typeof result)).toThrow(/attempt_id/);
+  });
+
+  it.each(["attempt_id", "adapter_id", "operation_id"] as const)("requires %s in the audit contract", (field) => {
+    const invocation = createInvocation();
+    const result = executeMockAdapter({ invocation, workflow, receivedAt: "2026-07-13T00:00:02.000Z" });
+    const candidate = field === "attempt_id"
+      ? { ...result, attempt_id: undefined }
+      : {
+          ...result,
+          provider_receipt: { ...result.provider_receipt, [field]: undefined }
+        };
+
+    expect(adapterResultSchema.safeParse(candidate).success).toBe(false);
+  });
+
+  it("validates the mock failure branch against the shared result schema", () => {
+    const invocation = createInvocation();
+    const failed = executeMockAdapter({
+      invocation: { ...invocation, node_id: "missing_node" },
+      workflow,
+      receivedAt: "2026-07-13T00:00:02.000Z"
+    });
+
+    expect(adapterResultSchema.parse(failed)).toMatchObject({
+      status: "failed",
+      attempt_id: invocation.attempt_id,
+      provider_receipt: {
+        adapter_id: invocation.adapter_id,
+        operation_id: invocation.operation_id
+      },
+      artifact_descriptors: []
+    });
+  });
+
+  it("rejects incomplete artifact descriptors", () => {
+    const invocation = createInvocation();
+    const result = executeMockAdapter({ invocation, workflow, receivedAt: "2026-07-13T00:00:02.000Z" });
+
+    expect(adapterResultSchema.safeParse({
+      ...result,
+      artifact_descriptors: [{ ...result.artifact_descriptors[0], hash: "" }]
+    }).success).toBe(false);
   });
 
   it("registers the real Codex CLI manifest as non-executable without changing the mock-compatible manifest", () => {

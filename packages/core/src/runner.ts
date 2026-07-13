@@ -10,6 +10,7 @@ import type {
   TraceEvent,
   WorkflowSpec
 } from "./types";
+import { adapterResultSchema } from "./schemas";
 
 function normalizeId(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -98,7 +99,7 @@ export function executeMockAdapter(input: {
 }): AdapterResult {
   const nodeSpec = input.workflow.nodes.find((node) => node.id === input.invocation.node_id);
   if (!nodeSpec) {
-    return {
+    return adapterResultSchema.parse({
       operation_id: input.invocation.operation_id,
       attempt_id: input.invocation.attempt_id,
       node_run_id: input.invocation.node_run_id,
@@ -113,7 +114,7 @@ export function executeMockAdapter(input: {
       artifact_descriptors: [],
       error: { code: "node_spec_not_found", message: `NodeSpec not found: ${input.invocation.node_id}`, recoverable: false },
       received_at: input.receivedAt ?? new Date().toISOString()
-    };
+    });
   }
 
   const receivedAt = input.receivedAt ?? new Date().toISOString();
@@ -133,7 +134,7 @@ export function executeMockAdapter(input: {
     return { ...descriptor, content: contentForDescriptor(descriptor, nodeSpec.name) };
   });
 
-  return {
+  return adapterResultSchema.parse({
     operation_id: input.invocation.operation_id,
     attempt_id: input.invocation.attempt_id,
     node_run_id: input.invocation.node_run_id,
@@ -150,19 +151,20 @@ export function executeMockAdapter(input: {
     },
     artifact_descriptors: artifactDescriptors,
     received_at: receivedAt
-  };
+  });
 }
 
 export function createNodeAttemptFromAdapterResult(result: AdapterResult): NodeAttempt {
+  const parsedResult = adapterResultSchema.parse(result);
   return {
-    attempt_id: result.attempt_id ?? `attempt_${normalizeId(result.operation_id)}`,
-    node_run_id: result.node_run_id,
-    operation_id: result.operation_id,
+    attempt_id: parsedResult.attempt_id,
+    node_run_id: parsedResult.node_run_id,
+    operation_id: parsedResult.operation_id,
     attempt_kind: "execute",
-    status: result.status,
-    provider_receipt: result.provider_receipt,
-    error: result.error,
-    created_at: result.received_at
+    status: parsedResult.status,
+    provider_receipt: parsedResult.provider_receipt,
+    error: parsedResult.error,
+    created_at: parsedResult.received_at
   };
 }
 

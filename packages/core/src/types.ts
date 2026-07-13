@@ -287,9 +287,9 @@ export interface AdapterArtifactDescriptor {
 export interface ProviderReceipt extends Record<string, unknown> {
   provider: string;
   adapter_kind: AdapterInvocation["adapter_kind"];
-  adapter_id?: string;
+  adapter_id: string;
   model?: string;
-  operation_id?: string;
+  operation_id: string;
   external_session_id?: string;
   cost?: number;
   latency_ms?: number;
@@ -298,7 +298,7 @@ export interface ProviderReceipt extends Record<string, unknown> {
 
 export interface AdapterResult {
   operation_id: string;
-  attempt_id?: string;
+  attempt_id: string;
   node_run_id: string;
   status: AdapterStatus;
   provider_receipt: ProviderReceipt;
