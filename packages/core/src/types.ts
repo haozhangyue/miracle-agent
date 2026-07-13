@@ -78,6 +78,7 @@ export interface EdgeSpec {
   from: string;
   to: string;
   required: boolean;
+  optional_path_id?: string;
   artifact_selector?: {
     artifact_type?: string;
     review_status?: ArtifactReviewStatus;
@@ -128,6 +129,11 @@ export interface WorkflowSpec {
     allowed_providers: string[];
     required_credentials: string[];
     fallback_providers: string[];
+    credential_scopes?: Array<{
+      credential_ref: string;
+      required_for_branch: string;
+      blocking_scope: "required_path" | "optional_branch";
+    }>;
   };
   layouts: {
     dag: Record<string, { x: number; y: number; stage?: string }>;

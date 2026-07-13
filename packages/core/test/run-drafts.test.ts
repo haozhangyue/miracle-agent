@@ -76,7 +76,13 @@ const workflow: WorkflowSpec = {
     { id: "master", type: "markdown", produced_by: "B_md_master", review_policy: { mode: "manual", gate_spec_id: "final_human_review" }, required_for: ["G_distribution_retro"], versioning: { immutable: true, compare_by: "hash" } },
     { id: "video", type: "video", produced_by: "F_final_render", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } }
   ],
-  provider_policy: { default_provider: "codex-local", allowed_providers: ["codex-local"], required_credentials: ["VOLC_TTS_API_KEY"], fallback_providers: [] },
+  provider_policy: {
+    default_provider: "codex-local",
+    allowed_providers: ["codex-local"],
+    required_credentials: ["VOLC_TTS_API_KEY"],
+    fallback_providers: [],
+    credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
+  },
   layouts: { dag: {} },
   registry_meta: { source: "test", status: "stable" }
 };
@@ -97,7 +103,6 @@ function dryRun() {
     draft: draft(),
     workflow,
     available_credentials: [],
-    credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }],
     now: "2026-07-13T01:01:00.000Z"
   });
 }
@@ -117,7 +122,6 @@ describe("RunDraft core", () => {
       draft: changedDraft,
       workflow,
       available_credentials: [],
-      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }],
       now: "2026-07-13T01:01:00.000Z"
     });
 
@@ -129,10 +133,25 @@ describe("RunDraft core", () => {
     const plan = dryRun();
 
     expect(plan.startability).toMatchObject({ required_path: "ready", full_workflow: "blocked" });
-    expect(plan.core_plan.valid).toBe(false);
+    expect(plan.core_plan.valid).toBe(true);
     expect(plan.branch_impact).toContainEqual(expect.objectContaining({ branch_id: "video_package", readiness: "blocked" }));
     expect(plan.gate_plan).toEqual([expect.objectContaining({ gate_spec_id: "final_human_review" })]);
     expect(() => confirmRunDraft({ draft: draft(), plan, actor: "operator", acknowledgements: [] })).toThrow(RunDraftError);
+  });
+
+  it("does not block or require acknowledgement for an optional branch that was not selected", () => {
+    const disabled = { ...draft(), enabled_optional_paths: [] };
+    const plan = createRunDraftDryRunPlan({ draft: disabled, workflow, available_credentials: [], now: "2026-07-13T01:01:00.000Z" });
+    expect(plan.branch_impact).toContainEqual(expect.objectContaining({ branch_id: "video_package", enabled: false, readiness: "not_selected" }));
+    expect(plan.startability).toMatchObject({ required_path: "ready", full_workflow: "ready", recommended_action: "start" });
+    expect(plan.required_acknowledgements).not.toContain("optional_branch_missing_credential");
+  });
+
+  it("prevents cancelled drafts from returning to an active state", () => {
+    const cancelled = cancelRunDraft({ draft: draft() }).draft;
+    expect(() => confirmRunDraft({ draft: cancelled, plan: dryRun(), actor: "operator", acknowledgements: dryRun().required_acknowledgements })).toThrow(/terminal|Cannot confirm/);
+    expect(() => reviseRunDraft({ draft: cancelled })).toThrow(/Cannot revise/);
+    expect(() => updateRunDraft({ draft: cancelled, patch: { inputs: { topic: "revive" } } })).toThrow(/terminal/);
   });
 
   it("supersedes confirmation when a plan-affecting draft field changes", () => {

@@ -13,6 +13,7 @@ import {
   defaultAdapterManifests,
   executeMockAdapter,
   parseAdapterManifests,
+  parseAdapterResultForInvocation,
   selectAdapterManifest,
   type AdapterManifest,
   type AdapterRegistryEntry,
@@ -26,6 +27,7 @@ import {
   type GateDecision,
   type GateInstance,
   type HistoricalImportRequest,
+  RunDraftError,
   type NodeSpec,
   type NodeAttempt,
   type NodeRun,
@@ -45,6 +47,7 @@ import {
   previewHistoricalImport,
   readHistoricalImport
 } from "./historical-importer";
+import { RunDraftStore, RunDraftStoreError } from "./run-draft-store";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
@@ -55,6 +58,7 @@ const historicalImportRoots = (process.env.MIRACLE_IMPORT_ROOTS ?? "")
   .map((item) => item.trim())
   .filter(Boolean);
 const execGit = promisify(execFile);
+const runDraftStore = new RunDraftStore({ workspace_dir: workspaceDir, workflows_dir: workflowRegistryDir });
 
 type JsonValue = Record<string, unknown> | unknown[];
 type SchedulerDecision = {
@@ -95,7 +99,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "http://127.0.0.1:5174",
-    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
     "access-control-allow-headers": "content-type",
     "cache-control": "no-store"
   });
@@ -258,6 +262,11 @@ function availableCredentialKeys() {
   return Object.entries(process.env)
     .filter(([, value]) => typeof value === "string" && value.length > 0)
     .map(([key]) => key);
+}
+
+function createRunDraftId() {
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 17);
+  return `rundraft_${timestamp}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 async function readAdapterManifests(): Promise<AdapterManifest[]> {
@@ -572,11 +581,14 @@ function buildAdapterUnavailableResult(input: {
 }): AdapterResult {
   return {
     operation_id: input.invocation.operation_id,
+    attempt_id: input.invocation.attempt_id,
     node_run_id: input.invocation.node_run_id,
     status: "failed",
     provider_receipt: {
       provider: input.invocation.provider,
       adapter_kind: input.invocation.adapter_kind,
+      adapter_id: input.invocation.adapter_id,
+      operation_id: input.invocation.operation_id,
       raw_receipt_id: `receipt_${input.invocation.operation_id}`
     },
     artifact_descriptors: [],
@@ -623,11 +635,14 @@ function executeSidecarAdapter(input: {
   if (!input.adapter.executable) {
     return {
       operation_id: input.invocation.operation_id,
+      attempt_id: input.invocation.attempt_id,
       node_run_id: input.invocation.node_run_id,
       status: "failed",
       provider_receipt: {
         provider: input.invocation.provider,
         adapter_kind: input.invocation.adapter_kind,
+        adapter_id: input.invocation.adapter_id,
+        operation_id: input.invocation.operation_id,
         raw_receipt_id: `receipt_${input.invocation.operation_id}`
       },
       artifact_descriptors: [],
@@ -642,11 +657,14 @@ function executeSidecarAdapter(input: {
   if (input.nodeRun.provider === "mock-failure") {
     return {
       operation_id: input.invocation.operation_id,
+      attempt_id: input.invocation.attempt_id,
       node_run_id: input.invocation.node_run_id,
       status: "failed",
       provider_receipt: {
         provider: input.invocation.provider,
         adapter_kind: input.invocation.adapter_kind,
+        adapter_id: input.invocation.adapter_id,
+        operation_id: input.invocation.operation_id,
         raw_receipt_id: `receipt_${input.invocation.operation_id}`
       },
       artifact_descriptors: [],
@@ -658,14 +676,21 @@ function executeSidecarAdapter(input: {
       received_at: receivedAt
     };
   }
+  if (input.nodeRun.provider === "mock-invalid-receipt") {
+    const result = executeMockAdapter({ invocation: input.invocation, workflow: input.workflow, receivedAt });
+    return { ...result, provider_receipt: { ...result.provider_receipt, operation_id: "op_mismatched" } };
+  }
   if (input.adapter.execution_mode !== "mock-compatible") {
     return {
       operation_id: input.invocation.operation_id,
+      attempt_id: input.invocation.attempt_id,
       node_run_id: input.invocation.node_run_id,
       status: "failed",
       provider_receipt: {
         provider: input.invocation.provider,
         adapter_kind: input.invocation.adapter_kind,
+        adapter_id: input.invocation.adapter_id,
+        operation_id: input.invocation.operation_id,
         raw_receipt_id: `receipt_${input.invocation.operation_id}`
       },
       artifact_descriptors: [],
@@ -759,6 +784,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       };
     }
 
+    const previousNodeRun = structuredClone(targetNodeRun);
     const dispatchedAt = new Date().toISOString();
     targetNodeRun.status = "running";
     targetNodeRun.started_at = targetNodeRun.started_at ?? dispatchedAt;
@@ -778,13 +804,21 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       adapterKind: adapter?.kind,
       adapterId: adapter?.id
     });
-    const result = adapter
+    const rawResult = adapter
       ? executeSidecarAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, adapter, receivedAt: new Date().toISOString() })
       : buildAdapterUnavailableResult({
           invocation,
           message: `No executable adapter supports NodeSpec ${targetNodeRun.node_id} capabilities: ${nodeSpec?.capability_requirements.join(", ") ?? "unknown"}`,
           receivedAt: new Date().toISOString()
         });
+    let result: AdapterResult;
+    try {
+      result = parseAdapterResultForInvocation(invocation, rawResult);
+    } catch (error) {
+      Object.assign(targetNodeRun, previousNodeRun);
+      await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
+      throw error;
+    }
     const attempt = createNodeAttemptFromAdapterResult(result);
     const createdArtifacts = createArtifactManifestsFromAdapterResult({
       result,
@@ -1348,6 +1382,79 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     });
   }
 
+  if (req.method === "POST" && url.pathname === "/api/v0/run-drafts") {
+    const body = await parseBody(req);
+    const workflowId = String(body.workflow_id ?? "");
+    if (!workflowId) return sendError(res, 400, "workflow_required", "workflow_id is required");
+    const created = await runDraftStore.create({
+      draft_id: createRunDraftId(),
+      workflow_id: workflowId,
+      inputs: body.inputs && typeof body.inputs === "object" && !Array.isArray(body.inputs) ? body.inputs as Record<string, unknown> : {},
+      enabled_optional_paths: Array.isArray(body.enabled_optional_paths) ? body.enabled_optional_paths.map(String) : [],
+      execution_policy: body.execution_policy === "auto" || body.execution_policy === "manual" ? body.execution_policy : "hybrid",
+      actor: String(body.actor ?? "local_user")
+    });
+    return sendJson(res, 201, created);
+  }
+
+  if (parts[0] === "api" && parts[1] === "v0" && parts[2] === "run-drafts" && parts[3]) {
+    const draftId = getId(parts, 3);
+    if (req.method === "GET" && parts.length === 4) return sendJson(res, 200, await runDraftStore.read(draftId));
+    if (req.method === "PATCH" && parts.length === 4) {
+      const body = await parseBody(req);
+      if (!Number.isInteger(body.expected_revision)) return sendError(res, 400, "expected_revision_required", "expected_revision must be an integer");
+      const updated = await runDraftStore.update({
+        draft_id: draftId,
+        expected_revision: Number(body.expected_revision),
+        patch: {
+          ...(body.inputs && typeof body.inputs === "object" && !Array.isArray(body.inputs) ? { inputs: body.inputs as Record<string, unknown> } : {}),
+          ...(Array.isArray(body.enabled_optional_paths) ? { enabled_optional_paths: body.enabled_optional_paths.map(String) } : {}),
+          ...(body.execution_policy === "auto" || body.execution_policy === "manual" || body.execution_policy === "hybrid" ? { execution_policy: body.execution_policy } : {})
+        },
+        actor: String(body.actor ?? "local_user")
+      });
+      return sendJson(res, 200, updated);
+    }
+    if (req.method === "POST" && parts[4] === "dry-run") {
+      const body = await parseBody(req);
+      if (!Number.isInteger(body.expected_revision)) return sendError(res, 400, "expected_revision_required", "expected_revision must be an integer");
+      const planned = await runDraftStore.dryRun({
+        draft_id: draftId,
+        expected_revision: Number(body.expected_revision),
+        actor: String(body.actor ?? "local_user"),
+        available_credentials: availableCredentialKeys()
+      });
+      return sendJson(res, 200, planned);
+    }
+    if (req.method === "POST" && parts[4] === "confirmation") {
+      const body = await parseBody(req);
+      if (!Number.isInteger(body.expected_revision)) return sendError(res, 400, "expected_revision_required", "expected_revision must be an integer");
+      if (body.decision === "revise") {
+        return sendJson(res, 200, await runDraftStore.revise({
+          draft_id: draftId,
+          expected_revision: Number(body.expected_revision),
+          actor: String(body.actor ?? "local_user")
+        }));
+      }
+      if (body.decision === "cancel") {
+        return sendJson(res, 200, await runDraftStore.cancel({
+          draft_id: draftId,
+          expected_revision: Number(body.expected_revision),
+          actor: String(body.actor ?? "local_user")
+        }));
+      }
+      if (body.decision !== "confirm") return sendError(res, 400, "unsupported_confirmation_decision", "decision must be confirm, revise or cancel");
+      const confirmed = await runDraftStore.confirm({
+        draft_id: draftId,
+        expected_revision: Number(body.expected_revision),
+        plan_hash: String(body.plan_hash ?? ""),
+        actor: String(body.actor ?? "local_user"),
+        acknowledgements: Array.isArray(body.acknowledgements) ? body.acknowledgements.map(String) : []
+      });
+      return sendJson(res, 200, confirmed);
+    }
+  }
+
   if (req.method === "GET" && url.pathname === "/api/v0/project/roadmap") {
     return sendJson(res, 200, await buildProjectRoadmap());
   }
@@ -1510,6 +1617,15 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
   if (req.method === "POST" && url.pathname === "/api/v0/runs") {
     const body = await parseBody(req);
+    if (body.draft_id) {
+      await runDraftStore.requestLaunch({
+        draft_id: String(body.draft_id),
+        draft_plan_id: String(body.draft_plan_id ?? ""),
+        plan_hash: String(body.plan_hash ?? ""),
+        confirmation_id: String(body.confirmation_id ?? ""),
+        adapter_ready: false
+      });
+    }
     const workflowId = String(body.workflow_id ?? "content-production-v0");
     const workflow = await readWorkflow(workflowId);
     const runId = `run-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 17)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -1928,6 +2044,17 @@ const server = createServer((req, res) => {
               ? 409
               : 422;
       return sendError(res, status, error.code, error.message);
+    }
+    if (error instanceof RunDraftStoreError) {
+      const status = error.code === "draft_not_found" || error.code === "workflow_not_found"
+        ? 404
+        : error.code === "invalid_draft_id" || error.code === "invalid_workflow_id"
+          ? 400
+          : 409;
+      return sendError(res, status, error.code, error.message);
+    }
+    if (error instanceof RunDraftError) {
+      return sendError(res, 409, error.code, error.message);
     }
     const message = error instanceof Error ? error.message : "Unknown sidecar error";
     sendError(res, 500, "sidecar_error", message);

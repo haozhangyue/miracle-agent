@@ -112,7 +112,10 @@
     "default_provider": "codex-local",
     "allowed_providers": ["codex-local", "official-api", "mock-provider"],
     "required_credentials": ["VOLC_TTS_API_KEY"],
-    "fallback_providers": ["mock-tts"]
+    "fallback_providers": ["mock-tts"],
+    "credential_scopes": [
+      { "credential_ref": "VOLC_TTS_API_KEY", "required_for_branch": "video_package", "blocking_scope": "optional_branch" }
+    ]
   },
   "layouts": {
     "dag": {

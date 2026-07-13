@@ -14,6 +14,7 @@ P6-05 固化了 Adapter 调用与回执之间的可审计边界，但不启动 C
 - `AdapterResult` 通过 `adapterResultSchema` 要求 `attempt_id`、`operation_id`、`node_run_id`、Provider receipt 和完整 artifact descriptors。状态保留 `succeeded`、`failed`、`timed_out`、`cancelled`、`aborted`、`unknown`。
 - `ProviderReceipt` 记录 `provider`、`adapter_kind`、`adapter_id`、`operation_id`，并可记录 model、external session、cost 和 latency。
 - `parseAdapterResultForInvocation` 校验 Result 的 operation、attempt、node run、adapter 与 Invocation 一致；receipt operation 必须与 Result operation 一致。
+- Sidecar 在写 NodeAttempt、ArtifactManifest 和 TraceEvent 前强制校验回执；不匹配时恢复 NodeRun 且不提交运行事实。
 
 ## 兼容与注册表
 
@@ -27,4 +28,4 @@ P6-05 固化了 Adapter 调用与回执之间的可审计边界，但不启动 C
 1. health 通过前不得把 `codex-cli-real.runtime.can_execute` 改为 true。
 2. P6-06 应在 Sidecar 内解析 `runtime_control.attempt_workspace`，不能把绝对路径、认证信息或原始 stdout 写入 UI/prompt/Trace。
 3. 真实执行器返回 Result 前应调用 `parseAdapterResultForInvocation`，并在 timeout、cancel、异常退出和无法判定状态下返回同一 Result 契约。
-4. 真实 manifest 已经在 `defaultAdapterManifests` 注册；主 Agent 只需在统一接线时导出 `codex-cli.ts` 的公共 API，避免复制 manifest。
+4. 真实 manifest 已在 `defaultAdapterManifests` 注册，`codex-cli.ts` 公共 API 已由 Core 入口导出。

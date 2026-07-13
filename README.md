@@ -22,8 +22,8 @@ draft 与 D9 Web run refresh/polling 已落地，D10 MVP 回归验收与版本�
 UI 展示验收方案、`P5-07` 半自动新 Run 草案设计、`P5-08` 首个真实 Adapter
 边界评估和 `P5-09` 回归验收均已完成。P5 形成真实工作流接入设计基线，首接推荐
 Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与 Projection 和
-`P6-03` 真实 Run API 与 Web 展示已完成；当前主线进入 `P6-04` RunDraft API 与 Web，
-`P6-05` Adapter Contract 仍可按三轨边界并行推进。
+`P6-04` RunDraft API/Web 与 `P6-05` Adapter Contract 已完成；当前主线进入
+`P6-06` Codex CLI Health 与 Attempt Workspace。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 

@@ -454,12 +454,44 @@ describe("sidecar api", () => {
       summary: { total: number; executable: number; missing_credentials: string[] };
     }>("/api/v0/adapters");
 
-    expect(body.summary.total).toBeGreaterThanOrEqual(5);
+    expect(body.summary.total).toBeGreaterThanOrEqual(6);
     expect(body.summary.executable).toBeGreaterThanOrEqual(2);
     expect(body.summary.missing_credentials).toContain("PROVIDER_API_KEY");
     expect(body.adapters.map((adapter) => adapter.kind)).toEqual(expect.arrayContaining(["mock-local", "codex", "hermes", "openclaw", "official-api"]));
     expect(body.adapters.find((adapter) => adapter.id === "codex-mock-compatible-adapter")).toMatchObject({ execution_mode: "mock-compatible", executable: true });
+    expect(body.adapters.find((adapter) => adapter.id === "codex-cli-real")).toMatchObject({ execution_mode: "shell", executable: false });
     expect(body.adapters.find((adapter) => adapter.id === "official-api-adapter-shell")?.credential_status.some((credential) => credential.key === "PROVIDER_API_KEY" && !credential.configured)).toBe(true);
+  });
+
+  it("rejects a mismatched AdapterResult before committing NodeAttempt, Artifact or Trace facts", async () => {
+    const created = await fetchJson<{ run_id: string; initial_node_runs: string[] }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+    const runDir = path.join(tempWorkspace, "runs", created.run_id);
+    const nodesPath = path.join(runDir, "nodes.json");
+    const nodes = JSON.parse(await readFile(nodesPath, "utf8")) as Array<{ node_run_id: string; status: string; provider?: string }>;
+    const target = nodes.find((node) => node.node_run_id === created.initial_node_runs[0]);
+    if (!target) throw new Error("Expected initial NodeRun");
+    target.provider = "mock-invalid-receipt";
+    await writeFile(nodesPath, `${JSON.stringify(nodes, null, 2)}\n`, "utf8");
+
+    const beforeAttempts = JSON.parse(await readFile(path.join(runDir, "attempts.json"), "utf8"));
+    const beforeArtifacts = JSON.parse(await readFile(path.join(runDir, "artifacts.json"), "utf8"));
+    const beforeEvents = await readFile(path.join(runDir, "events.jsonl"), "utf8");
+    const response = await fetch(`${baseUrl}/api/v0/runs/${created.run_id}/nodes/${target.node_run_id}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ error: { code: "sidecar_error" } });
+
+    const after = await fetchJson<{ nodes: Array<{ node_run_id: string; status: string }> }>(`/api/v0/runs/${created.run_id}`);
+    expect(after.nodes.find((node) => node.node_run_id === target.node_run_id)?.status).toBe("queued");
+    expect(JSON.parse(await readFile(path.join(runDir, "attempts.json"), "utf8"))).toEqual(beforeAttempts);
+    expect(JSON.parse(await readFile(path.join(runDir, "artifacts.json"), "utf8"))).toEqual(beforeArtifacts);
+    expect(await readFile(path.join(runDir, "events.jsonl"), "utf8")).toBe(beforeEvents);
   });
 
   it("surfaces invalid adapter manifests instead of falling back silently", async () => {
@@ -775,5 +807,114 @@ describe("sidecar api", () => {
     const run = await fetchJson<{ nodes: Array<{ node_id: string; status: string }> }>(`/api/v0/runs/${created.run_id}`);
     expect(run.nodes.find((node) => node.node_id === "E_tts")?.status).toBe("done");
     expect(run.nodes.find((node) => node.node_id === "F_video")?.status).toBe("waiting");
+  });
+
+  it("creates, dry-runs and confirms a RunDraft without writing formal run facts", async () => {
+    const runsBefore = await fetchJson<{ runs: Array<{ run_id: string }> }>("/api/v0/runs");
+    const created = await fetchJson<{
+      draft: { draft_id: string; status: string; revision: number; latest_plan_hash?: string };
+    }>("/api/v0/run-drafts", {
+      method: "POST",
+      body: JSON.stringify({
+        workflow_id: "content-production-real-v0",
+        inputs: { topic_brief: "Codex 与 Claude Code 最新动态" },
+        enabled_optional_paths: [],
+        execution_policy: "hybrid"
+      })
+    });
+    expect(created.draft.status).toBe("draft");
+
+    const patched = await fetchJson<{ draft: { status: string; revision: number } }>(`/api/v0/run-drafts/${created.draft.draft_id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        expected_revision: created.draft.revision,
+        inputs: { topic_brief: "Codex、Claude Code 与本地 Agent OS" },
+        enabled_optional_paths: []
+      })
+    });
+    expect(patched.draft.status).toBe("ready_for_dry_run");
+
+    const dryRun = await fetchJson<{
+      draft: { status: string; revision: number; latest_plan_hash: string };
+      plan: {
+        plan_hash: string;
+        startability: { required_path: string; full_workflow: string };
+        draft_plan_id: string;
+        branch_impact: Array<{ branch_id: string; selection: string; enabled: boolean; readiness: string }>;
+        gate_plan: Array<{ gate_spec_id: string }>;
+        required_acknowledgements: string[];
+      };
+    }>(`/api/v0/run-drafts/${created.draft.draft_id}/dry-run`, { method: "POST", body: JSON.stringify({ expected_revision: patched.draft.revision }) });
+    expect(dryRun.draft.status).toBe("ready_for_confirmation");
+    expect(dryRun.draft.latest_plan_hash).toBe(dryRun.plan.plan_hash);
+    expect(dryRun.plan.startability.required_path).toBe("ready");
+    expect(dryRun.plan.branch_impact.some((branch) => branch.selection === "optional" && !branch.enabled && branch.readiness === "not_selected")).toBe(true);
+    expect(dryRun.plan.gate_plan.some((gate) => gate.gate_spec_id === "F_final_render_gate")).toBe(true);
+
+    const confirmed = await fetchJson<{
+      draft: { status: string; revision: number };
+      confirmation: { confirmation_id: string; decision: string; plan_hash: string };
+    }>(`/api/v0/run-drafts/${created.draft.draft_id}/confirmation`, {
+      method: "POST",
+      body: JSON.stringify({
+        decision: "confirm",
+        expected_revision: dryRun.draft.revision,
+        plan_hash: dryRun.plan.plan_hash,
+        acknowledgements: dryRun.plan.required_acknowledgements,
+        actor: "operator",
+        comment: "启动前确认"
+      })
+    });
+    expect(confirmed.draft.status).toBe("confirmed");
+    expect(confirmed.confirmation).toMatchObject({ decision: "confirmed", plan_hash: dryRun.plan.plan_hash });
+
+    const launch = await fetch(`${baseUrl}/api/v0/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        draft_id: created.draft.draft_id,
+        draft_plan_id: dryRun.plan.draft_plan_id,
+        plan_hash: dryRun.plan.plan_hash,
+        confirmation_id: confirmed.confirmation.confirmation_id
+      })
+    });
+    expect(launch.status).toBe(409);
+    expect(await launch.json()).toMatchObject({ error: { code: "adapter_not_ready" } });
+
+    const repeated = await fetchJson<{
+      draft: { status: string; revision: number };
+      confirmation: { confirmation_id: string; decision: string; plan_hash: string };
+    }>(`/api/v0/run-drafts/${created.draft.draft_id}/confirmation`, {
+      method: "POST",
+      body: JSON.stringify({
+        decision: "confirm",
+        expected_revision: dryRun.draft.revision,
+        plan_hash: dryRun.plan.plan_hash,
+        acknowledgements: dryRun.plan.required_acknowledgements,
+        actor: "operator"
+      })
+    });
+    expect(repeated.confirmation.confirmation_id).toBe(confirmed.confirmation.confirmation_id);
+    expect(repeated.draft.revision).toBe(confirmed.draft.revision);
+
+    const revised = await fetchJson<{ draft: { status: string; revision: number } }>(`/api/v0/run-drafts/${created.draft.draft_id}/confirmation`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "revise", expected_revision: confirmed.draft.revision, actor: "operator" })
+    });
+    expect(revised.draft.status).toBe("ready_for_dry_run");
+    const cancelled = await fetchJson<{ draft: { status: string; revision: number } }>(`/api/v0/run-drafts/${created.draft.draft_id}/confirmation`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "cancel", expected_revision: revised.draft.revision, actor: "operator" })
+    });
+    expect(cancelled.draft.status).toBe("cancelled");
+
+    const bundle = await fetchJson<{
+      draft: { status: string };
+      audit: Array<{ type: string }>;
+    }>(`/api/v0/run-drafts/${created.draft.draft_id}`);
+    expect(bundle.draft.status).toBe("cancelled");
+    expect(bundle.audit.map((event) => event.type)).toEqual(expect.arrayContaining(["run_draft_created", "run_draft_updated", "dry_run_generated", "launch_confirmation_recorded", "run_draft_cancelled"]));
+    const runsAfter = await fetchJson<{ runs: Array<{ run_id: string }> }>("/api/v0/runs");
+    expect(runsAfter.runs.map((run) => run.run_id)).toEqual(runsBefore.runs.map((run) => run.run_id));
   });
 });

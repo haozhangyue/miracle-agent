@@ -1,8 +1,8 @@
-# P6-04 RunDraft Core 与 Store 交付说明
+# P6-04 RunDraft API 与 Web 交付说明
 
 > 文档状态：TRACK DELIVERY
 >
-> 范围：本文件记录 P6-04 独占模块的可接线交付。HTTP 路由与 Web 操作流由主 Agent 在共享文件完成。
+> 范围：P6-04 Core、Sidecar API、Web 操作流与审计闭环的最终交付记录。
 
 ## 已交付
 
@@ -14,17 +14,26 @@
 - Dry-run 始终从 Workflow 生成全部 Gate 计划；草案更新接口没有关闭或移除 required Gate 的能力。
 - 凭证 scope 可声明为 `required_path` 或 `optional_branch`。缺失可选视频凭证会阻塞完整工作流，但不会阻塞必选 Markdown 主链确认。
 - 相同计划的确认调用返回既有 confirmation，不重复生成确认事实。
+- 只有用户启用的可选分支参与阻塞判断；未选择的视频分支显示 `not_selected`。
+- Dry-run 返回分支、Provider、成本、预计时长、Gate、凭证与 startability。
 
 ### Sidecar Store
 
-- `apps/sidecar/src/run-draft-store.ts` 的 `RunDraftStore` 提供 `create`、`read`、`update`、`dryRun`、`confirm` 和 `requestLaunch` 服务接口。
+- `RunDraftStore` 提供 `create`、`read`、`update`、`dryRun`、`confirm`、`revise`、`cancel` 和 `requestLaunch`。
 - 每份草案只写入 `.miracle/run-drafts/{draft_id}/`：`run_draft.json`、`workflow_snapshot_draft.json`、`run_draft_dry_run_plan.json`、`launch_confirmation.json`、`draft_audit.jsonl`。
 - `expected_revision` 是乐观锁条件；revision 不一致返回 `revision_conflict`。
 - 每个成功的 create/update/dry-run/confirm 命令只追加一条 `draft_audit.jsonl` 记录，包含 draft、actor、时间、前后 hash、变更字段和 correlation id。
 - Store 不创建 `runs/`、`RunSpec`、`NodeRun` 或 TraceEvent。
-- `requestLaunch({ adapter_ready: false })` 返回 `adapter_not_ready`，并保持草案为 `confirmed`。
+- 启动前交叉校验 plan、confirmation、snapshot/source hash；Adapter 未就绪返回 `adapter_not_ready` 并保持 `confirmed`。
+- 锁记录 owner 并可回收崩溃遗留锁；读取会拒绝缺文件或跨文件引用不一致的损坏状态。
 
-## 主 Agent 接线注意事项
+### HTTP 与 Web
+
+- Sidecar 已接通 create/read/PATCH/dry-run/confirmation API，并由唯一 `POST /runs` 接收启动交接。
+- Web 已接通“新任务 -> RunDraft -> Dry-run -> 修改/重算 -> 确认/撤回/取消 -> 启动条件检查”。
+- 页面明确 RunDraft 不属于正式运行事实；本阶段不创建 RunSpec、NodeRun 或 TraceEvent。
+
+## 后续 P6-07 接线约束
 
 1. 在 `server.ts` 仅做 HTTP 解析、错误映射和 `RunDraftStore` 调用；不得复制 Core 状态机或直接写草案 JSONL。
 2. `PATCH`、Dry-run、confirmation 请求必须传递 `expected_revision`；将 `revision_conflict` 映射为 409。
@@ -34,6 +43,4 @@
 
 ## 本轨未包含
 
-- 未修改 `apps/sidecar/src/server.ts`，因此尚无 RunDraft HTTP 路由。
-- 未修改 `apps/web/src/App.tsx` 或 `styles.css`，因此尚无草案页面操作流。
 - 未创建正式 Run 或接入 Adapter；该工作在 P6-07 的统一启动事务完成。

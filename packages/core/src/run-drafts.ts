@@ -38,11 +38,7 @@ export interface WorkflowSnapshotDraft {
   workflow: WorkflowSpec;
 }
 
-export interface CredentialScope {
-  credential_ref: string;
-  required_for_branch: string;
-  blocking_scope: "required_path" | "optional_branch";
-}
+export type CredentialScope = NonNullable<WorkflowSpec["provider_policy"]["credential_scopes"]>[number];
 
 export interface RunDraftDryRunPlan {
   draft_plan_id: string;
@@ -53,7 +49,9 @@ export interface RunDraftDryRunPlan {
   core_plan: DryRunPlan;
   credential_checks: Array<CredentialScope & { status: "configured" | "missing" }>;
   gate_plan: Array<{ gate_spec_id: string; required_before: string[]; actions: string[] }>;
-  branch_impact: Array<{ branch_id: string; selection: "optional"; readiness: "ready" | "blocked" }>;
+  branch_impact: Array<{ branch_id: string; selection: "required" | "optional"; enabled: boolean; readiness: "ready" | "blocked" | "not_selected" }>;
+  provider_resolution: Array<{ node_id: string; provider: string }>;
+  execution_summary: { node_count: number; enabled_optional_branch_count: number; estimated_duration_minutes: { min: number; max: number } };
   startability: {
     required_path: "ready" | "blocked";
     full_workflow: "ready" | "blocked";
@@ -81,7 +79,8 @@ export class RunDraftError extends Error {
       | "draft_not_ready_for_confirmation"
       | "plan_hash_mismatch"
       | "missing_required_acknowledgements"
-      | "required_path_blocked",
+      | "required_path_blocked"
+      | "invalid_draft_transition",
     message: string
   ) {
     super(message);
@@ -139,36 +138,50 @@ export function createWorkflowSnapshotDraft(input: { draft: RunDraft; workflow: 
 }
 
 function defaultCredentialScopes(workflow: WorkflowSpec): CredentialScope[] {
-  return workflow.provider_policy.required_credentials.map((credential_ref) => ({
-    credential_ref,
-    required_for_branch: "required_path",
-    blocking_scope: "required_path"
-  }));
+  const optionalEdges = workflow.edges.filter((edge) => !edge.required);
+  const optionalBranchIds = new Set(optionalEdges.map(optionalBranchId));
+  const declared = new Map((workflow.provider_policy.credential_scopes ?? []).map((scope) => [scope.credential_ref, scope]));
+  return workflow.provider_policy.required_credentials.map((credential_ref) => {
+    const scope = declared.get(credential_ref);
+    const branchEdges = workflow.edges.filter((edge) => optionalBranchId(edge) === scope?.required_for_branch);
+    const provenOptionalOnly = branchEdges.length > 0 && branchEdges.some((edge) => !edge.required);
+    if (scope?.blocking_scope === "optional_branch" && optionalBranchIds.has(scope.required_for_branch) && provenOptionalOnly) return scope;
+    return { credential_ref, required_for_branch: "required_path", blocking_scope: "required_path" };
+  });
 }
 
 function optionalBranchId(edge: WorkflowSpec["edges"][number]) {
-  return edge.artifact_selector?.artifact_type === "video" ? "video_package" : `optional_${edge.from}_to_${edge.to}`;
+  return edge.optional_path_id ?? (edge.artifact_selector?.artifact_type === "video" ? "video_package" : `optional_${edge.from}_to_${edge.to}`);
 }
 
 export function createRunDraftDryRunPlan(input: {
   draft: RunDraft;
   workflow: WorkflowSpec;
   available_credentials?: string[];
-  credential_scopes?: CredentialScope[];
   now?: string;
 }): RunDraftDryRunPlan {
   const resolvedAt = input.now ?? new Date().toISOString();
   const availableCredentials = new Set(input.available_credentials ?? []);
-  const credentialScopes = input.credential_scopes ?? defaultCredentialScopes(input.workflow);
+  const credentialScopes = defaultCredentialScopes(input.workflow);
   const credentialChecks = credentialScopes.map((scope) => ({ ...scope, status: availableCredentials.has(scope.credential_ref) ? ("configured" as const) : ("missing" as const) }));
   const requiredBlocked = credentialChecks.some((check) => check.blocking_scope === "required_path" && check.status === "missing");
-  const optionalBlocked = credentialChecks.some((check) => check.blocking_scope === "optional_branch" && check.status === "missing");
-  const optionalBranches = input.workflow.edges.filter((edge) => !edge.required).map((edge) => ({
-    branch_id: optionalBranchId(edge),
+  const enabledOptionalPaths = new Set(input.draft.enabled_optional_paths);
+  const optionalBranches = Array.from(new Set(input.workflow.edges.filter((edge) => !edge.required).map(optionalBranchId))).map((branchId) => ({
+    branch_id: branchId,
     selection: "optional" as const,
-    readiness: optionalBlocked ? ("blocked" as const) : ("ready" as const)
+    enabled: enabledOptionalPaths.has(branchId),
+    readiness: !enabledOptionalPaths.has(branchId)
+      ? ("not_selected" as const)
+      : credentialChecks.some((check) => check.blocking_scope === "optional_branch" && check.required_for_branch === branchId && check.status === "missing")
+      ? ("blocked" as const)
+      : ("ready" as const)
   }));
-  const corePlan = createDryRunPlan(input.workflow, input.available_credentials ?? []);
+  const optionalBlocked = optionalBranches.some((branch) => branch.readiness === "blocked");
+  const corePlanCredentials = Array.from(new Set([
+    ...(input.available_credentials ?? []),
+    ...credentialScopes.filter((scope) => scope.blocking_scope === "optional_branch").map((scope) => scope.credential_ref)
+  ]));
+  const corePlan = createDryRunPlan(input.workflow, corePlanCredentials);
   const snapshot = createWorkflowSnapshotDraft({ draft: input.draft, workflow: input.workflow, now: resolvedAt });
   const requiredAcknowledgements = [
     ...input.workflow.gates.map((gate) => `required_gate:${gate.id}`),
@@ -184,6 +197,12 @@ export function createRunDraftDryRunPlan(input: {
     credential_checks: credentialChecks,
     gate_plan: input.workflow.gates.map((gate) => ({ gate_spec_id: gate.id, required_before: [...gate.required_before], actions: [...gate.actions] })),
     branch_impact: optionalBranches,
+    provider_resolution: input.workflow.nodes.map((node) => ({ node_id: node.id, provider: input.workflow.provider_policy.default_provider })),
+    execution_summary: {
+      node_count: input.workflow.nodes.length,
+      enabled_optional_branch_count: optionalBranches.filter((branch) => branch.enabled).length,
+      estimated_duration_minutes: { min: input.workflow.nodes.length * 1, max: input.workflow.nodes.length * 5 }
+    },
     startability: {
       required_path: requiredBlocked ? ("blocked" as const) : ("ready" as const),
       full_workflow: requiredBlocked || optionalBlocked ? ("blocked" as const) : ("ready" as const),
@@ -215,6 +234,8 @@ export function createRunDraftDryRunPlan(input: {
     credential_checks: credentialChecks,
     gate_plan: planWithoutHash.gate_plan,
     branch_impact: optionalBranches,
+    provider_resolution: planWithoutHash.provider_resolution,
+    execution_summary: planWithoutHash.execution_summary,
     startability: planWithoutHash.startability,
     required_acknowledgements: requiredAcknowledgements
   };
@@ -227,6 +248,7 @@ export function updateRunDraft(input: {
   patch: Pick<Partial<RunDraft>, "inputs" | "enabled_optional_paths" | "execution_policy">;
   now?: string;
 }): { draft: RunDraft; confirmation?: LaunchConfirmation } {
+  assertMutable(input.draft, "update");
   const changed =
     (input.patch.inputs !== undefined && canonicalJson(input.patch.inputs) !== canonicalJson(input.draft.inputs)) ||
     (input.patch.enabled_optional_paths !== undefined && canonicalJson([...new Set(input.patch.enabled_optional_paths)].sort()) !== canonicalJson(input.draft.enabled_optional_paths)) ||
@@ -278,6 +300,7 @@ export function reviseRunDraft(input: {
   confirmation?: LaunchConfirmation;
   now?: string;
 }): { draft: RunDraft; confirmation?: LaunchConfirmation } {
+  if (input.draft.status !== "confirmed") throw new RunDraftError("invalid_draft_transition", `Cannot revise RunDraft from ${input.draft.status}.`);
   const revision = input.draft.revision + 1;
   const draft: RunDraft = {
     ...input.draft,
@@ -297,6 +320,7 @@ export function cancelRunDraft(input: {
   confirmation?: LaunchConfirmation;
   now?: string;
 }): { draft: RunDraft; confirmation?: LaunchConfirmation } {
+  assertMutable(input.draft, "cancel");
   const cancelledAt = input.now ?? new Date().toISOString();
   const draft: RunDraft = {
     ...input.draft,
@@ -319,6 +343,7 @@ export function confirmRunDraft(input: {
   if (input.existing_confirmation?.decision === "confirmed" && input.existing_confirmation.plan_hash === input.plan.plan_hash) {
     return { draft: input.draft, confirmation: input.existing_confirmation };
   }
+  assertMutable(input.draft, "confirm");
   if (input.plan.draft_id !== input.draft.draft_id || input.draft.latest_plan_hash && input.draft.latest_plan_hash !== input.plan.plan_hash) {
     throw new RunDraftError("plan_hash_mismatch", "The confirmation must reference the latest RunDraft plan hash.");
   }
@@ -352,4 +377,10 @@ export function confirmRunDraft(input: {
     },
     confirmation
   };
+}
+
+function assertMutable(draft: RunDraft, action: string) {
+  if (["cancelled", "converted", "expired", "launch_pending"].includes(draft.status)) {
+    throw new RunDraftError("invalid_draft_transition", `Cannot ${action} RunDraft from terminal status ${draft.status}.`);
+  }
 }

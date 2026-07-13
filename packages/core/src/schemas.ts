@@ -1,11 +1,18 @@
 import { z } from "zod";
 import type { AdapterInvocation, AdapterResult } from "./types";
 
+const credentialScopeSchema = z.object({
+  credential_ref: z.string(),
+  required_for_branch: z.string(),
+  blocking_scope: z.enum(["required_path", "optional_branch"])
+});
+
 const nodePortSchema = z.object({
   id: z.string(),
   kind: z.enum(["artifact", "parameter"]),
   artifact_type: z.string().optional(),
   required: z.boolean(),
+  optional_path_id: z.string().min(1).optional(),
   artifact_spec_ref: z.string().optional()
 });
 
@@ -89,7 +96,8 @@ export const workflowSpecSchema = z.object({
     default_provider: z.string(),
     allowed_providers: z.array(z.string()),
     required_credentials: z.array(z.string()),
-    fallback_providers: z.array(z.string())
+    fallback_providers: z.array(z.string()),
+    credential_scopes: z.array(credentialScopeSchema).optional()
   }),
   layouts: z.object({
     dag: z.record(z.string(), z.object({ x: z.number(), y: z.number(), stage: z.string().optional() })),
@@ -147,7 +155,8 @@ const runSpecBaseSchema = z.object({
     default_provider: z.string(),
     allowed_providers: z.array(z.string()),
     required_credentials: z.array(z.string()),
-    fallback_providers: z.array(z.string())
+    fallback_providers: z.array(z.string()),
+    credential_scopes: z.array(credentialScopeSchema).optional()
   }),
   created_at: z.string()
 });

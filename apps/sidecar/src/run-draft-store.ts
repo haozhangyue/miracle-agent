@@ -9,14 +9,13 @@ import {
   refreshRunDraftWorkflowSource,
   reviseRunDraft,
   updateRunDraft,
-  type CredentialScope,
   type LaunchConfirmation,
   type RunDraft,
   type RunDraftDryRunPlan,
   type WorkflowSnapshotDraft,
   type WorkflowSpec
 } from "@miracle/core";
-import { access, appendFile, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, cp, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 type PendingPlan = { draft_id: string; status: "not_generated" };
@@ -111,6 +110,34 @@ export class RunDraftStore {
     return path.join(this.options.workspace_dir, "run-drafts", `.${draftId}.lock`);
   }
 
+  private transactionDir(draftId: string) {
+    assertDraftId(draftId);
+    return path.join(this.options.workspace_dir, "run-drafts", `.${draftId}.transaction`);
+  }
+
+  private async recoverTransaction(draftId: string) {
+    const transactionDir = this.transactionDir(draftId);
+    const metadata = await this.readJson<{ existed: boolean }>(path.join(transactionDir, "metadata.json")).catch(() => undefined);
+    if (!metadata) {
+      await rm(transactionDir, { recursive: true, force: true });
+      return;
+    }
+    const draftDir = this.draftDir(draftId);
+    await rm(draftDir, { recursive: true, force: true });
+    if (metadata.existed) await cp(path.join(transactionDir, "backup"), draftDir, { recursive: true });
+    await rm(transactionDir, { recursive: true, force: true });
+  }
+
+  private async beginTransaction(draftId: string) {
+    const transactionDir = this.transactionDir(draftId);
+    const draftDir = this.draftDir(draftId);
+    await this.recoverTransaction(draftId);
+    const existed = await access(draftDir).then(() => true).catch(() => false);
+    await mkdir(transactionDir, { recursive: true });
+    if (existed) await cp(draftDir, path.join(transactionDir, "backup"), { recursive: true });
+    await this.writeJson(path.join(transactionDir, "metadata.json"), { existed });
+  }
+
   private async readJson<T>(target: string): Promise<T> {
     try {
       return JSON.parse(await readFile(target, "utf8")) as T;
@@ -138,12 +165,31 @@ export class RunDraftStore {
       } catch (error) {
         const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
         if (code !== "EEXIST") throw error;
+        const ownerPath = path.join(lockDir, "owner.json");
+        const owner: { pid?: number; created_at?: string } = await this.readJson<{ pid?: number; created_at?: string }>(ownerPath).catch(() => ({}));
+        const lockStat = await stat(lockDir).catch(() => undefined);
+        const age = lockStat ? Date.now() - lockStat.mtimeMs : 0;
+        let ownerAlive = false;
+        if (typeof owner.pid === "number") {
+          try { process.kill(owner.pid, 0); ownerAlive = true; } catch { ownerAlive = false; }
+        }
+        if ((!ownerAlive && age > 1_000) || age > 30_000) {
+          await rm(lockDir, { recursive: true, force: true });
+          continue;
+        }
         if (Date.now() >= deadline) throw new RunDraftStoreError("draft_lock_timeout", `RunDraft lock timed out: ${draftId}`);
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
     }
+    await writeFile(path.join(lockDir, "owner.json"), JSON.stringify({ pid: process.pid, created_at: this.now() }), "utf8");
+    await this.beginTransaction(draftId);
     try {
-      return await operation();
+      const result = await operation();
+      await rm(this.transactionDir(draftId), { recursive: true, force: true });
+      return result;
+    } catch (error) {
+      await this.recoverTransaction(draftId);
+      throw error;
     } finally {
       await rm(lockDir, { recursive: true, force: true });
     }
@@ -311,12 +357,13 @@ export class RunDraftStore {
   }
 
   async read(draftId: string): Promise<RunDraftBundle> {
-    return this.readUnlocked(draftId);
+    return this.withDraftLock(draftId, () => this.readUnlocked(draftId));
   }
 
   private async readUnlocked(draftId: string): Promise<RunDraftBundle> {
     const files = this.paths(draftId);
     try {
+      await access(files.directory);
       const [draftValue, snapshotValue, planValue, confirmationValue, auditRaw] = await Promise.all([
         this.readJson<RunDraft>(files.draft),
         this.readJson<WorkflowSnapshotDraft>(files.snapshot),
@@ -328,6 +375,14 @@ export class RunDraftStore {
       const snapshot = this.validateSnapshot(snapshotValue, draft);
       const plan = this.validatePlan(planValue, draft);
       const confirmation = this.validateConfirmation(confirmationValue, draft);
+      if (draft.latest_plan_id || draft.latest_plan_hash) {
+        if (!plan || plan.draft_plan_id !== draft.latest_plan_id || plan.plan_hash !== draft.latest_plan_hash) invalidState("RunDraft latest plan references are inconsistent");
+      } else if (plan) {
+        invalidState("RunDraft has a generated plan without latest plan references");
+      }
+      if (draft.status === "confirmed" && (!confirmation || confirmation.decision !== "confirmed" || confirmation.confirmation_id !== draft.confirmation_id || confirmation.plan_hash !== draft.latest_plan_hash)) {
+        invalidState("Confirmed RunDraft does not match launch_confirmation.json");
+      }
       return {
         draft,
         snapshot,
@@ -337,7 +392,13 @@ export class RunDraftStore {
       };
     } catch (error) {
       if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-        throw new RunDraftStoreError("draft_not_found", `RunDraft not found: ${draftId}`);
+        try {
+          await access(files.directory);
+          throw new RunDraftStoreError("draft_state_invalid", `RunDraft ${draftId} is incomplete; one or more state files are missing.`);
+        } catch (directoryError) {
+          if (directoryError instanceof RunDraftStoreError) throw directoryError;
+          throw new RunDraftStoreError("draft_not_found", `RunDraft not found: ${draftId}`);
+        }
       }
       throw error;
     }
@@ -375,7 +436,6 @@ export class RunDraftStore {
     expected_revision: number;
     actor: string;
     available_credentials?: string[];
-    credential_scopes?: CredentialScope[];
   }): Promise<RunDraftBundle & { plan: RunDraftDryRunPlan }> {
     return this.withDraftLock(input.draft_id, async () => {
     const existing = await this.readUnlocked(input.draft_id);
@@ -386,7 +446,6 @@ export class RunDraftStore {
       draft: refreshed.draft,
       workflow,
       available_credentials: input.available_credentials,
-      credential_scopes: input.credential_scopes,
       now: this.now()
     });
     const draft: RunDraft = {
@@ -483,14 +542,19 @@ export class RunDraftStore {
     });
   }
 
-  async requestLaunch(input: { draft_id: string; adapter_ready: boolean }) {
+  async requestLaunch(input: { draft_id: string; adapter_ready: boolean; draft_plan_id: string; plan_hash: string; confirmation_id: string }) {
     return this.withDraftLock(input.draft_id, async () => {
-    const { draft } = await this.readUnlocked(input.draft_id);
-    if (!input.adapter_ready) {
-      throw new RunDraftStoreError("adapter_not_ready", "Adapter is not ready; the confirmed RunDraft remains unchanged.");
-    }
+    const { draft, plan, confirmation, snapshot } = await this.readUnlocked(input.draft_id);
+    const currentWorkflow = await this.readWorkflow(draft.workflow_id);
+    const currentWorkflowHash = canonicalPlanHash(currentWorkflow);
     if (draft.status !== "confirmed") {
       throw new RunDraftStoreError("launch_handoff_required", "Only a confirmed RunDraft may be handed to the Run launch service.");
+    }
+    if (!plan || !confirmation || input.draft_plan_id !== plan.draft_plan_id || input.plan_hash !== plan.plan_hash || input.confirmation_id !== confirmation.confirmation_id || confirmation.decision !== "confirmed" || confirmation.plan_hash !== plan.plan_hash || draft.latest_plan_hash !== plan.plan_hash || draft.confirmation_id !== confirmation.confirmation_id || snapshot.workflow_source_hash !== draft.workflow_source_hash || currentWorkflowHash !== draft.workflow_source_hash) {
+      throw new RunDraftStoreError("launch_handoff_required", "RunDraft launch references do not match the latest frozen plan and confirmation.");
+    }
+    if (!input.adapter_ready) {
+      throw new RunDraftStoreError("adapter_not_ready", "Adapter is not ready; the confirmed RunDraft remains unchanged.");
     }
     throw new RunDraftStoreError("launch_handoff_required", "Run launch wiring belongs to the unified POST /runs service.");
     });

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { WorkflowSpec } from "@miracle/core";
@@ -69,7 +69,13 @@ const workflow: WorkflowSpec = {
     { id: "master", type: "markdown", produced_by: "B_md_master", review_policy: { mode: "manual", gate_spec_id: "final_human_review" }, required_for: ["G_distribution_retro"], versioning: { immutable: true, compare_by: "hash" } },
     { id: "video", type: "video", produced_by: "F_final_render", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } }
   ],
-  provider_policy: { default_provider: "codex-local", allowed_providers: ["codex-local"], required_credentials: ["VOLC_TTS_API_KEY"], fallback_providers: [] },
+  provider_policy: {
+    default_provider: "codex-local",
+    allowed_providers: ["codex-local"],
+    required_credentials: ["VOLC_TTS_API_KEY"],
+    fallback_providers: [],
+    credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
+  },
   layouts: { dag: {} },
   registry_meta: { source: "test", status: "stable" }
 };
@@ -97,7 +103,6 @@ describe("RunDraftStore", () => {
       draft_id: created.draft.draft_id,
       expected_revision: created.draft.revision,
       actor: "operator",
-      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
     });
     return store.confirm({
       draft_id: planned.draft.draft_id,
@@ -126,7 +131,6 @@ describe("RunDraftStore", () => {
       draft_id: created.draft.draft_id,
       expected_revision: created.draft.revision,
       actor: "operator",
-      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
     });
     const request = {
       draft_id: planned.draft.draft_id,
@@ -171,7 +175,6 @@ describe("RunDraftStore", () => {
       draft_id: updated.draft.draft_id,
       expected_revision: updated.draft.revision,
       actor: "operator",
-      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
     });
     const confirmedAgain = await store.confirm({
       draft_id: replanned.draft.draft_id,
@@ -185,7 +188,6 @@ describe("RunDraftStore", () => {
       draft_id: confirmedAgain.draft.draft_id,
       expected_revision: confirmedAgain.draft.revision,
       actor: "operator",
-      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
     });
 
     expect((await store.read(confirmedAgain.draft.draft_id)).confirmation).toMatchObject({ decision: "superseded" });
@@ -238,7 +240,6 @@ describe("RunDraftStore", () => {
       expected_revision: created.draft.revision,
       actor: "operator",
       available_credentials: [],
-      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
     });
     const confirmed = await store.confirm({
       draft_id: planned.draft.draft_id,
@@ -270,7 +271,6 @@ describe("RunDraftStore", () => {
       draft_id: created.draft.draft_id,
       expected_revision: created.draft.revision,
       actor: "operator",
-      credential_scopes: [{ credential_ref: "VOLC_TTS_API_KEY", required_for_branch: "video_package", blocking_scope: "optional_branch" }]
     });
     const confirmed = await store.confirm({
       draft_id: planned.draft.draft_id,
@@ -280,7 +280,27 @@ describe("RunDraftStore", () => {
       acknowledgements: planned.plan.required_acknowledgements
     });
 
-    await expect(store.requestLaunch({ draft_id: confirmed.draft.draft_id, adapter_ready: false })).rejects.toBeInstanceOf(RunDraftStoreError);
+    await expect(store.requestLaunch({
+      draft_id: confirmed.draft.draft_id,
+      adapter_ready: false,
+      draft_plan_id: planned.plan.draft_plan_id,
+      plan_hash: planned.plan.plan_hash,
+      confirmation_id: confirmed.confirmation.confirmation_id
+    })).rejects.toBeInstanceOf(RunDraftStoreError);
     expect((await store.read(confirmed.draft.draft_id)).draft.status).toBe("confirmed");
+  });
+
+  it("recovers the previous complete bundle after a crashed multi-file transaction", async () => {
+    const created = await store.create({ draft_id: "rundraft_store_recovery", workflow_id: workflow.id, actor: "operator" });
+    const draftDir = path.join(workspaceDir, "run-drafts", created.draft.draft_id);
+    const transactionDir = path.join(workspaceDir, "run-drafts", `.${created.draft.draft_id}.transaction`);
+    await mkdir(transactionDir, { recursive: true });
+    await cp(draftDir, path.join(transactionDir, "backup"), { recursive: true });
+    await writeFile(path.join(transactionDir, "metadata.json"), `${JSON.stringify({ existed: true })}\n`, "utf8");
+    await writeFile(path.join(draftDir, "run_draft.json"), "{broken", "utf8");
+
+    const recovered = await store.read(created.draft.draft_id);
+    expect(recovered.draft).toEqual(created.draft);
+    await expect(readFile(path.join(transactionDir, "metadata.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
