@@ -250,6 +250,51 @@ describe("CodexCliAdapter process lifecycle", () => {
     await expect(adapter.startOperation({ invocation: invalidInvocation, attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
   });
 
+  it("validates invocation attempt ids and anchors a replaced attempt directory to the verified attempts root", async () => {
+    const adapter = createAdapter();
+    const attempt = await createWorkspace(adapter, "attempt_revalidated");
+    const traversal = invocation(attempt, "op_attempt_traversal");
+    traversal.attempt_id = "../../../outside";
+
+    await expect(adapter.startOperation({ invocation: traversal, attempt_workspace: attempt })).rejects.toMatchObject({ code: "invalid_attempt_id" });
+
+    const replacement = path.join(tempRoot, "replacement-attempt");
+    await mkdir(path.join(replacement, "work"), { recursive: true });
+    await rm(attempt.root_dir, { recursive: true, force: true });
+    await symlink(replacement, attempt.root_dir);
+
+    await expect(adapter.startOperation({ invocation: invocation(attempt, "op_attempt_replaced"), attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
+  });
+
+  it("rejects a symlinked operations root for receipt writes and orphan recovery", async () => {
+    const adapter = createAdapter();
+    const attempt = await createWorkspace(adapter, "attempt_operations_root");
+    const operations = path.join(workspaceDir, "runtime", "operations");
+    const external = path.join(tempRoot, "external-operations");
+    await mkdir(external, { recursive: true });
+    await symlink(external, operations);
+
+    await expect(adapter.startOperation({ invocation: invocation(attempt, "op_operations_root"), attempt_workspace: attempt })).rejects.toMatchObject({ code: "runtime_workspace_required" });
+    await expect(adapter.recoverOrphanedOperations()).rejects.toMatchObject({ code: "runtime_workspace_required" });
+    await expect(readFile(path.join(external, "op_operations_root.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects startup and clears its reservation when the initial running receipt cannot be persisted", async () => {
+    const adapter = createAdapter({ FAKE_CODEX_MODE: "ignore-term" });
+    const attempt = await createWorkspace(adapter, "attempt_initial_receipt");
+    const operations = path.join(workspaceDir, "runtime", "operations");
+    await mkdir(path.join(operations, "op_initial_receipt.json"), { recursive: true });
+
+    const started = await Promise.allSettled([adapter.startOperation({ invocation: invocation(attempt, "op_initial_receipt"), attempt_workspace: attempt, timeout_ms: 1_000 })]);
+    if (started[0]?.status === "fulfilled") {
+      await started[0].value.cancel();
+      await started[0].value.result;
+    }
+
+    expect(started[0]?.status).toBe("rejected");
+    await expect(adapter.cancelOperation("op_initial_receipt")).rejects.toMatchObject({ code: "operation_not_found" });
+  });
+
   it("returns a succeeded AdapterResult for valid fake JSONL without committing formal run facts", async () => {
     const adapter = createAdapter();
     const attempt = await createWorkspace(adapter);
@@ -319,6 +364,7 @@ describe("CodexCliAdapter process lifecycle", () => {
             // The adapter already terminated this test process group.
           }
         }
+        await rm(operationDir, { recursive: true, force: true });
       }
     }
   });
