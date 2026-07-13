@@ -3,6 +3,7 @@ import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "no
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AdapterInvocation } from "@miracle/core";
 import {
   CodexCliAdapter,
   CodexCliAdapterError,
@@ -38,7 +39,11 @@ async function createWorkspace(adapter = createAdapter(), attemptId = "attempt_0
   });
 }
 
-function invocation(attempt: AttemptWorkspace, operationId = "op_001") {
+function wait(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function invocation(attempt: AttemptWorkspace, operationId = "op_001"): AdapterInvocation {
   return {
     operation_id: operationId,
     attempt_id: attempt.attempt_id,
@@ -127,6 +132,20 @@ describe("CodexCliAdapter attempt workspace", () => {
     }
   });
 
+  it("rejects symlinked runtime and attempts segments before creating a canonical attempt", async () => {
+    for (const segment of ["runtime", "runtime/attempts"]) {
+      const workspace = path.join(tempRoot, `workspace_${segment.replaceAll("/", "_")}`);
+      const external = path.join(tempRoot, `external_${segment.replaceAll("/", "_")}`);
+      const linkTarget = path.join(workspace, segment);
+      await mkdir(path.dirname(linkTarget), { recursive: true });
+      await mkdir(external, { recursive: true });
+      await symlink(external, linkTarget);
+      const adapter = new CodexCliAdapter({ repository_root: repoRoot, workspace_dir: workspace, executable_path: process.execPath, command_prefix_args: [fakeCodex] });
+
+      await expect(adapter.createAttemptWorkspace({ attempt_id: `attempt_${segment.replaceAll("/", "_")}`, input_files: [], allowed_input_roots: [] })).rejects.toMatchObject({ code: "runtime_workspace_required" });
+    }
+  });
+
   it("rejects input paths outside the explicit allowlist", async () => {
     const adapter = createAdapter();
     const outside = path.join(tempRoot, "outside.md");
@@ -170,6 +189,58 @@ describe("CodexCliAdapter attempt workspace", () => {
 });
 
 describe("CodexCliAdapter process lifecycle", () => {
+  it("rejects unsafe operation ids before any receipt path is constructed", async () => {
+    const adapter = createAdapter();
+    const attempt = await createWorkspace(adapter, "attempt_operation_id");
+
+    const started = await Promise.allSettled([adapter.startOperation({ invocation: invocation(attempt, "../outside"), attempt_workspace: attempt })]);
+    if (started[0]?.status === "fulfilled") await started[0].value.result;
+    expect(started[0]).toMatchObject({ status: "rejected", reason: { code: "invalid_operation_id" } });
+    expect(await readFile(path.join(attempt.meta_dir, "attempt.json"), "utf8")).toContain("prepared");
+  });
+
+  it("skips invalid persisted operation ids instead of traversing receipt paths during recovery", async () => {
+    const adapter = createAdapter();
+    const operationDir = path.join(workspaceDir, "runtime", "operations");
+    await mkdir(operationDir, { recursive: true });
+    await writeFile(path.join(operationDir, "invalid.json"), JSON.stringify({
+      operation_id: "../../escaped",
+      attempt_id: "attempt_orphan",
+      node_run_id: "nr_orphan",
+      pid: 999_999_999,
+      status: "running",
+      started_at: "2026-07-13T08:00:00.000Z"
+    }), "utf8");
+
+    await expect(adapter.recoverOrphanedOperations()).resolves.toEqual([]);
+    await expect(readFile(path.join(workspaceDir, "runtime", "escaped.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("registers spawn error handling before receipt persistence and settles ENOENT", async () => {
+    const adapter = new CodexCliAdapter({ repository_root: repoRoot, workspace_dir: workspaceDir, executable_path: path.join(tempRoot, "missing-codex") });
+    const attempt = await createWorkspace(adapter, "attempt_spawn_missing");
+    const handle = await adapter.startOperation({ invocation: invocation(attempt, "op_spawn_missing"), attempt_workspace: attempt });
+
+    await expect(handle.result).resolves.toMatchObject({ status: "failed", error: { code: "process_spawn_failed" } });
+  });
+
+  it("uses the invocation sandbox argument rather than a hard-coded sandbox", async () => {
+    const probe = path.join(tempRoot, "sandbox-probe.mjs");
+    await writeFile(probe, `
+      const args = process.argv.slice(2);
+      const index = args.indexOf("--sandbox");
+      if (args[index + 1] !== "read-only") process.exit(7);
+      process.stdout.write('{"type":"turn.completed"}\\n');
+    `, "utf8");
+    const adapter = new CodexCliAdapter({ repository_root: repoRoot, workspace_dir: workspaceDir, executable_path: process.execPath, command_prefix_args: [probe] });
+    const attempt = await createWorkspace(adapter, "attempt_read_only");
+    const input = invocation(attempt, "op_read_only");
+    input.runtime_control.sandbox = "read-only";
+
+    const handle = await adapter.startOperation({ invocation: input, attempt_workspace: attempt });
+    await expect(handle.result).resolves.toMatchObject({ status: "succeeded" });
+  });
+
   it("rejects an invocation whose declared workspace is not the canonical attempt path", async () => {
     const adapter = createAdapter();
     const attempt = await createWorkspace(adapter, "attempt_canonical");
@@ -228,6 +299,30 @@ describe("CodexCliAdapter process lifecycle", () => {
     await expect(handle.result).resolves.toMatchObject({ status: "cancelled", error: { code: "operation_cancelled", recoverable: false } });
   });
 
+  it("continues cancellation and timeout signalling when operation receipt writes fail", async () => {
+    for (const mode of ["cancel", "timeout"] as const) {
+      const adapter = createAdapter({ FAKE_CODEX_MODE: "ignore-term" });
+      const attempt = await createWorkspace(adapter, `attempt_receipt_${mode}`);
+      const handle = await adapter.startOperation({ invocation: invocation(attempt, `op_receipt_${mode}`), attempt_workspace: attempt, timeout_ms: mode === "timeout" ? 20 : 1_000 });
+      const operationDir = path.join(workspaceDir, "runtime", "operations");
+      await rm(operationDir, { recursive: true, force: true });
+      await writeFile(operationDir, "receipt writes blocked", "utf8");
+
+      try {
+        if (mode === "cancel") await expect(handle.cancel()).resolves.toBe("cancelled");
+        await expect(Promise.race([handle.result, wait(250).then(() => "timed_out_wait")])).resolves.toMatchObject({ status: mode === "cancel" ? "cancelled" : "timed_out" });
+      } finally {
+        if (handle.pid > 0) {
+          try {
+            process.kill(-handle.pid, "SIGKILL");
+          } catch {
+            // The adapter already terminated this test process group.
+          }
+        }
+      }
+    }
+  });
+
   it("marks an orphaned persisted operation unknown without inferring success from output files", async () => {
     const adapter = createAdapter();
     const operationDir = path.join(workspaceDir, "runtime", "operations");
@@ -243,5 +338,22 @@ describe("CodexCliAdapter process lifecycle", () => {
 
     await expect(adapter.recoverOrphanedOperations()).resolves.toEqual(["op_orphan"]);
     expect(JSON.parse(await readFile(path.join(operationDir, "op_orphan.json"), "utf8"))).toMatchObject({ status: "unknown", error: { code: "orphaned_operation" } });
+  });
+});
+
+describe("CodexCliAdapter health timeouts", () => {
+  it("terminates a slow health command at the configured fixed timeout", async () => {
+    const slowHealth = path.join(tempRoot, "slow-health.mjs");
+    await writeFile(slowHealth, `
+      const args = process.argv.slice(2);
+      if (args[0] === "--version") {
+        setTimeout(() => process.stdout.write("codex-cli 0.142.1\\n"), 80);
+      } else {
+        process.stdout.write("Authenticated\\n");
+      }
+    `, "utf8");
+    const adapter = new CodexCliAdapter({ repository_root: repoRoot, workspace_dir: workspaceDir, executable_path: process.execPath, command_prefix_args: [slowHealth], health_timeout_ms: 10 });
+
+    await expect(adapter.refreshHealth()).resolves.toMatchObject({ status: "degraded", authenticated: false, reasons: ["version_check_timeout"] });
   });
 });

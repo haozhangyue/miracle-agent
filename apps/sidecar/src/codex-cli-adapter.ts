@@ -6,6 +6,7 @@ import type { AdapterInvocation, AdapterResult } from "@miracle/core";
 
 const adapterId = "codex-cli-real" as const;
 const maxHealthOutputBytes = 8 * 1024;
+const defaultHealthTimeoutMs = 5_000;
 
 export interface CodexCliHealth {
   adapter_id: typeof adapterId;
@@ -41,6 +42,7 @@ export interface CodexCliAdapterOptions {
   execution_environment?: Record<string, string | undefined>;
   max_output_bytes?: number;
   terminate_grace_ms?: number;
+  health_timeout_ms?: number;
   now?: () => string;
 }
 
@@ -52,6 +54,7 @@ export class CodexCliAdapterError extends Error {
       | "workspace_escape_detected"
       | "runtime_workspace_required"
       | "invalid_attempt_id"
+      | "invalid_operation_id"
       | "operation_conflict"
       | "operation_not_found",
     message: string
@@ -92,6 +95,10 @@ function isSafeId(value: string) {
   return /^[A-Za-z0-9_-]+$/.test(value);
 }
 
+function isSafeOperationId(value: string) {
+  return /^[A-Za-z0-9_-]+$/.test(value);
+}
+
 function isWithin(root: string, candidate: string) {
   const relative = path.relative(root, candidate);
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
@@ -113,6 +120,7 @@ export class CodexCliAdapter {
   private readonly executablePath: string;
   private readonly maxOutputBytes: number;
   private readonly terminateGraceMs: number;
+  private readonly healthTimeoutMs: number;
   private readonly now: () => string;
   private readonly operations = new Map<string, ActiveOperation>();
   private readonly operationReservations = new Set<string>();
@@ -122,6 +130,7 @@ export class CodexCliAdapter {
     this.executablePath = options.executable_path ?? "codex";
     this.maxOutputBytes = options.max_output_bytes ?? 256 * 1024;
     this.terminateGraceMs = options.terminate_grace_ms ?? 1_000;
+    this.healthTimeoutMs = options.health_timeout_ms ?? defaultHealthTimeoutMs;
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
@@ -144,19 +153,31 @@ export class CodexCliAdapter {
       };
       return this.health;
     }
-    if (versionRun.exit_code !== 0 || versionRun.output_limited) {
+    if (versionRun.exit_code !== 0 || versionRun.output_limited || versionRun.timed_out) {
       this.health = {
         adapter_id: adapterId,
         status: "degraded",
         executable_path: safeBasename(this.executablePath),
         authenticated: false,
-        reasons: ["version_check_failed"],
+        reasons: [versionRun.timed_out ? "version_check_timeout" : "version_check_failed"],
         checked_at: checkedAt
       };
       return this.health;
     }
     const version = versionRun.stdout.match(/\d+(?:\.\d+){1,3}/)?.[0];
     const login = await this.runCommand(["login", "status"]).catch(() => undefined);
+    if (login?.timed_out) {
+      this.health = {
+        adapter_id: adapterId,
+        status: "degraded",
+        executable_path: safeBasename(this.executablePath),
+        ...(version ? { version } : {}),
+        authenticated: false,
+        reasons: ["login_status_check_timeout"],
+        checked_at: checkedAt
+      };
+      return this.health;
+    }
     const authenticated = Boolean(login && !login.output_limited && login.exit_code === 0 && /authenticated|logged in/i.test(login.stdout));
     this.health = {
       adapter_id: adapterId,
@@ -177,17 +198,23 @@ export class CodexCliAdapter {
     output_schema?: unknown;
   }): Promise<AttemptWorkspace> {
     if (!isSafeId(input.attempt_id)) throw new CodexCliAdapterError("invalid_attempt_id", "attempt_id may only contain letters, numbers, underscore and hyphen");
-    await this.ensureRuntimeRoot();
-    const attemptsRoot = path.join(this.options.workspace_dir, "runtime", "attempts");
+    const attemptsRoot = await this.ensureRuntimeRoot();
     const rootDir = path.join(attemptsRoot, input.attempt_id);
-    await mkdir(attemptsRoot, { recursive: true, mode: 0o700 });
     try {
       await mkdir(rootDir, { recursive: false, mode: 0o700 });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        const entry = await lstat(rootDir);
+        if (entry.isSymbolicLink() || !entry.isDirectory()) throw new CodexCliAdapterError("runtime_workspace_required", "Canonical attempt workspace must be a real directory");
         throw new CodexCliAdapterError("attempt_workspace_conflict", `Attempt workspace already exists: ${input.attempt_id}`);
       }
       throw error;
+    }
+    const [attemptEntry, attemptRoot] = await Promise.all([lstat(rootDir), realpath(rootDir)]);
+    const attemptsReal = await realpath(attemptsRoot);
+    if (attemptEntry.isSymbolicLink() || !attemptEntry.isDirectory() || !isWithin(attemptsReal, attemptRoot)) {
+      await rm(rootDir, { recursive: true, force: true });
+      throw new CodexCliAdapterError("runtime_workspace_required", "Canonical attempt workspace escapes the verified runtime root");
     }
     const attempt: AttemptWorkspace = {
       attempt_id: input.attempt_id,
@@ -240,6 +267,7 @@ export class CodexCliAdapter {
 
   async startOperation(input: { invocation: AdapterInvocation; attempt_workspace: AttemptWorkspace; timeout_ms?: number; prompt?: string }): Promise<CodexProcessHandle> {
     const { invocation, attempt_workspace: attempt } = input;
+    if (!isSafeOperationId(invocation.operation_id)) throw new CodexCliAdapterError("invalid_operation_id", "operation_id may only contain letters, numbers, underscore and hyphen");
     if (this.operations.has(invocation.operation_id) || this.operationReservations.has(invocation.operation_id)) throw new CodexCliAdapterError("operation_conflict", `Operation already exists: ${invocation.operation_id}`);
     this.operationReservations.add(invocation.operation_id);
     try {
@@ -250,14 +278,13 @@ export class CodexCliAdapter {
       const [resolvedRoot, resolvedWork] = await Promise.all([realpath(attempt.root_dir), realpath(attempt.work_dir)]);
       if (!isWithin(resolvedRoot, resolvedWork)) throw new CodexCliAdapterError("workspace_escape_detected", "Attempt work directory escapes workspace");
 
-      const child = spawn(this.executablePath, [...(this.options.command_prefix_args ?? []), "exec", "--json", "--ephemeral", "--sandbox", "workspace-write", "--cd", attempt.work_dir, "-"], {
+      const child = spawn(this.executablePath, [...(this.options.command_prefix_args ?? []), "exec", "--json", "--ephemeral", "--sandbox", invocation.runtime_control.sandbox, "--cd", attempt.work_dir, "-"], {
         cwd: attempt.work_dir,
         env: this.childEnvironment(),
         detached: process.platform !== "win32",
         shell: false,
         stdio: "pipe"
       });
-      child.stdin.end(input.prompt ?? "P6-06 fake lifecycle probe only. Do not execute a content task.\n");
       let resolve!: (result: AdapterResult) => void;
       const result = new Promise<AdapterResult>((done) => {
         resolve = done;
@@ -277,7 +304,12 @@ export class CodexCliAdapter {
       };
       this.operations.set(invocation.operation_id, operation);
       this.operationReservations.delete(invocation.operation_id);
-      await this.writeOperationReceipt({
+      child.stdout.on("data", (chunk: Buffer) => this.consumeStdio(operation, chunk, "stdout"));
+      child.stderr.on("data", (chunk: Buffer) => this.consumeStdio(operation, chunk, "stderr"));
+      child.on("error", (error) => void this.settleOperation(operation, "failed", "process_spawn_failed", true, outputForError(error)));
+      child.on("close", (code) => void this.handleClose(operation, code));
+      child.stdin.end(input.prompt ?? "P6-06 fake lifecycle probe only. Do not execute a content task.\n");
+      await this.safeWriteOperationReceipt({
         operation_id: invocation.operation_id,
         attempt_id: invocation.attempt_id,
         node_run_id: invocation.node_run_id,
@@ -287,10 +319,6 @@ export class CodexCliAdapter {
       });
       const timeoutMs = input.timeout_ms ?? invocation.runtime_control.timeout_ms;
       operation.timeout = setTimeout(() => void this.requestTermination(operation, "timed_out"), timeoutMs);
-      child.stdout.on("data", (chunk: Buffer) => this.consumeStdio(operation, chunk, "stdout"));
-      child.stderr.on("data", (chunk: Buffer) => this.consumeStdio(operation, chunk, "stderr"));
-      child.on("error", (error) => void this.settleOperation(operation, "failed", "process_spawn_failed", true, outputForError(error)));
-      child.on("close", (code) => void this.handleClose(operation, code));
 
       return {
         operation_id: invocation.operation_id,
@@ -332,12 +360,13 @@ export class CodexCliAdapter {
       } catch {
         continue;
       }
+      if (!isSafeOperationId(receipt.operation_id) || name !== `${receipt.operation_id}.json`) continue;
       if (receipt.status !== "running" && receipt.status !== "cancel_requested") continue;
       if (this.operations.has(receipt.operation_id)) continue;
       receipt.status = "unknown";
       receipt.completed_at = this.now();
       receipt.error = { code: "orphaned_operation", recoverable: true };
-      await this.writeOperationReceipt(receipt);
+      await this.safeWriteOperationReceipt(receipt);
       recovered.push(receipt.operation_id);
     }
     return recovered;
@@ -409,17 +438,20 @@ export class CodexCliAdapter {
   private async requestTermination(operation: ActiveOperation, intent: "cancelled" | "timed_out" | "aborted", code?: string, recoverable?: boolean) {
     if (operation.settled || operation.intent) return;
     operation.intent = intent;
-    await this.writeOperationReceipt({
-      operation_id: operation.invocation.operation_id,
-      attempt_id: operation.invocation.attempt_id,
-      node_run_id: operation.invocation.node_run_id,
-      pid: operation.child.pid ?? -1,
-      status: intent === "cancelled" ? "cancel_requested" : intent,
-      started_at: operation.startedAt,
-      ...(code ? { error: { code, recoverable: Boolean(recoverable) } } : {})
-    });
-    this.signalProcessGroup(operation.child, "SIGTERM");
-    operation.terminate = setTimeout(() => this.signalProcessGroup(operation.child, "SIGKILL"), this.terminateGraceMs);
+    try {
+      await this.safeWriteOperationReceipt({
+        operation_id: operation.invocation.operation_id,
+        attempt_id: operation.invocation.attempt_id,
+        node_run_id: operation.invocation.node_run_id,
+        pid: operation.child.pid ?? -1,
+        status: intent === "cancelled" ? "cancel_requested" : intent,
+        started_at: operation.startedAt,
+        ...(code ? { error: { code, recoverable: Boolean(recoverable) } } : {})
+      });
+    } finally {
+      this.signalProcessGroup(operation.child, "SIGTERM");
+      operation.terminate = setTimeout(() => this.signalProcessGroup(operation.child, "SIGKILL"), this.terminateGraceMs);
+    }
   }
 
   private signalProcessGroup(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals) {
@@ -471,7 +503,7 @@ export class CodexCliAdapter {
       ...(errorCode ? { error: { code: errorCode, message: errorMessage ?? errorCode, recoverable } } : {}),
       received_at: completedAt
     };
-    await this.writeOperationReceipt({
+    await this.safeWriteOperationReceipt({
       operation_id: operation.invocation.operation_id,
       attempt_id: operation.invocation.attempt_id,
       node_run_id: operation.invocation.node_run_id,
@@ -481,7 +513,7 @@ export class CodexCliAdapter {
       completed_at: completedAt,
       ...(errorCode ? { error: { code: errorCode, recoverable } } : {})
     });
-    await this.writeAttemptMetadata(operation.attempt, status);
+    await this.safeWriteAttemptMetadata(operation.attempt, status);
     operation.resolve(result);
   }
 
@@ -491,21 +523,54 @@ export class CodexCliAdapter {
       let stdout = "";
       let stderrBytes = 0;
       let outputLimited = false;
+      let timedOut = false;
+      let forceKill: NodeJS.Timeout | undefined;
+      const terminate = () => {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // The health-check child already exited.
+        }
+        forceKill = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // The health-check child already exited.
+          }
+        }, this.terminateGraceMs);
+      };
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        terminate();
+      }, this.healthTimeoutMs);
       child.stdout.on("data", (chunk: Buffer) => {
         const remaining = maxHealthOutputBytes - Buffer.byteLength(stdout);
         if (remaining <= 0) {
           outputLimited = true;
+          terminate();
           return;
         }
         if (chunk.length > remaining) outputLimited = true;
         stdout += chunk.toString("utf8").slice(0, remaining);
+        if (outputLimited) terminate();
       });
       child.stderr.on("data", (chunk: Buffer) => {
         stderrBytes += chunk.length;
-        if (stderrBytes > maxHealthOutputBytes) outputLimited = true;
+        if (stderrBytes > maxHealthOutputBytes) {
+          outputLimited = true;
+          terminate();
+        }
       });
-      child.on("error", reject);
-      child.on("close", (exitCode) => resolve({ exit_code: exitCode ?? 1, stdout, output_limited: outputLimited }));
+      child.on("error", (error) => {
+        clearTimeout(timeout);
+        if (forceKill) clearTimeout(forceKill);
+        reject(error);
+      });
+      child.on("close", (exitCode) => {
+        clearTimeout(timeout);
+        if (forceKill) clearTimeout(forceKill);
+        resolve({ exit_code: exitCode ?? 1, stdout, output_limited: outputLimited, timed_out: timedOut });
+      });
     });
   }
 
@@ -517,7 +582,7 @@ export class CodexCliAdapter {
     return path.resolve(this.options.workspace_dir, "runtime", "attempts", attemptId);
   }
 
-  private async ensureRuntimeRoot() {
+  private async ensureRuntimeRoot(): Promise<string> {
     if (!this.options.repository_root) throw new CodexCliAdapterError("runtime_workspace_required", "A repository root is required before creating an attempt workspace");
     await mkdir(this.options.workspace_dir, { recursive: true, mode: 0o700 });
     const [workspaceEntry, workspaceRoot, repositoryRoot] = await Promise.all([
@@ -528,28 +593,66 @@ export class CodexCliAdapter {
     if (workspaceEntry.isSymbolicLink() || isWithin(repositoryRoot, workspaceRoot)) {
       throw new CodexCliAdapterError("runtime_workspace_required", "Attempt runtime workspace must be outside the repository and may not be a symbolic link");
     }
+    const runtimeDir = await this.ensureVerifiedChildDirectory(this.options.workspace_dir, "runtime", workspaceRoot);
+    return this.ensureVerifiedChildDirectory(runtimeDir, "attempts", workspaceRoot);
+  }
+
+  private async ensureVerifiedChildDirectory(parent: string, name: string, workspaceRoot: string) {
+    const candidate = path.join(parent, name);
+    try {
+      await mkdir(candidate, { recursive: false, mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    const [entry, resolved] = await Promise.all([lstat(candidate), realpath(candidate)]);
+    if (entry.isSymbolicLink() || !entry.isDirectory() || !isWithin(workspaceRoot, resolved)) {
+      throw new CodexCliAdapterError("runtime_workspace_required", `Runtime path segment is not a verified directory: ${name}`);
+    }
+    return candidate;
   }
 
   private async writeAttemptMetadata(attempt: AttemptWorkspace, status: string) {
     await writeFile(path.join(attempt.meta_dir, "attempt.json"), `${JSON.stringify({ attempt_id: attempt.attempt_id, status, updated_at: this.now() }, null, 2)}\n`, { mode: 0o600 });
   }
 
+  private async safeWriteAttemptMetadata(attempt: AttemptWorkspace, status: string) {
+    try {
+      await this.writeAttemptMetadata(attempt, status);
+    } catch {
+      // Process lifecycle must resolve even when the local receipt store is unavailable.
+    }
+  }
+
   private async writeOperationReceipt(receipt: OperationReceipt) {
     const dir = this.operationsDir();
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    const target = path.join(dir, `${receipt.operation_id}.json`);
+    const target = this.operationReceiptPath(receipt.operation_id);
     const temporary = `${target}.tmp`;
     await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, target);
   }
 
-  private async readOperationReceipt(operationId: string) {
+  private async safeWriteOperationReceipt(receipt: OperationReceipt) {
     try {
-      return JSON.parse(await readFile(path.join(this.operationsDir(), `${operationId}.json`), "utf8")) as OperationReceipt;
+      await this.writeOperationReceipt(receipt);
+    } catch {
+      // Receipt persistence is audit best-effort and cannot block termination or result delivery.
+    }
+  }
+
+  private operationReceiptPath(operationId: string) {
+    if (!isSafeOperationId(operationId)) throw new CodexCliAdapterError("invalid_operation_id", "operation_id may only contain letters, numbers, underscore and hyphen");
+    return path.join(this.operationsDir(), `${operationId}.json`);
+  }
+
+  private async readOperationReceipt(operationId: string) {
+    if (!isSafeOperationId(operationId)) throw new CodexCliAdapterError("invalid_operation_id", "operation_id may only contain letters, numbers, underscore and hyphen");
+    try {
+      return JSON.parse(await readFile(this.operationReceiptPath(operationId), "utf8")) as OperationReceipt;
     } catch {
       return undefined;
     }
   }
 }
 
-type CommandResult = { exit_code: number; stdout: string; output_limited: boolean };
+type CommandResult = { exit_code: number; stdout: string; output_limited: boolean; timed_out: boolean };
