@@ -58,13 +58,18 @@ export function createAdapterInvocation(input: {
   const nodeSpec = input.workflow.nodes.find((node) => node.id === input.nodeRun.node_id);
   if (!nodeSpec) throw new Error(`NodeSpec not found: ${input.nodeRun.node_id}`);
   const dispatchedAt = input.createdAt ?? new Date().toISOString();
+  const operationId = `op_${normalizeId(input.nodeRun.node_run_id)}_${Date.parse(dispatchedAt)}`;
+  const attemptId = `attempt_${operationId}`;
+  const adapterKind = input.adapterKind ?? "mock-local";
+  const attemptWorkspace = `runtime/${input.runSpec.run_id}/${input.nodeRun.node_run_id}/${attemptId}`;
   return {
-    operation_id: `op_${normalizeId(input.nodeRun.node_run_id)}_${Date.parse(dispatchedAt)}`,
+    operation_id: operationId,
+    attempt_id: attemptId,
     run_id: input.runSpec.run_id,
     node_run_id: input.nodeRun.node_run_id,
     node_id: input.nodeRun.node_id,
-    adapter_kind: input.adapterKind ?? "mock-local",
-    adapter_id: input.adapterId,
+    adapter_kind: adapterKind,
+    adapter_id: input.adapterId ?? (adapterKind === "codex" ? "codex-mock-compatible-adapter" : "mock-local-adapter"),
     provider: input.nodeRun.provider ?? input.runSpec.resolved_provider_policy.default_provider,
     capability_requirements: nodeSpec.capability_requirements,
     input_artifacts: input.nodeRun.upstream_artifacts,
@@ -74,6 +79,14 @@ export function createAdapterInvocation(input: {
       artifact_spec_ref: output.artifact_spec_ref,
       required: output.required
     })),
+    runtime_control: {
+      timeout_ms: 1_800_000,
+      cancellation_token_id: `cancel_${operationId}`,
+      attempt_workspace: attemptWorkspace,
+      sandbox: "workspace-write"
+    },
+    prompt_path: `${attemptWorkspace}/prompt.md`,
+    output_schema_path: "runtime/schemas/adapter-result-v0.json",
     dispatched_at: dispatchedAt
   };
 }
@@ -87,11 +100,14 @@ export function executeMockAdapter(input: {
   if (!nodeSpec) {
     return {
       operation_id: input.invocation.operation_id,
+      attempt_id: input.invocation.attempt_id,
       node_run_id: input.invocation.node_run_id,
       status: "failed",
       provider_receipt: {
         provider: input.invocation.provider,
         adapter_kind: input.invocation.adapter_kind,
+        adapter_id: input.invocation.adapter_id,
+        operation_id: input.invocation.operation_id,
         raw_receipt_id: `receipt_${input.invocation.operation_id}`
       },
       artifact_descriptors: [],
@@ -119,11 +135,14 @@ export function executeMockAdapter(input: {
 
   return {
     operation_id: input.invocation.operation_id,
+    attempt_id: input.invocation.attempt_id,
     node_run_id: input.invocation.node_run_id,
     status: "succeeded",
     provider_receipt: {
       provider: input.invocation.provider,
       adapter_kind: input.invocation.adapter_kind,
+      adapter_id: input.invocation.adapter_id,
+      operation_id: input.invocation.operation_id,
       model: "mock-runner-v0",
       cost: 0,
       latency_ms: Math.max(0, Date.parse(receivedAt) - Date.parse(input.invocation.dispatched_at)),
@@ -136,7 +155,7 @@ export function executeMockAdapter(input: {
 
 export function createNodeAttemptFromAdapterResult(result: AdapterResult): NodeAttempt {
   return {
-    attempt_id: `attempt_${normalizeId(result.operation_id)}`,
+    attempt_id: result.attempt_id ?? `attempt_${normalizeId(result.operation_id)}`,
     node_run_id: result.node_run_id,
     operation_id: result.operation_id,
     attempt_kind: "execute",

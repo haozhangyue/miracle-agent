@@ -1,4 +1,5 @@
 import { adapterManifestSchema } from "./schemas";
+import { codexCliRealAdapterManifest } from "./codex-cli";
 import type { AdapterInvocation, AdapterManifest, AdapterRegistryEntry, AdapterResult } from "./types";
 
 export interface AdapterPlugin {
@@ -62,6 +63,7 @@ export const defaultAdapterManifests: AdapterManifest[] = [
     required_credentials: [],
     runtime: { local_executor: "mock-runner", can_execute: true, entrypoint: "mock://codex-compatible" }
   },
+  codexCliRealAdapterManifest,
   {
     id: "hermes-adapter-shell",
     kind: "hermes",

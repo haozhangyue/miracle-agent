@@ -204,11 +204,12 @@ export interface NodeAttempt {
 
 export interface AdapterInvocation {
   operation_id: string;
+  attempt_id: string;
   run_id: string;
   node_run_id: string;
   node_id: string;
   adapter_kind: "mock-local" | "codex" | "hermes" | "openclaw" | "official-api";
-  adapter_id?: string;
+  adapter_id: string;
   provider: string;
   capability_requirements: string[];
   input_artifacts: string[];
@@ -218,7 +219,17 @@ export interface AdapterInvocation {
     artifact_spec_ref?: string;
     required: boolean;
   }>;
+  runtime_control: AdapterRuntimeControl;
+  prompt_path: string;
+  output_schema_path: string;
   dispatched_at: string;
+}
+
+export interface AdapterRuntimeControl {
+  timeout_ms: number;
+  cancellation_token_id: string;
+  attempt_workspace: string;
+  sandbox: "read-only" | "workspace-write";
 }
 
 export type AdapterExecutionMode = "mock-compatible" | "external" | "shell";
@@ -273,18 +284,24 @@ export interface AdapterArtifactDescriptor {
   content?: string;
 }
 
+export interface ProviderReceipt extends Record<string, unknown> {
+  provider: string;
+  adapter_kind: AdapterInvocation["adapter_kind"];
+  adapter_id?: string;
+  model?: string;
+  operation_id?: string;
+  external_session_id?: string;
+  cost?: number;
+  latency_ms?: number;
+  raw_receipt_id?: string;
+}
+
 export interface AdapterResult {
   operation_id: string;
+  attempt_id?: string;
   node_run_id: string;
   status: AdapterStatus;
-  provider_receipt: {
-    provider: string;
-    adapter_kind: AdapterInvocation["adapter_kind"];
-    model?: string;
-    cost?: number;
-    latency_ms?: number;
-    raw_receipt_id?: string;
-  };
+  provider_receipt: ProviderReceipt;
   artifact_descriptors: AdapterArtifactDescriptor[];
   error?: {
     code: string;
