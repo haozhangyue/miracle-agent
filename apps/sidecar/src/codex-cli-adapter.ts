@@ -181,7 +181,7 @@ export class CodexCliAdapter {
       };
       return this.health;
     }
-    const authenticated = Boolean(login && !login.output_limited && login.exit_code === 0 && /authenticated|logged in/i.test(login.stdout));
+    const authenticated = Boolean(login && !login.output_limited && login.exit_code === 0);
     this.health = {
       adapter_id: adapterId,
       status: authenticated ? "healthy" : "blocked",

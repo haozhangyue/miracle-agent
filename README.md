@@ -22,8 +22,7 @@ draft 与 D9 Web run refresh/polling 已落地，D10 MVP 回归验收与版本�
 UI 展示验收方案、`P5-07` 半自动新 Run 草案设计、`P5-08` 首个真实 Adapter
 边界评估和 `P5-09` 回归验收均已完成。P5 形成真实工作流接入设计基线，首接推荐
 Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与 Projection 和
-`P6-04` RunDraft API/Web 与 `P6-05` Adapter Contract 已完成；当前主线进入
-`P6-06` Codex CLI Health 与 Attempt Workspace。
+`P6-04` 至 `P6-06` 已完成；当前主线进入 `P6-07` C_md_master 单节点真实执行。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -113,6 +112,9 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 | `CURRENT` | [47_P6真实工作流工程实施计划与任务拆解.md](47_P6真实工作流工程实施计划与任务拆解.md) | P6-02 至 P6-08 工程任务、三轨并行边界、接口、测试和验收计划 |
 | `CURRENT` | [48_P6-02HistoricalImporter与Projection交付说明.md](48_P6-02HistoricalImporter与Projection交付说明.md) | W24/W23 historical preview/commit、只读保护、真实 smoke 和 P6-03 输入 |
 | `CURRENT` | [49_P6-03真实Run_API与Web展示交付说明.md](49_P6-03真实Run_API与Web展示交付说明.md) | W24/W23 historical Run 的只读 API、Run/Attention/Agent/Artifact/Gate 展示和截图验收 |
+| `CURRENT` | [50_P6-04RunDraft_API与Web交付说明.md](50_P6-04RunDraft_API与Web交付说明.md) | RunDraft、Dry-run、确认、撤回、取消与启动前交叉校验 |
+| `CURRENT` | [51_P6-05AdapterContract与注册表交付说明.md](51_P6-05AdapterContract与注册表交付说明.md) | Adapter Invocation/Result/Receipt 强关联与真实 manifest 边界 |
+| `CURRENT` | [52_P6-06CodexCLI健康检查与工作区交付说明.md](52_P6-06CodexCLI健康检查与工作区交付说明.md) | Codex CLI health、隔离 attempt workspace、进程控制与安全审查结果 |
 | `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
 
 ## 原型资产目录说明

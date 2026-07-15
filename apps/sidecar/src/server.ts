@@ -39,6 +39,7 @@ import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readdir, readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
@@ -52,6 +53,7 @@ import { CodexCliAdapter, CodexCliAdapterError } from "./codex-cli-adapter";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
+const runtimeWorkspaceDir = process.env.MIRACLE_RUNTIME_WORKSPACE_DIR ?? path.join(homedir(), ".miracle-agent");
 const workflowRegistryDir = process.env.MIRACLE_WORKFLOW_REGISTRY_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle/workflows");
 const port = Number(process.env.MIRACLE_SIDECAR_PORT ?? 4317);
 const historicalImportRoots = (process.env.MIRACLE_IMPORT_ROOTS ?? "")
@@ -61,7 +63,7 @@ const historicalImportRoots = (process.env.MIRACLE_IMPORT_ROOTS ?? "")
 const execGit = promisify(execFile);
 const runDraftStore = new RunDraftStore({ workspace_dir: workspaceDir, workflows_dir: workflowRegistryDir });
 const codexCliAdapter = new CodexCliAdapter({
-  workspace_dir: workspaceDir,
+  workspace_dir: runtimeWorkspaceDir,
   repository_root: rootDir,
   executable_path: process.env.MIRACLE_CODEX_CLI_PATH,
   command_prefix_args: process.env.MIRACLE_CODEX_CLI_ARGUMENT_PREFIX ? [process.env.MIRACLE_CODEX_CLI_ARGUMENT_PREFIX] : []
@@ -2105,4 +2107,5 @@ const server = createServer((req, res) => {
 server.listen(port, "127.0.0.1", () => {
   console.log(`Miracle Local Sidecar listening on http://127.0.0.1:${port}`);
   console.log(`Workspace: ${workspaceDir}`);
+  console.log(`Runtime workspace: ${runtimeWorkspaceDir}`);
 });

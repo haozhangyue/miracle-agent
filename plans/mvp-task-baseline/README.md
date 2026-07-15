@@ -41,7 +41,7 @@
 当前红点：
 
 ```text
-P6-04 RunDraft API/Web 与 P6-05 Adapter Contract 已完成；当前进入 P6-06 Codex CLI Health 与 Attempt Workspace。
+P6-04 至 P6-06 已完成；当前进入 P6-07 C_md_master 单节点真实执行。
 ```
 
 ## 2. 可视化实现方式
@@ -98,8 +98,8 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 | P6-03 | 真实 Run API 与 Web 展示 | 已完成 | Agent A | historical Run/Attention/Artifact/Gate/Agent UI |
 | P6-04 | RunDraft API 与 Web | 已完成 | Agent B | 草案、Dry-run、确认、审计 |
 | P6-05 | Adapter Contract Schema 与注册表 | 已完成 | Agent C | Invocation/Result/Receipt 和 real manifest |
-| P6-06 | Codex CLI Health 与 Attempt Workspace | 当前主线任务 | Agent C | health、隔离 workspace、timeout/cancel |
-| P6-07 | C_md_master 单节点真实执行 | 依赖 P6-03/P6-04/P6-06 | Lead | 正式 Run、Markdown Artifact、Gate、Trace |
+| P6-06 | Codex CLI Health 与 Attempt Workspace | 已完成 | Agent C | health、隔离 workspace、timeout/cancel |
+| P6-07 | C_md_master 单节点真实执行 | 当前主线任务 | Lead | 正式 Run、Markdown Artifact、Gate、Trace |
 | P6-08 | P6 回归验收与版本收口 | 依赖 P6-07 | Lead | 验收报告、截图和版本决策 |
 
 ## 4. 串行与并行边界
@@ -144,7 +144,7 @@ Sidecar 在每次请求 `/api/v0/project/roadmap` 时动态补充：
 
 1. 通过 Sidecar 独立地址 `/task-baseline` 访问，不进入 `apps/web` 侧边栏。
 2. 总体阶段用绿色、红色、灰色展示完成、当前和计划。
-3. 当前红点指向 `P6-06 Codex CLI Health 与 Attempt Workspace`。
+3. 当前红点指向 `P6-07 C_md_master 单节点真实执行`。
 4. D1-D10、P5-01 至 P5-09 和 P6-01 至 P6-08 能区分串行、依赖和可并行任务。
 5. 能看到最近 Git 提交。
 6. 能看到工作区是否有未提交修改。

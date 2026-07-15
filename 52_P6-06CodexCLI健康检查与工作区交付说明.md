@@ -8,10 +8,13 @@
 
 P6-06 新增 `CodexCliAdapter`，负责本机 Codex CLI 的只读健康检查、隔离 attempt workspace、输入 staging、fake CLI 进程生命周期、取消和孤立 operation 收敛。它不创建正式 `NodeRun`、`NodeAttempt`、`ArtifactManifest`、`GateInstance` 或 `TraceEvent`；这些运行事实仍由 P6-07 在 Orchestrator 单写入。
 
+Sidecar 使用独立的 `MIRACLE_RUNTIME_WORKSPACE_DIR`；默认值为 `~/.miracle-agent`，不得与仓库内 fixture 数据目录混用。
+
 ## Health API
 
 - `GET /api/v0/adapters/codex-cli/health` 返回缓存或首次检测结果。
 - `POST /api/v0/adapters/codex-cli/health/refresh` 重新依次调用 `codex --version` 和 `codex login status`。
+- 登录状态以 `codex login status` 的退出码判断；不持久化或返回该命令的 stdout/stderr。
 - 检测通过参数数组启动子进程，不经 shell；健康响应只返回状态、版本、认证布尔值、原因和可执行文件名，不返回认证文件、token、原始 stdout/stderr 或环境变量值。
 - `codex-cli-real` 的 manifest 不在此阶段被改写为可执行；health 只是本机能力观测，不改变 P6-05 注册表的路由语义。
 - `GET /api/v0/adapters` 为 `codex-cli-real` 增加无秘密的 `health.ready/status/authenticated/reasons` 投影，同时保留 `executable: false`。因此 UI 和后续人工决策可以看到本机 readiness，但 P6-06 不会提前让 scheduler 路由到真实 CLI。
