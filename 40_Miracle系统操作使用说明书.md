@@ -82,6 +82,10 @@ npm_config_cache=.npm-cache npm install
 npm run dev
 ```
 
+根级 `dev`、`test` 和 `build` 命令会先构建 `packages/core`，再启动或验证依赖它的
+Sidecar/Web。切换分支或拉取新版本后无需手工清理、预构建 `dist`；请优先使用这些根级
+命令，避免工作区包读取旧构建产物。
+
 默认服务：
 
 | 服务 | 默认地址 | 说明 |

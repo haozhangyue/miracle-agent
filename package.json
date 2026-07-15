@@ -8,12 +8,13 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev -w apps/sidecar\" \"npm run dev -w apps/web\"",
-    "dev:web": "npm run dev -w apps/web",
-    "dev:sidecar": "npm run dev -w apps/sidecar",
+    "build:core": "npm run build -w packages/core",
+    "dev": "npm run build:core && concurrently \"npm run dev -w apps/sidecar\" \"npm run dev -w apps/web\"",
+    "dev:web": "npm run build:core && npm run dev -w apps/web",
+    "dev:sidecar": "npm run build:core && npm run dev -w apps/sidecar",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present"
+    "test": "npm run build:core && npm run test --workspaces --if-present",
+    "build": "npm run build:core && npm run build -w apps/sidecar && npm run build -w apps/web"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.1.2",

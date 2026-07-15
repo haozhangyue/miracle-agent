@@ -326,6 +326,9 @@
 - 两轮安全审查修复 attempt/operation 路径穿越、目录 symlink、spawn error 竞态、sandbox 权限放宽及首次 receipt 持久化失败问题。
 - 本机只读 smoke 确认 `codex-cli 0.144.2` 且登录可用；未执行真实内容任务。
 - 同步 task-baseline：`P6-06` 标记完成，`current_node_id` 推进到 `p6-07`；运行版本仍保持 `v0.7.0`。
+- 修复 monorepo 根级命令可能读取旧 `packages/core/dist` 的问题：`dev`、`test` 和
+  `build` 现在先构建 Core，再启动或验证 Sidecar/Web，确保干净克隆和分支合并后的
+  RunDraft/Codex 导出保持一致。
 
 ## 5. 里程碑
 
