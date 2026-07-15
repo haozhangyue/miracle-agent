@@ -4,7 +4,7 @@
   "display_name": "Codex Mock-Compatible Adapter",
   "version": "0.1.0",
   "status": "experimental",
-  "description": "Codex 平台 adapter 的 MVP manifest。当前使用 Mock Runner 兼容执行，保留后续替换为 Codex CLI/官方能力的边界。",
+  "description": "Codex 平台 adapter 的 MVP manifest。继续使用 Mock Runner 兼容执行；P6-05 的 codex-cli-real 注册不会改变此默认回归路径。",
   "execution_mode": "mock-compatible",
   "capabilities": ["code.generate", "source.collect", "fact.verify", "content.longform_draft", "fact.safe_writing", "workflow.operate", "script.write", "storyboard.plan", "publish.package", "retro.collect"],
   "supported_providers": ["codex-local", "mock-provider", "mock-failure"],

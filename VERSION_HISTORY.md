@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.7.0` |
 | 版本名称 | P4 MVP 本地闭环验收基线 |
-| 当前阶段 | P6-03 真实 Run API 与 Web 展示已完成；运行版本仍为 v0.7.0，当前任务为 `P6-04` RunDraft API 与 Web |
+| 当前阶段 | P6-04 至 P6-06 已完成；运行版本仍为 v0.7.0，当前任务为 `P6-07` C_md_master 单节点真实执行 |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -318,6 +318,14 @@
   路径归一化冲突。
 - 测试增至 Sidecar 35 项、Core 10 项、Web 3 项；同步 task-baseline：`P6-03` 标记完成，
   `current_node_id` 推进到 `p6-04`，当前进入 P6-04 RunDraft API 与 Web。
+- 完成 `P6-04` RunDraft API/Web：草案、Dry-run、确认/撤回/取消、审计与启动前交叉校验闭环；未选择的可选分支不再误报阻塞。
+- 完成 `P6-05` Adapter Contract：Invocation/Result/Receipt 强关联，Sidecar 在提交运行事实前拒绝不匹配回执并恢复 NodeRun。
+- 补齐 Provider、成本、预计时长和分支 startability 展示，增加终态保护、损坏状态检测与 stale lock 恢复。
+- 同步 task-baseline：`P6-04`、`P6-05` 标记完成，`current_node_id` 推进到 `p6-06`；运行版本仍保持 `v0.7.0`。
+- 完成 `P6-06` Codex CLI health、仓库外隔离 attempt workspace、只读输入 staging、输出边界、timeout/cancel 和 fake CLI 生命周期。
+- 两轮安全审查修复 attempt/operation 路径穿越、目录 symlink、spawn error 竞态、sandbox 权限放宽及首次 receipt 持久化失败问题。
+- 本机只读 smoke 确认 `codex-cli 0.144.2` 且登录可用；未执行真实内容任务。
+- 同步 task-baseline：`P6-06` 标记完成，`current_node_id` 推进到 `p6-07`；运行版本仍保持 `v0.7.0`。
 
 ## 5. 里程碑
 

@@ -27,6 +27,7 @@ import {
 import { Background, Controls, MarkerType, ReactFlow, type Edge as FlowEdge, type Node as FlowNode } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
 import { artifactPreviewCapability, confidenceLabel, eventSortDescending, gapLabel, isHistoricalRun } from "./historical";
+import { canConfirmRunDraft, runDraftModeLabel, summarizeBranchImpact } from "./run-drafts";
 
 type Page = "home" | "new" | "dryrun" | "run" | "attention" | "agents" | "artifacts" | "review" | "canvas" | "sync" | "evolution";
 type ApiState<T> = { loading: boolean; data?: T; error?: string; refreshing?: boolean; updatedAt?: number };
@@ -166,6 +167,7 @@ function formatUpdatedAt(value?: number) {
 export function App() {
   const [page, setPage] = useState<Page>("home");
   const [workflowId, setWorkflowId] = useState("content-production-v0");
+  const [draftId, setDraftId] = useState("");
   const [runId, setRunId] = useState("run-demo-001");
   const [selectedNode, setSelectedNode] = useState("nr_run-demo-001_E_tts");
   const [selectedAttention, setSelectedAttention] = useState("att_tts_credential");
@@ -210,8 +212,8 @@ export function App() {
         </header>
 
         {page === "home" && <HomePage go={setPage} setRunId={setRunId} setAttention={setSelectedAttention} />}
-        {page === "new" && <NewTaskPage workflowId={workflowId} setWorkflowId={setWorkflowId} go={setPage} />}
-        {page === "dryrun" && <DryRunPage workflowId={workflowId} setRunId={setRunId} go={setPage} />}
+        {page === "new" && <NewTaskPage workflowId={workflowId} setWorkflowId={setWorkflowId} setDraftId={setDraftId} go={setPage} />}
+        {page === "dryrun" && <DryRunPage workflowId={workflowId} draftId={draftId} setRunId={setRunId} go={setPage} />}
         {page === "run" && <RunPage runId={runId} setRunId={setRunId} selectedNode={selectedNode} setSelectedNode={setSelectedNode} go={setPage} />}
         {page === "attention" && <AttentionPage runId={runId} selected={selectedAttention} setSelected={setSelectedAttention} setSelectedGate={setSelectedGate} go={setPage} />}
         {page === "agents" && <AgentsPage runId={runId} />}
@@ -300,12 +302,37 @@ function HomePage({ go, setRunId, setAttention }: { go: (page: Page) => void; se
   );
 }
 
-function NewTaskPage({ workflowId, setWorkflowId, go }: { workflowId: string; setWorkflowId: (id: string) => void; go: (page: Page) => void }) {
+function NewTaskPage({ workflowId, setWorkflowId, setDraftId, go }: { workflowId: string; setWorkflowId: (id: string) => void; setDraftId: (id: string) => void; go: (page: Page) => void }) {
   const domains = useApi<{ domains: any[] }>("/domains", []);
   const templates = useApi<{ templates: any[] }>("/registry/templates", []);
+  const [topicBrief, setTopicBrief] = useState("Codex 与 Claude Code 最新动态");
+  const [includeVideo, setIncludeVideo] = useState(false);
+  const [executionPolicy, setExecutionPolicy] = useState<"auto" | "manual" | "hybrid">("hybrid");
+  const [createState, setCreateState] = useState("");
+
+  async function createDraft() {
+    setCreateState("正在创建 RunDraft");
+    try {
+      const result = await api<any>("/run-drafts", {
+        method: "POST",
+        body: JSON.stringify({
+          workflow_id: workflowId,
+          inputs: { topic_brief: topicBrief },
+          enabled_optional_paths: includeVideo ? ["video_package"] : [],
+          execution_policy: executionPolicy
+        })
+      });
+      setDraftId(result.draft.draft_id);
+      setCreateState(`草案已创建 · ${result.draft.draft_id}`);
+      go("dryrun");
+    } catch (error) {
+      setCreateState(error instanceof Error ? error.message : "RunDraft 创建失败");
+    }
+  }
+
   return (
     <section className="page">
-      <PageTitle eyebrow="New Task" title="启动新任务" subtitle="选择领域、模板和执行策略，启动前先 Dry-run。" />
+      <PageTitle eyebrow="New Task" title="启动新任务" subtitle="选择模板并创建 RunDraft；确认前不会创建 RunSpec、NodeRun 或 TraceEvent。" />
       <div className="grid two">
         <Panel title="领域">
           <DataState state={domains}>
@@ -323,50 +350,188 @@ function NewTaskPage({ workflowId, setWorkflowId, go }: { workflowId: string; se
           </DataState>
         </Panel>
       </div>
-      <div className="actionBar"><button className="primary" onClick={() => go("dryrun")}><ShieldCheck size={16} /> 进入 Dry-run</button></div>
+      <Panel title="启动配置">
+        <div className="draftComposer">
+          <label><span>任务主题</span><input value={topicBrief} onChange={(event) => setTopicBrief(event.target.value)} /></label>
+          <label><span>执行策略</span><select value={executionPolicy} onChange={(event) => setExecutionPolicy(event.target.value as typeof executionPolicy)}><option value="hybrid">Hybrid</option><option value="manual">Manual</option><option value="auto">Auto</option></select></label>
+          <label className="checkboxOption"><input type="checkbox" checked={includeVideo} onChange={(event) => setIncludeVideo(event.target.checked)} /><span>启用可选视频分支</span></label>
+        </div>
+      </Panel>
+      <div className="actionBar"><button className="primary" onClick={createDraft} disabled={!topicBrief.trim()}><ShieldCheck size={16} /> 创建草案并 Dry-run</button></div>
+      {createState && <div className="receiptLine">{createState}</div>}
     </section>
   );
 }
 
-function DryRunPage({ workflowId, setRunId, go }: { workflowId: string; setRunId: (id: string) => void; go: (page: Page) => void }) {
-  const [plan, setPlan] = useState<ApiState<any>>({ loading: true });
+function DryRunPage({ workflowId, draftId, setRunId, go }: { workflowId: string; draftId: string; setRunId: (id: string) => void; go: (page: Page) => void }) {
+  const draftBundle = useApi<any>(`/run-drafts/${draftId}`, [draftId], Boolean(draftId));
+  const [plan, setPlan] = useState<ApiState<any>>({ loading: false });
+  const [actionState, setActionState] = useState("");
+  const [localBundle, setLocalBundle] = useState<any>();
+  const [topicEdit, setTopicEdit] = useState("");
+  const [includeVideoEdit, setIncludeVideoEdit] = useState(false);
+
   useEffect(() => {
+    if (!draftBundle.data?.draft || localBundle) return;
+    setTopicEdit(String(draftBundle.data.draft.inputs?.topic_brief ?? ""));
+    setIncludeVideoEdit(draftBundle.data.draft.enabled_optional_paths?.includes("video_package") ?? false);
+  }, [draftBundle.data, localBundle]);
+
+  useEffect(() => {
+    if (!draftId) {
+      setPlan({ loading: false, error: "请先在“新任务”页面创建 RunDraft" });
+      return;
+    }
+    const revision = draftBundle.data?.draft?.revision;
+    if (typeof revision !== "number") return;
     let alive = true;
-    setPlan((current) => current.data ? { ...current, loading: false, refreshing: true, error: undefined } : { loading: true });
-    api<any>(`/workflows/${workflowId}/dry-run`, { method: "POST", body: JSON.stringify({}) })
-      .then((data) => alive && setPlan({ loading: false, refreshing: false, data, updatedAt: Date.now() }))
+    setPlan({ loading: true });
+    api<any>(`/run-drafts/${draftId}/dry-run`, { method: "POST", body: JSON.stringify({ expected_revision: revision }) })
+      .then((data) => {
+        if (!alive) return;
+        setLocalBundle(data);
+        setPlan({ loading: false, refreshing: false, data, updatedAt: Date.now() });
+      })
       .catch((error: Error) => alive && setPlan((current) => ({ ...current, loading: false, refreshing: false, error: error.message })));
     return () => {
       alive = false;
     };
-  }, [workflowId]);
-  async function startRun() {
-    const result = await api<any>("/runs", { method: "POST", body: JSON.stringify({ workflow_id: workflowId, execution_policy: "hybrid", role_profile: "operator" }) });
-    setRunId(result.run_id);
-    go("run");
+  }, [draftId, draftBundle.data?.draft?.revision]);
+
+  const draft = localBundle?.draft ?? plan.data?.draft ?? draftBundle.data?.draft;
+  const draftPlan = localBundle?.plan ?? plan.data?.plan ?? draftBundle.data?.plan;
+  const branchSummary = summarizeBranchImpact(draftPlan?.branch_impact ?? []);
+  const confirmable = canConfirmRunDraft(draft, draftPlan);
+
+  async function confirmDraft() {
+    if (!draftId || !draftPlan?.plan_hash) return;
+    setActionState("正在记录启动确认");
+    try {
+      const result = await api<any>(`/run-drafts/${draftId}/confirmation`, {
+        method: "POST",
+        body: JSON.stringify({
+          decision: "confirm",
+          expected_revision: draft.revision,
+          plan_hash: draftPlan.plan_hash,
+          acknowledgements: draftPlan.required_acknowledgements,
+          actor: "operator",
+          comment: "已确认当前 Dry-run 计划与风险"
+        })
+      });
+      setLocalBundle(result);
+      setActionState("计划已确认；等待真实 Adapter 就绪后才能转换为正式 Run");
+    } catch (error) {
+      setActionState(error instanceof Error ? error.message : "确认失败");
+    }
   }
+
+  async function saveAndDryRun() {
+    if (!draftId || typeof draft?.revision !== "number") return;
+    setActionState("正在保存草案并重新 Dry-run");
+    try {
+      const updated = await api<any>(`/run-drafts/${draftId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          expected_revision: draft.revision,
+          inputs: { ...draft.inputs, topic_brief: topicEdit },
+          enabled_optional_paths: includeVideoEdit ? ["video_package"] : [],
+          actor: "operator"
+        })
+      });
+      const replanned = await api<any>(`/run-drafts/${draftId}/dry-run`, {
+        method: "POST",
+        body: JSON.stringify({ expected_revision: updated.draft.revision, actor: "operator" })
+      });
+      setLocalBundle(replanned);
+      setPlan({ loading: false, data: replanned, updatedAt: Date.now() });
+      setActionState("草案已更新，旧确认已失效，新的 Dry-run 计划已生成");
+    } catch (error) {
+      setActionState(error instanceof Error ? error.message : "草案更新失败");
+    }
+  }
+
+  async function decideDraft(decision: "revise" | "cancel") {
+    if (!draftId || typeof draft?.revision !== "number") return;
+    setActionState(decision === "revise" ? "正在撤回确认" : "正在取消草案");
+    try {
+      const result = await api<any>(`/run-drafts/${draftId}/confirmation`, {
+        method: "POST",
+        body: JSON.stringify({ decision, expected_revision: draft.revision, actor: "operator" })
+      });
+      setLocalBundle(result);
+      if (decision === "revise") {
+        setPlan({ loading: false });
+        setActionState("确认已撤回；修改后请重新生成 Dry-run");
+      } else {
+        setActionState("草案已取消；未创建任何正式 Run 事实");
+      }
+    } catch (error) {
+      setActionState(error instanceof Error ? error.message : "草案决策失败");
+    }
+  }
+
+  async function tryStartRun() {
+    if (!draftId || !draftPlan?.plan_hash) return;
+    setActionState("正在检查 Adapter 启动条件");
+    try {
+      const result = await api<any>("/runs", { method: "POST", body: JSON.stringify({
+        draft_id: draftId,
+        draft_plan_id: draftPlan.draft_plan_id,
+        plan_hash: draftPlan.plan_hash,
+        confirmation_id: localBundle?.confirmation?.confirmation_id ?? plan.data?.confirmation?.confirmation_id
+      }) });
+      setRunId(result.run_id);
+      go("run");
+    } catch (error) {
+      setActionState(error instanceof Error ? error.message : "Adapter 尚未就绪");
+    }
+  }
+
   return (
     <section className="page">
-      <PageTitle eyebrow="Dry-run" title="启动前检查" subtitle={`Workflow: ${workflowId}`} />
+      <PageTitle eyebrow="Dry-run" title="启动前检查" subtitle={`${runDraftModeLabel(draft?.status ?? "draft")} · ${draftId || workflowId}`} />
+      <div className="draftModeBanner"><strong>{runDraftModeLabel(draft?.status ?? "draft")}</strong><span>RunDraft 只记录启动意图和确认，不属于正式运行事实。</span><Pill value={draft?.status ?? "draft"} /></div>
+      <Panel title="草案输入与可选分支">
+        <div className="draftComposer">
+          <label><span>任务主题</span><input value={topicEdit} onChange={(event) => setTopicEdit(event.target.value)} disabled={draft?.status === "cancelled"} /></label>
+          <label className="checkboxOption"><input type="checkbox" checked={includeVideoEdit} onChange={(event) => setIncludeVideoEdit(event.target.checked)} disabled={draft?.status === "cancelled"} /><span>启用可选视频分支</span></label>
+          <button onClick={saveAndDryRun} disabled={!topicEdit.trim() || draft?.status === "cancelled" || draft?.status === "converted"}><ShieldCheck size={16} /> 保存并重新 Dry-run</button>
+        </div>
+      </Panel>
       <Panel title="执行计划与风险">
         <DataState state={plan}>
           <div className="metricRow">
-            <Metric label="节点" value={String(plan.data?.nodes.length ?? 0)} />
-            <Metric label="风险" value={String(plan.data?.risks.length ?? 0)} />
-            <Metric label="成本区间" value={`¥${plan.data?.estimated_cost.min} - ¥${plan.data?.estimated_cost.max}`} />
+            <Metric label="节点" value={String(draftPlan?.core_plan?.nodes?.length ?? draftPlan?.execution_summary?.node_count ?? 0)} />
+            <Metric label="风险" value={String(draftPlan?.risks?.length ?? draftPlan?.core_plan?.risks?.length ?? 0)} />
+            <Metric label="Required path" value={String(draftPlan?.startability?.required_path ?? "-")} />
+            <Metric label="Optional blocked" value={String(branchSummary.optional_blocked)} />
+            <Metric label="成本区间" value={`${draftPlan?.core_plan?.estimated_cost?.min ?? "-"}-${draftPlan?.core_plan?.estimated_cost?.max ?? "-"} ${draftPlan?.core_plan?.estimated_cost?.currency ?? ""}`} />
+            <Metric label="预计时长" value={`${draftPlan?.execution_summary?.estimated_duration_minutes?.min ?? "-"}-${draftPlan?.execution_summary?.estimated_duration_minutes?.max ?? "-"} 分钟`} />
           </div>
           <div className="riskCards">
-            {plan.data?.risks.map((risk: any) => (
+            {(draftPlan?.risks ?? draftPlan?.core_plan?.risks ?? []).map((risk: any) => (
               <div className="riskCard" key={`${risk.code}-${risk.message}`}>
                 <Severity severity={risk.severity} />
                 <strong>{risk.code}</strong>
-                <span>{risk.message}</span>
+                <span>{risk.message ?? risk.blocking_scope}</span>
               </div>
             ))}
           </div>
+          <div className="draftPlanGrid">
+            <div><strong>分支影响</strong>{(draftPlan?.branch_impact ?? []).map((branch: any) => <span key={branch.branch_id}>{branch.branch_id} · {branch.selection} · {branch.readiness}</span>)}</div>
+            <div><strong>审核门</strong>{(draftPlan?.gate_plan ?? []).map((gate: any) => <span key={gate.gate_spec_id}>{gate.gate_spec_id} · manual · blocks {gate.required_before?.length ?? 0}</span>)}</div>
+            <div><strong>凭证检查</strong>{(draftPlan?.credential_checks ?? []).map((credential: any) => <span key={credential.credential_ref}>{credential.credential_ref} · {credential.status} · {credential.blocking_scope}</span>)}</div>
+            <div><strong>Provider 解析</strong>{(draftPlan?.provider_resolution ?? []).map((item: any) => <span key={item.node_id}>{item.node_id} · {item.provider}</span>)}</div>
+          </div>
         </DataState>
       </Panel>
-      <div className="actionBar"><button className="primary" onClick={startRun}><Play size={16} /> 启动 Run</button></div>
+      <div className="actionBar">
+        <button onClick={() => decideDraft("revise")} disabled={draft?.status !== "confirmed"}>撤回确认</button>
+        <button className="dangerAction" onClick={() => decideDraft("cancel")} disabled={draft?.status === "cancelled" || draft?.status === "converted"}>取消草案</button>
+        <button className="primary" onClick={confirmDraft} disabled={!confirmable}><CheckCircle2 size={16} /> 确认当前计划</button>
+        <button onClick={tryStartRun} disabled={draft?.status !== "confirmed"}><Play size={16} /> 检查启动条件</button>
+      </div>
+      {actionState && <div className="receiptLine">{actionState}</div>}
     </section>
   );
 }

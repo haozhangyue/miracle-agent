@@ -1,10 +1,18 @@
 import { z } from "zod";
+import type { AdapterInvocation, AdapterResult } from "./types";
+
+const credentialScopeSchema = z.object({
+  credential_ref: z.string(),
+  required_for_branch: z.string(),
+  blocking_scope: z.enum(["required_path", "optional_branch"])
+});
 
 const nodePortSchema = z.object({
   id: z.string(),
   kind: z.enum(["artifact", "parameter"]),
   artifact_type: z.string().optional(),
   required: z.boolean(),
+  optional_path_id: z.string().min(1).optional(),
   artifact_spec_ref: z.string().optional()
 });
 
@@ -88,7 +96,8 @@ export const workflowSpecSchema = z.object({
     default_provider: z.string(),
     allowed_providers: z.array(z.string()),
     required_credentials: z.array(z.string()),
-    fallback_providers: z.array(z.string())
+    fallback_providers: z.array(z.string()),
+    credential_scopes: z.array(credentialScopeSchema).optional()
   }),
   layouts: z.object({
     dag: z.record(z.string(), z.object({ x: z.number(), y: z.number(), stage: z.string().optional() })),
@@ -146,7 +155,8 @@ const runSpecBaseSchema = z.object({
     default_provider: z.string(),
     allowed_providers: z.array(z.string()),
     required_credentials: z.array(z.string()),
-    fallback_providers: z.array(z.string())
+    fallback_providers: z.array(z.string()),
+    credential_scopes: z.array(credentialScopeSchema).optional()
   }),
   created_at: z.string()
 });
@@ -190,3 +200,101 @@ export const adapterManifestSchema = z.object({
     entrypoint: z.string().optional()
   })
 });
+
+const adapterKindSchema = z.enum(["mock-local", "codex", "hermes", "openclaw", "official-api"]);
+const adapterStatusSchema = z.enum(["succeeded", "failed", "timed_out", "cancelled", "aborted", "unknown"]);
+
+export const adapterRuntimeControlSchema = z.object({
+  timeout_ms: z.number().int().positive(),
+  cancellation_token_id: z.string().min(1),
+  attempt_workspace: z.string().min(1),
+  sandbox: z.enum(["read-only", "workspace-write"])
+});
+
+export const adapterInvocationSchema = z.object({
+  operation_id: z.string().min(1),
+  attempt_id: z.string().min(1),
+  run_id: z.string().min(1),
+  node_run_id: z.string().min(1),
+  node_id: z.string().min(1),
+  adapter_kind: adapterKindSchema,
+  adapter_id: z.string().min(1),
+  provider: z.string().min(1),
+  capability_requirements: z.array(z.string()),
+  input_artifacts: z.array(z.string()),
+  expected_outputs: z.array(z.object({
+    output_id: z.string().min(1),
+    artifact_type: z.string().min(1),
+    artifact_spec_ref: z.string().optional(),
+    required: z.boolean()
+  })),
+  runtime_control: adapterRuntimeControlSchema,
+  prompt_path: z.string().min(1),
+  output_schema_path: z.string().min(1),
+  dispatched_at: z.string().min(1)
+});
+
+export const providerReceiptSchema = z.object({
+  provider: z.string().min(1),
+  adapter_kind: adapterKindSchema,
+  adapter_id: z.string().min(1),
+  model: z.string().min(1).optional(),
+  operation_id: z.string().min(1),
+  external_session_id: z.string().min(1).optional(),
+  cost: z.number().min(0).optional(),
+  latency_ms: z.number().min(0).optional(),
+  raw_receipt_id: z.string().min(1).optional()
+});
+
+export const adapterArtifactDescriptorSchema = z.object({
+  artifact_id: z.string().min(1),
+  output_id: z.string().min(1),
+  artifact_spec_ref: z.string().min(1).optional(),
+  type: z.string().min(1),
+  path: z.string().min(1),
+  hash: z.string().min(1),
+  status: z.enum(["created", "pending", "missing", "hidden"]),
+  review_status: z.enum(["none", "pending_review", "approved", "rejected"]),
+  content: z.string().optional()
+});
+
+export const adapterResultSchema = z.object({
+  operation_id: z.string().min(1),
+  attempt_id: z.string().min(1),
+  node_run_id: z.string().min(1),
+  status: adapterStatusSchema,
+  provider_receipt: providerReceiptSchema,
+  artifact_descriptors: z.array(adapterArtifactDescriptorSchema),
+  error: z.object({
+    code: z.string().min(1),
+    message: z.string().min(1),
+    recoverable: z.boolean()
+  }).optional(),
+  received_at: z.string().min(1)
+}).superRefine((result, context) => {
+  if (result.provider_receipt.operation_id !== result.operation_id) {
+    context.addIssue({
+      code: "custom",
+      path: ["provider_receipt", "operation_id"],
+      message: "provider_receipt.operation_id must match AdapterResult.operation_id"
+    });
+  }
+});
+
+export function parseAdapterResultForInvocation(invocation: AdapterInvocation, result: AdapterResult): AdapterResult {
+  const parsedInvocation = adapterInvocationSchema.parse(invocation);
+  const parsedResult = adapterResultSchema.parse(result);
+  const associations: Array<[string, string, string]> = [
+    ["operation_id", parsedInvocation.operation_id, parsedResult.operation_id],
+    ["attempt_id", parsedInvocation.attempt_id, parsedResult.attempt_id],
+    ["node_run_id", parsedInvocation.node_run_id, parsedResult.node_run_id],
+    ["adapter_id", parsedInvocation.adapter_id, parsedResult.provider_receipt.adapter_id],
+    ["adapter_kind", parsedInvocation.adapter_kind, parsedResult.provider_receipt.adapter_kind],
+    ["provider", parsedInvocation.provider, parsedResult.provider_receipt.provider]
+  ];
+
+  for (const [field, expected, actual] of associations) {
+    if (expected !== actual) throw new Error(`AdapterResult ${field} does not match AdapterInvocation`);
+  }
+  return parsedResult;
+}

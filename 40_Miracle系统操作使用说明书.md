@@ -33,13 +33,31 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 | 当前产品版本 | `v0.7.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
 | 当前阶段 | P5 已验收，进入 P6 真实工作流工程接入 |
-| 当前任务焦点 | `P6-04` RunDraft API 与 Web |
+| 当前任务焦点 | `P6-07` C_md_master 单节点真实执行 |
 | 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
 | P6 执行基线 | `47_P6真实工作流工程实施计划与任务拆解.md` |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
 | 任务基线数据 | `plans/mvp-task-baseline/roadmap.json` |
 
 当前阶段要点：
+
+- 新任务现在先创建 RunDraft，可修改主题和可选分支后重新 Dry-run。
+- Dry-run 展示 required/optional 分支、Provider、成本、时长、Gate、凭证和启动条件。
+- 确认、撤回和取消只写草案审计；Adapter 未就绪时不会创建正式 Run。
+- Adapter 回执在提交 Attempt、Artifact 和 Trace 前执行 operation/node/attempt/provider 关联校验。
+- Codex CLI 健康检查已支持版本与登录状态检测；只返回状态、版本和原因码，不展示凭证值。
+- 真实 CLI attempt 使用仓库外隔离目录，输入只读 staging，输出、超时和取消均受 Sidecar 边界控制。
+
+```text
+GET  /api/v0/adapters/codex-cli/health
+POST /api/v0/adapters/codex-cli/health/refresh
+POST /api/v0/operations/:operationId/cancel
+```
+
+P6-06 只验证 CLI 与 fake operation 生命周期，不创建正式 NodeRun、Artifact 或 Trace。
+
+运行态目录默认使用 `~/.miracle-agent`，与仓库内 fixture 数据目录隔离。可通过
+`MIRACLE_RUNTIME_WORKSPACE_DIR` 指定其他仓库外目录；Sidecar 会拒绝仓库内路径和 symlink。
 
 - P4 已形成本地 MVP 验收基线，核心页面和 Sidecar API 可运行。
 - P5 已完成真实工作流接入设计验收，P6 开始把 importer、RunDraft 和 Codex Adapter

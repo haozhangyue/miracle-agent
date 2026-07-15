@@ -102,13 +102,13 @@
   ],
   "edges": [
     { "from": "A_fact_intelligence", "to": "B_md_master", "required": true, "artifact_selector": { "artifact_type": "markdown" }, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
-    { "from": "B_md_master", "to": "C0_script_pool_selection", "required": true, "artifact_selector": { "artifact_type": "markdown", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
-    { "from": "C0_script_pool_selection", "to": "C_ppt_storyboard", "required": true, "artifact_selector": { "artifact_type": "json" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
-    { "from": "C_ppt_storyboard", "to": "D_voiceover_audio", "required": true, "artifact_selector": { "artifact_type": "json", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
-    { "from": "D_voiceover_audio", "to": "E_visual_video", "required": true, "artifact_selector": { "artifact_type": "json", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
-    { "from": "E_visual_video", "to": "F_final_render", "required": true, "artifact_selector": { "artifact_type": "json", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "B_md_master", "to": "C0_script_pool_selection", "required": false, "optional_path_id": "video_package", "artifact_selector": { "artifact_type": "markdown", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "C0_script_pool_selection", "to": "C_ppt_storyboard", "required": true, "optional_path_id": "video_package", "artifact_selector": { "artifact_type": "json" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "C_ppt_storyboard", "to": "D_voiceover_audio", "required": true, "optional_path_id": "video_package", "artifact_selector": { "artifact_type": "json", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "D_voiceover_audio", "to": "E_visual_video", "required": true, "optional_path_id": "video_package", "artifact_selector": { "artifact_type": "json", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "E_visual_video", "to": "F_final_render", "required": true, "optional_path_id": "video_package", "artifact_selector": { "artifact_type": "json", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT30M", "on_timeout": "blocked", "on_no_qualified_artifact": "block_downstream" } },
     { "from": "B_md_master", "to": "G_distribution_retro", "required": true, "artifact_selector": { "artifact_type": "markdown", "review_status": "approved" }, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
-    { "from": "F_final_render", "to": "G_distribution_retro", "required": false, "artifact_selector": { "artifact_type": "video", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT5M", "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "ignore_optional" } }
+    { "from": "F_final_render", "to": "G_distribution_retro", "required": false, "optional_path_id": "video_package", "artifact_selector": { "artifact_type": "video", "review_status": "approved" }, "join_policy": { "wait_if_active": true, "max_wait": "PT5M", "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "ignore_optional" } }
   ],
   "gates": [
     { "id": "B_md_master_gate", "name": "母稿审核", "target_artifact_ref": "md_master_artifact", "required_before": ["C0_script_pool_selection", "G_distribution_retro"], "actions": ["approve", "reject", "request_changes"] },
@@ -133,7 +133,11 @@
     "default_provider": "codex-local",
     "allowed_providers": ["codex-local", "official-api", "mock-provider", "manual-upload"],
     "required_credentials": ["VOLC_TTS_API_KEY", "VOLC_TTS_VOICE_TYPE"],
-    "fallback_providers": ["mock-tts", "manual-upload"]
+    "fallback_providers": ["mock-tts", "manual-upload"],
+    "credential_scopes": [
+      { "credential_ref": "VOLC_TTS_API_KEY", "required_for_branch": "video_package", "blocking_scope": "optional_branch" },
+      { "credential_ref": "VOLC_TTS_VOICE_TYPE", "required_for_branch": "video_package", "blocking_scope": "optional_branch" }
+    ]
   },
   "layouts": {
     "dag": {

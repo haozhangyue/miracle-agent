@@ -13,6 +13,7 @@ import {
   defaultAdapterManifests,
   executeMockAdapter,
   parseAdapterManifests,
+  parseAdapterResultForInvocation,
   selectAdapterManifest,
   type AdapterManifest,
   type AdapterRegistryEntry,
@@ -26,6 +27,7 @@ import {
   type GateDecision,
   type GateInstance,
   type HistoricalImportRequest,
+  RunDraftError,
   type NodeSpec,
   type NodeAttempt,
   type NodeRun,
@@ -37,6 +39,7 @@ import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readdir, readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
@@ -45,9 +48,12 @@ import {
   previewHistoricalImport,
   readHistoricalImport
 } from "./historical-importer";
+import { RunDraftStore, RunDraftStoreError } from "./run-draft-store";
+import { CodexCliAdapter, CodexCliAdapterError } from "./codex-cli-adapter";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
+const runtimeWorkspaceDir = process.env.MIRACLE_RUNTIME_WORKSPACE_DIR ?? path.join(homedir(), ".miracle-agent");
 const workflowRegistryDir = process.env.MIRACLE_WORKFLOW_REGISTRY_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle/workflows");
 const port = Number(process.env.MIRACLE_SIDECAR_PORT ?? 4317);
 const historicalImportRoots = (process.env.MIRACLE_IMPORT_ROOTS ?? "")
@@ -55,6 +61,14 @@ const historicalImportRoots = (process.env.MIRACLE_IMPORT_ROOTS ?? "")
   .map((item) => item.trim())
   .filter(Boolean);
 const execGit = promisify(execFile);
+const runDraftStore = new RunDraftStore({ workspace_dir: workspaceDir, workflows_dir: workflowRegistryDir });
+const codexCliAdapter = new CodexCliAdapter({
+  workspace_dir: runtimeWorkspaceDir,
+  repository_root: rootDir,
+  executable_path: process.env.MIRACLE_CODEX_CLI_PATH,
+  command_prefix_args: process.env.MIRACLE_CODEX_CLI_ARGUMENT_PREFIX ? [process.env.MIRACLE_CODEX_CLI_ARGUMENT_PREFIX] : []
+});
+void codexCliAdapter.recoverOrphanedOperations();
 
 type JsonValue = Record<string, unknown> | unknown[];
 type SchedulerDecision = {
@@ -95,7 +109,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "http://127.0.0.1:5174",
-    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
     "access-control-allow-headers": "content-type",
     "cache-control": "no-store"
   });
@@ -258,6 +272,11 @@ function availableCredentialKeys() {
   return Object.entries(process.env)
     .filter(([, value]) => typeof value === "string" && value.length > 0)
     .map(([key]) => key);
+}
+
+function createRunDraftId() {
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 17);
+  return `rundraft_${timestamp}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 async function readAdapterManifests(): Promise<AdapterManifest[]> {
@@ -572,11 +591,14 @@ function buildAdapterUnavailableResult(input: {
 }): AdapterResult {
   return {
     operation_id: input.invocation.operation_id,
+    attempt_id: input.invocation.attempt_id,
     node_run_id: input.invocation.node_run_id,
     status: "failed",
     provider_receipt: {
       provider: input.invocation.provider,
       adapter_kind: input.invocation.adapter_kind,
+      adapter_id: input.invocation.adapter_id,
+      operation_id: input.invocation.operation_id,
       raw_receipt_id: `receipt_${input.invocation.operation_id}`
     },
     artifact_descriptors: [],
@@ -623,11 +645,14 @@ function executeSidecarAdapter(input: {
   if (!input.adapter.executable) {
     return {
       operation_id: input.invocation.operation_id,
+      attempt_id: input.invocation.attempt_id,
       node_run_id: input.invocation.node_run_id,
       status: "failed",
       provider_receipt: {
         provider: input.invocation.provider,
         adapter_kind: input.invocation.adapter_kind,
+        adapter_id: input.invocation.adapter_id,
+        operation_id: input.invocation.operation_id,
         raw_receipt_id: `receipt_${input.invocation.operation_id}`
       },
       artifact_descriptors: [],
@@ -642,11 +667,14 @@ function executeSidecarAdapter(input: {
   if (input.nodeRun.provider === "mock-failure") {
     return {
       operation_id: input.invocation.operation_id,
+      attempt_id: input.invocation.attempt_id,
       node_run_id: input.invocation.node_run_id,
       status: "failed",
       provider_receipt: {
         provider: input.invocation.provider,
         adapter_kind: input.invocation.adapter_kind,
+        adapter_id: input.invocation.adapter_id,
+        operation_id: input.invocation.operation_id,
         raw_receipt_id: `receipt_${input.invocation.operation_id}`
       },
       artifact_descriptors: [],
@@ -658,14 +686,21 @@ function executeSidecarAdapter(input: {
       received_at: receivedAt
     };
   }
+  if (input.nodeRun.provider === "mock-invalid-receipt") {
+    const result = executeMockAdapter({ invocation: input.invocation, workflow: input.workflow, receivedAt });
+    return { ...result, provider_receipt: { ...result.provider_receipt, operation_id: "op_mismatched" } };
+  }
   if (input.adapter.execution_mode !== "mock-compatible") {
     return {
       operation_id: input.invocation.operation_id,
+      attempt_id: input.invocation.attempt_id,
       node_run_id: input.invocation.node_run_id,
       status: "failed",
       provider_receipt: {
         provider: input.invocation.provider,
         adapter_kind: input.invocation.adapter_kind,
+        adapter_id: input.invocation.adapter_id,
+        operation_id: input.invocation.operation_id,
         raw_receipt_id: `receipt_${input.invocation.operation_id}`
       },
       artifact_descriptors: [],
@@ -759,6 +794,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       };
     }
 
+    const previousNodeRun = structuredClone(targetNodeRun);
     const dispatchedAt = new Date().toISOString();
     targetNodeRun.status = "running";
     targetNodeRun.started_at = targetNodeRun.started_at ?? dispatchedAt;
@@ -778,13 +814,21 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       adapterKind: adapter?.kind,
       adapterId: adapter?.id
     });
-    const result = adapter
+    const rawResult = adapter
       ? executeSidecarAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, adapter, receivedAt: new Date().toISOString() })
       : buildAdapterUnavailableResult({
           invocation,
           message: `No executable adapter supports NodeSpec ${targetNodeRun.node_id} capabilities: ${nodeSpec?.capability_requirements.join(", ") ?? "unknown"}`,
           receivedAt: new Date().toISOString()
         });
+    let result: AdapterResult;
+    try {
+      result = parseAdapterResultForInvocation(invocation, rawResult);
+    } catch (error) {
+      Object.assign(targetNodeRun, previousNodeRun);
+      await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
+      throw error;
+    }
     const attempt = createNodeAttemptFromAdapterResult(result);
     const createdArtifacts = createArtifactManifestsFromAdapterResult({
       result,
@@ -1323,6 +1367,19 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return sendJson(res, 200, { status: "ok", mode: "local-sidecar", workspace: workspaceDir });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/v0/adapters/codex-cli/health") {
+    return sendJson(res, 200, await codexCliAdapter.getHealth());
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/v0/adapters/codex-cli/health/refresh") {
+    return sendJson(res, 200, await codexCliAdapter.refreshHealth());
+  }
+
+  if (req.method === "POST" && parts[0] === "api" && parts[1] === "v0" && parts[2] === "operations" && parts[3] && parts[4] === "cancel") {
+    const result = await codexCliAdapter.cancelOperation(getId(parts, 3));
+    return sendJson(res, 200, { operation_id: getId(parts, 3), status: result });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/v0/domains") {
     return sendJson(res, 200, { domains: await listJsonFiles("domains") });
   }
@@ -1337,15 +1394,100 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
   if (req.method === "GET" && url.pathname === "/api/v0/adapters") {
     const adapters = await readAdapterRegistry();
+    const codexHealth = await codexCliAdapter.getHealth();
+    const projectedAdapters = adapters.map((adapter) => adapter.id === "codex-cli-real"
+      ? {
+          ...adapter,
+          health: {
+            ready: codexHealth.status === "healthy" && codexHealth.authenticated,
+            status: codexHealth.status,
+            authenticated: codexHealth.authenticated,
+            reasons: codexHealth.reasons
+          }
+        }
+      : adapter);
     return sendJson(res, 200, {
-      adapters,
+      adapters: projectedAdapters,
       summary: {
-        total: adapters.length,
-        executable: adapters.filter((adapter) => adapter.executable).length,
-        blocked: adapters.filter((adapter) => adapter.status === "blocked").length,
-        missing_credentials: adapters.flatMap((adapter) => adapter.credential_status.filter((credential) => credential.required && !credential.configured).map((credential) => credential.key))
+        total: projectedAdapters.length,
+        executable: projectedAdapters.filter((adapter) => adapter.executable).length,
+        blocked: projectedAdapters.filter((adapter) => adapter.status === "blocked").length,
+        missing_credentials: projectedAdapters.flatMap((adapter) => adapter.credential_status.filter((credential) => credential.required && !credential.configured).map((credential) => credential.key))
       }
     });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/v0/run-drafts") {
+    const body = await parseBody(req);
+    const workflowId = String(body.workflow_id ?? "");
+    if (!workflowId) return sendError(res, 400, "workflow_required", "workflow_id is required");
+    const created = await runDraftStore.create({
+      draft_id: createRunDraftId(),
+      workflow_id: workflowId,
+      inputs: body.inputs && typeof body.inputs === "object" && !Array.isArray(body.inputs) ? body.inputs as Record<string, unknown> : {},
+      enabled_optional_paths: Array.isArray(body.enabled_optional_paths) ? body.enabled_optional_paths.map(String) : [],
+      execution_policy: body.execution_policy === "auto" || body.execution_policy === "manual" ? body.execution_policy : "hybrid",
+      actor: String(body.actor ?? "local_user")
+    });
+    return sendJson(res, 201, created);
+  }
+
+  if (parts[0] === "api" && parts[1] === "v0" && parts[2] === "run-drafts" && parts[3]) {
+    const draftId = getId(parts, 3);
+    if (req.method === "GET" && parts.length === 4) return sendJson(res, 200, await runDraftStore.read(draftId));
+    if (req.method === "PATCH" && parts.length === 4) {
+      const body = await parseBody(req);
+      if (!Number.isInteger(body.expected_revision)) return sendError(res, 400, "expected_revision_required", "expected_revision must be an integer");
+      const updated = await runDraftStore.update({
+        draft_id: draftId,
+        expected_revision: Number(body.expected_revision),
+        patch: {
+          ...(body.inputs && typeof body.inputs === "object" && !Array.isArray(body.inputs) ? { inputs: body.inputs as Record<string, unknown> } : {}),
+          ...(Array.isArray(body.enabled_optional_paths) ? { enabled_optional_paths: body.enabled_optional_paths.map(String) } : {}),
+          ...(body.execution_policy === "auto" || body.execution_policy === "manual" || body.execution_policy === "hybrid" ? { execution_policy: body.execution_policy } : {})
+        },
+        actor: String(body.actor ?? "local_user")
+      });
+      return sendJson(res, 200, updated);
+    }
+    if (req.method === "POST" && parts[4] === "dry-run") {
+      const body = await parseBody(req);
+      if (!Number.isInteger(body.expected_revision)) return sendError(res, 400, "expected_revision_required", "expected_revision must be an integer");
+      const planned = await runDraftStore.dryRun({
+        draft_id: draftId,
+        expected_revision: Number(body.expected_revision),
+        actor: String(body.actor ?? "local_user"),
+        available_credentials: availableCredentialKeys()
+      });
+      return sendJson(res, 200, planned);
+    }
+    if (req.method === "POST" && parts[4] === "confirmation") {
+      const body = await parseBody(req);
+      if (!Number.isInteger(body.expected_revision)) return sendError(res, 400, "expected_revision_required", "expected_revision must be an integer");
+      if (body.decision === "revise") {
+        return sendJson(res, 200, await runDraftStore.revise({
+          draft_id: draftId,
+          expected_revision: Number(body.expected_revision),
+          actor: String(body.actor ?? "local_user")
+        }));
+      }
+      if (body.decision === "cancel") {
+        return sendJson(res, 200, await runDraftStore.cancel({
+          draft_id: draftId,
+          expected_revision: Number(body.expected_revision),
+          actor: String(body.actor ?? "local_user")
+        }));
+      }
+      if (body.decision !== "confirm") return sendError(res, 400, "unsupported_confirmation_decision", "decision must be confirm, revise or cancel");
+      const confirmed = await runDraftStore.confirm({
+        draft_id: draftId,
+        expected_revision: Number(body.expected_revision),
+        plan_hash: String(body.plan_hash ?? ""),
+        actor: String(body.actor ?? "local_user"),
+        acknowledgements: Array.isArray(body.acknowledgements) ? body.acknowledgements.map(String) : []
+      });
+      return sendJson(res, 200, confirmed);
+    }
   }
 
   if (req.method === "GET" && url.pathname === "/api/v0/project/roadmap") {
@@ -1510,6 +1652,15 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
   if (req.method === "POST" && url.pathname === "/api/v0/runs") {
     const body = await parseBody(req);
+    if (body.draft_id) {
+      await runDraftStore.requestLaunch({
+        draft_id: String(body.draft_id),
+        draft_plan_id: String(body.draft_plan_id ?? ""),
+        plan_hash: String(body.plan_hash ?? ""),
+        confirmation_id: String(body.confirmation_id ?? ""),
+        adapter_ready: false
+      });
+    }
     const workflowId = String(body.workflow_id ?? "content-production-v0");
     const workflow = await readWorkflow(workflowId);
     const runId = `run-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 17)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -1929,6 +2080,25 @@ const server = createServer((req, res) => {
               : 422;
       return sendError(res, status, error.code, error.message);
     }
+    if (error instanceof RunDraftStoreError) {
+      const status = error.code === "draft_not_found" || error.code === "workflow_not_found"
+        ? 404
+        : error.code === "invalid_draft_id" || error.code === "invalid_workflow_id"
+          ? 400
+          : 409;
+      return sendError(res, status, error.code, error.message);
+    }
+    if (error instanceof RunDraftError) {
+      return sendError(res, 409, error.code, error.message);
+    }
+    if (error instanceof CodexCliAdapterError) {
+      const status = error.code === "operation_not_found"
+        ? 404
+        : error.code === "input_path_not_allowed" || error.code === "workspace_escape_detected" || error.code === "invalid_attempt_id"
+          ? 400
+          : 409;
+      return sendError(res, status, error.code, error.message);
+    }
     const message = error instanceof Error ? error.message : "Unknown sidecar error";
     sendError(res, 500, "sidecar_error", message);
   });
@@ -1937,4 +2107,5 @@ const server = createServer((req, res) => {
 server.listen(port, "127.0.0.1", () => {
   console.log(`Miracle Local Sidecar listening on http://127.0.0.1:${port}`);
   console.log(`Workspace: ${workspaceDir}`);
+  console.log(`Runtime workspace: ${runtimeWorkspaceDir}`);
 });
