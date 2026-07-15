@@ -562,7 +562,7 @@ describe("sidecar api", () => {
     expect(body.sync_state.git.available).toBe(true);
     expect(body.sync_state.git.head).toMatch(/[0-9a-f]{40}/);
     expect(body.sync_state.git.recent_commits.length).toBeGreaterThan(0);
-    expect(body.sync_state.evidence.some((item) => item.path === "27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md" && item.exists)).toBe(true);
+    expect(body.sync_state.evidence.some((item) => item.path === "docs/05-delivery/p4-mvp/27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md" && item.exists)).toBe(true);
   });
 
   it("serves the standalone task baseline page outside the web workspace", async () => {

@@ -36,7 +36,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 
 ## 文档导航
 
-先阅读 [17_文档资产关联与AI阅读导航.md](17_文档资产关联与AI阅读导航.md)，再按任务选择
+先阅读 [17_文档资产关联与AI阅读导航.md](docs/00-navigation/asset-index/17_文档资产关联与AI阅读导航.md)，再按任务选择
 最小必要文档集。该文件标记了文档依赖、当前有效结果、历史过程资产和 AI 可跳过内容。
 
 默认规则：
@@ -48,74 +48,26 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 
 ## 文档目录
 
-| 状态 | 文档 | 用途 |
-|---|---|---|
-| `CURRENT` | [17_文档资产关联与AI阅读导航.md](17_文档资产关联与AI阅读导航.md) | 文档依赖、有效性、取代关系和 AI 阅读路由 |
-| `ACTIVE` | [00_Miracle奇迹系统总体规划设计.md](00_Miracle奇迹系统总体规划设计.md) | 完整总纲、系统定位和分层架构 |
-| `ACTIVE` | [01_核心架构与对象模型.md](01_核心架构与对象模型.md) | Workflow、Node、Agent、Provider、Trace 类型 |
-| `ACTIVE` | [02_组件库与插件体系设计.md](02_组件库与插件体系设计.md) | tool、skill、MCP、provider 和 API 组合 |
-| `ACTIVE` | [03_智能路由与工作流编排设计.md](03_智能路由与工作流编排设计.md) | 路由、子工作流、DAG 和执行策略 |
-| `ACTIVE` | [04_多Agent协同与可视化设计.md](04_多Agent协同与可视化设计.md) | Agent Map、时间线和依赖图 |
-| `ACTIVE` | [05_双模式工作流可视化编排设计.md](05_双模式工作流可视化编排设计.md) | 无限画布、节点模式和双视图同步 |
-| `ACTIVE` | [06_智能进化体系设计.md](06_智能进化体系设计.md) | 记忆、复盘、评估和进化建议 |
-| `REFERENCE` | [07_后续对接路线图与任务拆解.md](07_后续对接路线图与任务拆解.md) | 当前阶段、后续路线和任务拆解 |
-| `REFERENCE` | [08_Miracle竞品分析与架构借鉴报告.md](08_Miracle竞品分析与架构借鉴报告.md) | 竞品输入，默认可跳过 |
-| `ACTIVE` | [09_WorkflowSpec与Registry技术草案.md](09_WorkflowSpec与Registry技术草案.md) | WorkflowSpec、Registry、validate 和 dry-run |
-| `ACTIVE` | [10_AgentHealth与多Agent状态机设计.md](10_AgentHealth与多Agent状态机设计.md) | AgentHealth、权限和状态机 |
-| `ACTIVE` | [11_VisualBuilder与Spec双向同步设计.md](11_VisualBuilder与Spec双向同步设计.md) | Visual/Spec 双向同步 |
-| `ACTIVE` | [12_MVP原型功能清单与界面草图.md](12_MVP原型功能清单与界面草图.md) | MVP 功能和原型验收 |
-| `ACTIVE` | [13_P0架构评审纪要与决策清单.md](13_P0架构评审纪要与决策清单.md) | P0 决策和阶段边界 |
-| `ACTIVE` | [14_技术架构选型与系统架构图.md](14_技术架构选型与系统架构图.md) | 当前技术架构基线 |
-| `HISTORICAL` | [15_架构方案评审意见.md](15_架构方案评审意见.md) | 第一次架构评审过程，默认跳过 |
-| `HISTORICAL` | [15-2_架构方案二次评审意见.md](15-2_架构方案二次评审意见.md) | 第二次架构评审过程，默认跳过 |
-| `HISTORICAL` | [15-3_架构方案第三次评审意见.md](15-3_架构方案第三次评审意见.md) | 第三次架构评审过程，默认跳过 |
-| `HISTORICAL` | [15-4_架构方案第四次评审意见.md](15-4_架构方案第四次评审意见.md) | 第四次架构评审过程，默认跳过 |
-| `HISTORICAL` | [16_产品信息架构与设计图规划.md](16_产品信息架构与设计图规划.md) | 产品 IA 初版，已被融合版取代 |
-| `HISTORICAL` | [16_abtest_产品信息架构与设计图规划.md](16_abtest_产品信息架构与设计图规划.md) | A/B 候选方案，已被融合版吸收 |
-| `CURRENT` | [16_融合_产品信息架构与设计图规划.md](16_融合_产品信息架构与设计图规划.md) | 当前有效的 P2 产品方案 |
-| `CURRENT` | [prototypes/p2/00_双轨原型共同设计简报.md](prototypes/p2/00_双轨原型共同设计简报.md) | Product Design 与 Pencil 的共同原型输入 |
-| `CURRENT` | [prototypes/p2/product-design/README.md](prototypes/p2/product-design/README.md) | 三个 Product Design 视觉候选 |
-| `CURRENT` | [prototypes/p2/pencil/README.md](prototypes/p2/pencil/README.md) | 六页 Pencil 原型、源文件和导出图 |
-| `CURRENT` | [prototypes/p2/01_双轨原型评审表.md](prototypes/p2/01_双轨原型评审表.md) | 人工评审评分与任务走查模板 |
-| `CURRENT` | [prototypes/p2/02_双轨原型初步对比结论.md](prototypes/p2/02_双轨原型初步对比结论.md) | 人工选择结果和融合建议 |
-| `CURRENT` | [prototypes/p2/03_融合版原型决策与验收说明.md](prototypes/p2/03_融合版原型决策与验收说明.md) | Product Design A/B/C Web-only 决策和验收口径 |
-| `CURRENT` | [prototypes/p2/fusion-clickable/README.md](prototypes/p2/fusion-clickable/README.md) | P2 Web 工作台可点击原型入口 |
-| `CURRENT` | [18_P2原型评审纪要与修订清单.md](18_P2原型评审纪要与修订清单.md) | P2 Web 原型评审结论、修订清单和 P2/P3 分界 |
-| `CURRENT` | [19_P3技术详细设计总纲与扩展性原则.md](19_P3技术详细设计总纲与扩展性原则.md) | P3 总纲、通用 Agent OS 和扩展性原则 |
-| `CURRENT` | [20_P3核心数据模型与领域扩展设计.md](20_P3核心数据模型与领域扩展设计.md) | DomainPack、RoleProfile、Workflow、Run、Artifact、Attention 通用模型 |
-| `CURRENT` | [21_P3本地服务API与后端演进设计.md](21_P3本地服务API与后端演进设计.md) | Local Sidecar API、Cloud Control Plane 和 Worker 演进 |
-| `CURRENT` | [22_P3前端架构与工作台状态设计.md](22_P3前端架构与工作台状态设计.md) | 前端路由、页面状态、RoleProfile 和 DomainPack UI 扩展 |
-| `CURRENT` | [23_P3MVP任务拆解与验收计划.md](23_P3MVP任务拆解与验收计划.md) | MVPS01-MVPS10 工程任务、验收和测试计划 |
-| `CURRENT` | [24_P4_MVP可运行主链路交付说明.md](24_P4_MVP可运行主链路交付说明.md) | P4 第一轮 MVP 工程、启动方式、验证结果和后续建议 |
-| `CURRENT` | [25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md](25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md) | P4 第二轮 DAG、Artifact、Gate projection 和 Canvas draft 交付说明 |
-| `CURRENT` | [26_P4第三轮_集成测试与Runner协议交付说明.md](26_P4第三轮_集成测试与Runner协议交付说明.md) | P4 第三轮 Sidecar 集成测试、Runner 协议和 Mock Runner 执行闭环 |
-| `CURRENT` | [27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md](27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md) | P4 第四轮 Gate 推进、Canvas 发布、执行 UI 和 Adapter 壳 |
-| `CURRENT` | [28_P4第五轮_D3_Gate返工模型交付说明.md](28_P4第五轮_D3_Gate返工模型交付说明.md) | P4 第五轮 D3 Gate reject 返工模型、返工产物版本和恢复规则 |
-| `CURRENT` | [29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md](29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md) | P4 第五轮 D4 Gate 返工 UI、返工 receipt 和 TraceEvent 审计 |
-| `CURRENT` | [30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md](30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md) | P4 第五轮 D5 scheduler tick、Gate 人审暂停和 Run 手动调度入口 |
-| `CURRENT` | [31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md](31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md) | P4 第五轮 D6 scheduler 连续推进、Gate 暂停和失败 Attention |
-| `CURRENT` | [32_P4第五轮_D7_Adapter插件目录实体化交付说明.md](32_P4第五轮_D7_Adapter插件目录实体化交付说明.md) | P4 第五轮 D7 Adapter manifest、Codex mock-compatible adapter 和 credential check |
-| `CURRENT` | [33_P4_MVP回归验收预备清单.md](33_P4_MVP回归验收预备清单.md) | D10 MVP 回归验收预备清单，已由 35 执行收口 |
-| `CURRENT` | [34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md](34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md) | P4 第五轮 D8/D9 Canvas NodeSpec draft、Run polling 和执行反馈 |
-| `CURRENT` | [35_P4_MVP回归验收与版本收口报告.md](35_P4_MVP回归验收与版本收口报告.md) | D10 MVP 回归验收通过、截图证据、API smoke 和版本收口 |
-| `CURRENT` | [36_P5真实工作流接入详细计划与任务拆解.md](36_P5真实工作流接入详细计划与任务拆解.md) | P5 真实工作流接入、历史 Run 只读导入和半自动 Run 任务拆解 |
-| `CURRENT` | [37_P5-01真实工作区盘点报告.md](37_P5-01真实工作区盘点报告.md) | W24/W23 真实交付包、控制文件、产物文件和缺口盘点 |
-| `CURRENT` | [38_P5-02FlowAG对象映射设计.md](38_P5-02FlowAG对象映射设计.md) | Flow A-G 到 WorkflowSpec、Artifact、Gate、Agent、Trace 的对象映射 |
-| `CURRENT` | [39_P5-03历史Run只读导入方案.md](39_P5-03历史Run只读导入方案.md) | W24/W23 historical importer、projection、source metadata 和降级导入规则 |
-| `CURRENT` | [40_Miracle系统操作使用说明书.md](40_Miracle系统操作使用说明书.md) | 本地启动、菜单操作、版本感知、常见问题和手册同步规则 |
-| `CURRENT` | [41_P5-04审核策略映射设计.md](41_P5-04审核策略映射设计.md) | approval_policy 到 GateSpec、GateInstance、GateDecision 和审核证据边界 |
-| `CURRENT` | [42_P5-05Trace映射设计.md](42_P5-05Trace映射设计.md) | task_trace 到 NodeAttempt、task_events 到 TraceEvent 和缺失 trace 降级规则 |
-| `CURRENT` | [43_P5-06真实历史Run_UI展示验收方案.md](43_P5-06真实历史Run_UI展示验收方案.md) | 真实历史 Run 在 Run、DAG、Agent、Artifact、Gate、Attention 中的展示验收口径 |
-| `CURRENT` | [44_P5-07半自动新Run草案设计.md](44_P5-07半自动新Run草案设计.md) | RunDraft、RunDraftDryRunPlan、LaunchConfirmation 和统一 Run 启动边界 |
-| `CURRENT` | [45_P5-08首个真实Adapter边界评估.md](45_P5-08首个真实Adapter边界评估.md) | Codex CLI 首接结论、运行隔离、审计和官方 API 后续边界 |
-| `CURRENT` | [46_P5回归验收与阶段收口报告.md](46_P5回归验收与阶段收口报告.md) | P5-09 回归验收、真实范围核验、截图证据和 P6 入口 |
-| `CURRENT` | [47_P6真实工作流工程实施计划与任务拆解.md](47_P6真实工作流工程实施计划与任务拆解.md) | P6-02 至 P6-08 工程任务、三轨并行边界、接口、测试和验收计划 |
-| `CURRENT` | [48_P6-02HistoricalImporter与Projection交付说明.md](48_P6-02HistoricalImporter与Projection交付说明.md) | W24/W23 historical preview/commit、只读保护、真实 smoke 和 P6-03 输入 |
-| `CURRENT` | [49_P6-03真实Run_API与Web展示交付说明.md](49_P6-03真实Run_API与Web展示交付说明.md) | W24/W23 historical Run 的只读 API、Run/Attention/Agent/Artifact/Gate 展示和截图验收 |
-| `CURRENT` | [50_P6-04RunDraft_API与Web交付说明.md](50_P6-04RunDraft_API与Web交付说明.md) | RunDraft、Dry-run、确认、撤回、取消与启动前交叉校验 |
-| `CURRENT` | [51_P6-05AdapterContract与注册表交付说明.md](51_P6-05AdapterContract与注册表交付说明.md) | Adapter Invocation/Result/Receipt 强关联与真实 manifest 边界 |
-| `CURRENT` | [52_P6-06CodexCLI健康检查与工作区交付说明.md](52_P6-06CodexCLI健康检查与工作区交付说明.md) | Codex CLI health、隔离 attempt workspace、进程控制与安全审查结果 |
-| `REFERENCE` | [VERSION_HISTORY.md](VERSION_HISTORY.md) | 系统版本和里程碑历史 |
+详细目录、中文目录对照、每类文档的概念设计和设计原因，统一见 [docs/README.md](docs/README.md)。
+
+常用入口：
+
+- [17_文档资产关联与AI阅读导航.md](docs/00-navigation/asset-index/17_文档资产关联与AI阅读导航.md)：当前有效产物、历史过程产物和 AI 最小阅读路径。
+- [07_后续对接路线图与任务拆解.md](docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md)：阶段路线和任务基线对应关系。
+- [14_技术架构选型与系统架构图.md](docs/02-architecture/system/14_技术架构选型与系统架构图.md)：技术选型和系统架构基线。
+- [16_融合_产品信息架构与设计图规划.md](docs/03-product/information-architecture/16_融合_产品信息架构与设计图规划.md)：当前产品信息架构和 Web 交互基线。
+- [47_P6真实工作流工程实施计划与任务拆解.md](docs/05-delivery/p6-engineering/47_P6真实工作流工程实施计划与任务拆解.md)：当前工程实施计划。
+- [40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)：启动、菜单操作、版本变化和常见问题。
+
+目录约定：
+
+- `01-strategy` 到 `06-operations`：当前有效的战略、架构、产品、工程、交付和运维资料。
+- `90-reference`：外部研究和参考输入，不替代当前架构真相。
+- `99-archive`：历史评审和候选方案，默认可跳过。
+
+`00-52` 编号继续保留在文件名中，用于阶段追溯；目录只负责按内容领域组织，不替代文档状态。
+
+`prototypes/`、`assets/`、`fixtures/`、`apps/`、`packages/` 和 `plans/` 保持为工程或资产目录，不与设计说明 Markdown 混放。
 
 ## 原型资产目录说明
 
@@ -138,16 +90,16 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 
 快速评审 Web 工作台原型时，优先阅读
 [prototypes/p2/03_融合版原型决策与验收说明.md](prototypes/p2/03_融合版原型决策与验收说明.md)，
-再阅读 [18_P2原型评审纪要与修订清单.md](18_P2原型评审纪要与修订清单.md)，
+再阅读 [18_P2原型评审纪要与修订清单.md](docs/05-delivery/p2-prototype/18_P2原型评审纪要与修订清单.md)，
 并运行 [prototypes/p2/fusion-clickable/](prototypes/p2/fusion-clickable/)。
 
 进入 P3 技术详细设计时，优先阅读：
 
-1. [19_P3技术详细设计总纲与扩展性原则.md](19_P3技术详细设计总纲与扩展性原则.md)
-2. [20_P3核心数据模型与领域扩展设计.md](20_P3核心数据模型与领域扩展设计.md)
-3. [21_P3本地服务API与后端演进设计.md](21_P3本地服务API与后端演进设计.md)
-4. [22_P3前端架构与工作台状态设计.md](22_P3前端架构与工作台状态设计.md)
-5. [23_P3MVP任务拆解与验收计划.md](23_P3MVP任务拆解与验收计划.md)
+1. [19_P3技术详细设计总纲与扩展性原则.md](docs/04-engineering/p3-detailed-design/19_P3技术详细设计总纲与扩展性原则.md)
+2. [20_P3核心数据模型与领域扩展设计.md](docs/04-engineering/data-model/20_P3核心数据模型与领域扩展设计.md)
+3. [21_P3本地服务API与后端演进设计.md](docs/04-engineering/api/21_P3本地服务API与后端演进设计.md)
+4. [22_P3前端架构与工作台状态设计.md](docs/04-engineering/p3-detailed-design/22_P3前端架构与工作台状态设计.md)
+5. [23_P3MVP任务拆解与验收计划.md](docs/04-engineering/p3-detailed-design/23_P3MVP任务拆解与验收计划.md)
 
 当前融合原则：Product Design 主导最终界面的视觉方向、布局体验和交互重心；Pencil
 用于校验六页任务闭环、对象语义、状态归属和审核安全边界，不作为最终视觉主方案。
@@ -156,7 +108,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 ## P4 MVP 启动
 
 完整操作说明优先阅读
-[40_Miracle系统操作使用说明书.md](40_Miracle系统操作使用说明书.md)。README 只保留最短启动入口。
+[40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)。README 只保留最短启动入口。
 
 ```bash
 npm_config_cache=.npm-cache npm install
@@ -191,7 +143,7 @@ API:     http://127.0.0.1:4317/api/v0/project/roadmap
 普通修订可归并到当前版本的修订记录，不单独制造大版本。
 
 用户可感知的菜单、启动方式、操作流程、功能变化和 bug 修复，必须同步更新
-`40_Miracle系统操作使用说明书.md`；如果本次更新没有用户操作影响，应在
+`docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md`；如果本次更新没有用户操作影响，应在
 `VERSION_HISTORY.md` 中说明“无操作变化”。
 
 ## 文档治理要求
@@ -199,10 +151,10 @@ API:     http://127.0.0.1:4317/api/v0/project/roadmap
 新增重要 Markdown 时必须同步更新：
 
 1. `README.md`。
-2. `17_文档资产关联与AI阅读导航.md`。
-3. 影响阶段时更新 `07_后续对接路线图与任务拆解.md`。
+2. `docs/00-navigation/asset-index/17_文档资产关联与AI阅读导航.md`。
+3. 影响阶段时更新 `docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md`。
 4. 构成重要更新时更新 `VERSION_HISTORY.md`。
-5. 影响用户操作或版本感知时更新 `40_Miracle系统操作使用说明书.md`。
+5. 影响用户操作或版本感知时更新 `docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md`。
 
 评审或候选文档完成收口后，应标记为历史过程资产，并明确当前有效结果，避免 AI 重复
 读取旧文档。

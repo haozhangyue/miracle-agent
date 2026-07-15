@@ -3,34 +3,34 @@
   "name": "Miracle MVP 执行计划与长期系统路线图",
   "current_node_id": "p6-07",
   "generated_from": [
-    "07_后续对接路线图与任务拆解.md",
-    "23_P3MVP任务拆解与验收计划.md",
-    "24_P4_MVP可运行主链路交付说明.md",
-    "25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md",
-    "26_P4第三轮_集成测试与Runner协议交付说明.md",
-    "27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md",
-    "28_P4第五轮_D3_Gate返工模型交付说明.md",
-    "29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md",
-    "30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md",
-    "31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md",
-    "32_P4第五轮_D7_Adapter插件目录实体化交付说明.md",
-    "33_P4_MVP回归验收预备清单.md",
-    "34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md",
-    "35_P4_MVP回归验收与版本收口报告.md",
-    "36_P5真实工作流接入详细计划与任务拆解.md",
-    "37_P5-01真实工作区盘点报告.md",
-    "38_P5-02FlowAG对象映射设计.md",
-    "39_P5-03历史Run只读导入方案.md",
-    "40_Miracle系统操作使用说明书.md",
-    "41_P5-04审核策略映射设计.md",
-    "42_P5-05Trace映射设计.md",
-    "43_P5-06真实历史Run_UI展示验收方案.md",
-    "44_P5-07半自动新Run草案设计.md",
-    "45_P5-08首个真实Adapter边界评估.md",
-    "46_P5回归验收与阶段收口报告.md",
-    "47_P6真实工作流工程实施计划与任务拆解.md",
-    "48_P6-02HistoricalImporter与Projection交付说明.md",
-    "49_P6-03真实Run_API与Web展示交付说明.md",
+    "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
+    "docs/04-engineering/p3-detailed-design/23_P3MVP任务拆解与验收计划.md",
+    "docs/05-delivery/p4-mvp/24_P4_MVP可运行主链路交付说明.md",
+    "docs/05-delivery/p4-mvp/25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md",
+    "docs/05-delivery/p4-mvp/26_P4第三轮_集成测试与Runner协议交付说明.md",
+    "docs/05-delivery/p4-mvp/27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md",
+    "docs/05-delivery/p4-mvp/28_P4第五轮_D3_Gate返工模型交付说明.md",
+    "docs/05-delivery/p4-mvp/29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md",
+    "docs/05-delivery/p4-mvp/30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md",
+    "docs/05-delivery/p4-mvp/31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md",
+    "docs/05-delivery/p4-mvp/32_P4第五轮_D7_Adapter插件目录实体化交付说明.md",
+    "docs/05-delivery/p4-mvp/33_P4_MVP回归验收预备清单.md",
+    "docs/05-delivery/p4-mvp/34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md",
+    "docs/06-operations/release/35_P4_MVP回归验收与版本收口报告.md",
+    "docs/05-delivery/p5-real-workflow/36_P5真实工作流接入详细计划与任务拆解.md",
+    "docs/05-delivery/p5-real-workflow/37_P5-01真实工作区盘点报告.md",
+    "docs/05-delivery/p5-real-workflow/38_P5-02FlowAG对象映射设计.md",
+    "docs/05-delivery/p5-real-workflow/39_P5-03历史Run只读导入方案.md",
+    "docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md",
+    "docs/05-delivery/p5-real-workflow/41_P5-04审核策略映射设计.md",
+    "docs/05-delivery/p5-real-workflow/42_P5-05Trace映射设计.md",
+    "docs/05-delivery/p5-real-workflow/43_P5-06真实历史Run_UI展示验收方案.md",
+    "docs/05-delivery/p5-real-workflow/44_P5-07半自动新Run草案设计.md",
+    "docs/05-delivery/p5-real-workflow/45_P5-08首个真实Adapter边界评估.md",
+    "docs/06-operations/release/46_P5回归验收与阶段收口报告.md",
+    "docs/05-delivery/p6-engineering/47_P6真实工作流工程实施计划与任务拆解.md",
+    "docs/05-delivery/p6-engineering/48_P6-02HistoricalImporter与Projection交付说明.md",
+    "docs/05-delivery/p6-engineering/49_P6-03真实Run_API与Web展示交付说明.md",
     "assets/reviews/p6-real-run-ui",
     "assets/reviews/p5-acceptance",
     "VERSION_HISTORY.md"
@@ -54,7 +54,7 @@
       "status": "completed",
       "summary": "确认系统边界、核心对象、双视图编排、多 Agent 可视化和 Adapter 方向。",
       "evidence_paths": [
-        "13_P0架构评审纪要与决策清单.md"
+        "docs/02-architecture/decisions/13_P0架构评审纪要与决策清单.md"
       ]
     },
     {
@@ -63,9 +63,9 @@
       "status": "completed",
       "summary": "形成 WorkflowSpec、Registry、AgentHealth、VisualBuilder 和 MVP 原型规划。",
       "evidence_paths": [
-        "09_WorkflowSpec与Registry技术草案.md",
-        "10_AgentHealth与多Agent状态机设计.md",
-        "11_VisualBuilder与Spec双向同步设计.md"
+        "docs/02-architecture/workflow/09_WorkflowSpec与Registry技术草案.md",
+        "docs/02-architecture/agents/10_AgentHealth与多Agent状态机设计.md",
+        "docs/02-architecture/visual-builder/11_VisualBuilder与Spec双向同步设计.md"
       ]
     },
     {
@@ -74,7 +74,7 @@
       "status": "completed",
       "summary": "明确本地优先、Local Sidecar、Orchestrator 单写入、Adapter 隔离和商业化后端演进边界。",
       "evidence_paths": [
-        "14_技术架构选型与系统架构图.md"
+        "docs/02-architecture/system/14_技术架构选型与系统架构图.md"
       ]
     },
     {
@@ -83,7 +83,7 @@
       "status": "completed",
       "summary": "完成任务型首页、Run 工作区、Attention、Agent Collaboration 的 Web 原型评审。",
       "evidence_paths": [
-        "18_P2原型评审纪要与修订清单.md",
+        "docs/05-delivery/p2-prototype/18_P2原型评审纪要与修订清单.md",
         "prototypes/p2/fusion-clickable"
       ]
     },
@@ -93,11 +93,11 @@
       "status": "completed",
       "summary": "完成 19-23 五份详细设计文档，并收口 Run、Gate、Adapter、Edge 和 API 一致性。",
       "evidence_paths": [
-        "19_P3技术详细设计总纲与扩展性原则.md",
-        "20_P3核心数据模型与领域扩展设计.md",
-        "21_P3本地服务API与后端演进设计.md",
-        "22_P3前端架构与工作台状态设计.md",
-        "23_P3MVP任务拆解与验收计划.md"
+        "docs/04-engineering/p3-detailed-design/19_P3技术详细设计总纲与扩展性原则.md",
+        "docs/04-engineering/data-model/20_P3核心数据模型与领域扩展设计.md",
+        "docs/04-engineering/api/21_P3本地服务API与后端演进设计.md",
+        "docs/04-engineering/p3-detailed-design/22_P3前端架构与工作台状态设计.md",
+        "docs/04-engineering/p3-detailed-design/23_P3MVP任务拆解与验收计划.md"
       ]
     },
     {
@@ -106,7 +106,7 @@
       "status": "completed",
       "summary": "完成 Web、Sidecar、core、fixtures 和 MVPS01-MVPS07 可运行闭环。",
       "evidence_paths": [
-        "24_P4_MVP可运行主链路交付说明.md",
+        "docs/05-delivery/p4-mvp/24_P4_MVP可运行主链路交付说明.md",
         "apps/web/src/App.tsx",
         "apps/sidecar/src/server.ts",
         "packages/core/src/index.ts"
@@ -118,7 +118,7 @@
       "status": "completed",
       "summary": "补齐 React Flow DAG、Artifact 预览、Gate projection 和 Canvas 草稿态。",
       "evidence_paths": [
-        "25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md"
+        "docs/05-delivery/p4-mvp/25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md"
       ]
     },
     {
@@ -127,7 +127,7 @@
       "status": "completed",
       "summary": "补齐 Sidecar 集成测试、Runner/Adapter 最小协议和 Mock Runner 单节点执行闭环。",
       "evidence_paths": [
-        "26_P4第三轮_集成测试与Runner协议交付说明.md",
+        "docs/05-delivery/p4-mvp/26_P4第三轮_集成测试与Runner协议交付说明.md",
         "apps/sidecar/test/api.test.ts",
         "packages/core/src/runner.ts"
       ]
@@ -138,7 +138,7 @@
       "status": "completed",
       "summary": "完成 Gate 决策真实推进、Run 执行 UI、Canvas 发布 Workflow draft 和 Adapter 插件壳。",
       "evidence_paths": [
-        "27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md",
+        "docs/05-delivery/p4-mvp/27_P4第四轮_Gate推进Canvas发布与执行UI交付说明.md",
         "packages/core/src/adapters.ts"
       ]
     },
@@ -152,13 +152,13 @@
         "plans/mvp-task-baseline/roadmap.json",
         "plans/mvp-task-baseline/roadmap-page.png",
         "plans/mvp-task-baseline/index.html",
-        "28_P4第五轮_D3_Gate返工模型交付说明.md",
-        "29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md",
-        "30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md",
-        "31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md",
-        "32_P4第五轮_D7_Adapter插件目录实体化交付说明.md",
-        "33_P4_MVP回归验收预备清单.md",
-        "34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md"
+        "docs/05-delivery/p4-mvp/28_P4第五轮_D3_Gate返工模型交付说明.md",
+        "docs/05-delivery/p4-mvp/29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md",
+        "docs/05-delivery/p4-mvp/30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md",
+        "docs/05-delivery/p4-mvp/31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md",
+        "docs/05-delivery/p4-mvp/32_P4第五轮_D7_Adapter插件目录实体化交付说明.md",
+        "docs/05-delivery/p4-mvp/33_P4_MVP回归验收预备清单.md",
+        "docs/05-delivery/p4-mvp/34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md"
       ]
     },
     {
@@ -167,7 +167,7 @@
       "status": "completed",
       "summary": "D10 MVP 回归验收已通过，命令、API smoke、页面截图、版本历史和 task-baseline 已收口，形成 v0.7.0 本地 MVP 验收基线。",
       "evidence_paths": [
-        "35_P4_MVP回归验收与版本收口报告.md",
+        "docs/06-operations/release/35_P4_MVP回归验收与版本收口报告.md",
         "assets/reviews/p4-mvp",
         "VERSION_HISTORY.md"
       ]
@@ -178,18 +178,18 @@
       "status": "completed",
       "summary": "P5-01 至 P5-09 已完成并通过回归验收，形成真实工作流接入设计基线；真实 importer、RunDraft 和 Adapter 留待 P6 实装。",
       "evidence_paths": [
-        "07_后续对接路线图与任务拆解.md",
-        "36_P5真实工作流接入详细计划与任务拆解.md",
-        "37_P5-01真实工作区盘点报告.md",
-        "38_P5-02FlowAG对象映射设计.md",
-        "39_P5-03历史Run只读导入方案.md",
-        "40_Miracle系统操作使用说明书.md",
-        "41_P5-04审核策略映射设计.md",
-        "42_P5-05Trace映射设计.md",
-        "43_P5-06真实历史Run_UI展示验收方案.md",
-        "44_P5-07半自动新Run草案设计.md",
-        "45_P5-08首个真实Adapter边界评估.md",
-        "46_P5回归验收与阶段收口报告.md",
+        "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
+        "docs/05-delivery/p5-real-workflow/36_P5真实工作流接入详细计划与任务拆解.md",
+        "docs/05-delivery/p5-real-workflow/37_P5-01真实工作区盘点报告.md",
+        "docs/05-delivery/p5-real-workflow/38_P5-02FlowAG对象映射设计.md",
+        "docs/05-delivery/p5-real-workflow/39_P5-03历史Run只读导入方案.md",
+        "docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md",
+        "docs/05-delivery/p5-real-workflow/41_P5-04审核策略映射设计.md",
+        "docs/05-delivery/p5-real-workflow/42_P5-05Trace映射设计.md",
+        "docs/05-delivery/p5-real-workflow/43_P5-06真实历史Run_UI展示验收方案.md",
+        "docs/05-delivery/p5-real-workflow/44_P5-07半自动新Run草案设计.md",
+        "docs/05-delivery/p5-real-workflow/45_P5-08首个真实Adapter边界评估.md",
+        "docs/06-operations/release/46_P5回归验收与阶段收口报告.md",
         "assets/reviews/p5-acceptance"
       ]
     },
@@ -199,14 +199,14 @@
       "status": "current",
       "summary": "P6-01 至 P6-06 已完成；Codex CLI health、隔离 attempt workspace 与安全进程控制已通过，当前推进 P6-07 单节点真实执行。",
       "evidence_paths": [
-        "46_P5回归验收与阶段收口报告.md",
-        "45_P5-08首个真实Adapter边界评估.md",
-        "47_P6真实工作流工程实施计划与任务拆解.md",
-        "48_P6-02HistoricalImporter与Projection交付说明.md",
-        "49_P6-03真实Run_API与Web展示交付说明.md",
-        "50_P6-04RunDraft_API与Web交付说明.md",
-        "51_P6-05AdapterContract与注册表交付说明.md",
-        "52_P6-06CodexCLI健康检查与工作区交付说明.md",
+        "docs/06-operations/release/46_P5回归验收与阶段收口报告.md",
+        "docs/05-delivery/p5-real-workflow/45_P5-08首个真实Adapter边界评估.md",
+        "docs/05-delivery/p6-engineering/47_P6真实工作流工程实施计划与任务拆解.md",
+        "docs/05-delivery/p6-engineering/48_P6-02HistoricalImporter与Projection交付说明.md",
+        "docs/05-delivery/p6-engineering/49_P6-03真实Run_API与Web展示交付说明.md",
+        "docs/05-delivery/p6-engineering/50_P6-04RunDraft_API与Web交付说明.md",
+        "docs/05-delivery/p6-engineering/51_P6-05AdapterContract与注册表交付说明.md",
+        "docs/05-delivery/p6-engineering/52_P6-06CodexCLI健康检查与工作区交付说明.md",
         "assets/reviews/p6-real-run-ui",
         "plans/mvp-task-baseline/roadmap.json"
       ]
@@ -266,7 +266,7 @@
         "new Artifact version",
         "Gate required_before 恢复规则",
         "POST /api/v0/gates/:gateId/rework",
-        "28_P4第五轮_D3_Gate返工模型交付说明.md"
+        "docs/05-delivery/p4-mvp/28_P4第五轮_D3_Gate返工模型交付说明.md"
       ]
     },
     {
@@ -285,7 +285,7 @@
         "返工动作按钮",
         "新 attempt receipt",
         "TraceEvent 审计",
-        "29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md"
+        "docs/05-delivery/p4-mvp/29_P4第五轮_D4_Gate返工UI与事件审计交付说明.md"
       ]
     },
     {
@@ -305,7 +305,7 @@
         "Gate 停在人审",
         "operation lock 复用",
         "POST /api/v0/runs/:runId/scheduler/tick",
-        "30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md"
+        "docs/05-delivery/p4-mvp/30_P4第五轮_D5_最小Scheduler设计与Tick接口交付说明.md"
       ]
     },
     {
@@ -325,7 +325,7 @@
         "自动执行 queued 节点",
         "失败进入 Attention",
         "人工 Gate 暂停",
-        "31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md"
+        "docs/05-delivery/p4-mvp/31_P4第五轮_D6_Scheduler连续执行闭环交付说明.md"
       ]
     },
     {
@@ -344,7 +344,7 @@
         "adapter manifests",
         "Codex mock-compatible adapter",
         "credential check",
-        "32_P4第五轮_D7_Adapter插件目录实体化交付说明.md"
+        "docs/05-delivery/p4-mvp/32_P4第五轮_D7_Adapter插件目录实体化交付说明.md"
       ]
     },
     {
@@ -363,7 +363,7 @@
         "新增 node card",
         "生成 NodeSpec draft",
         "validate-before-save",
-        "34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md"
+        "docs/05-delivery/p4-mvp/34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md"
       ]
     },
     {
@@ -382,7 +382,7 @@
         "run polling",
         "执行中状态",
         "错误恢复提示",
-        "34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md"
+        "docs/05-delivery/p4-mvp/34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md"
       ]
     },
     {
@@ -406,7 +406,7 @@
         "API smoke",
         "截图证据",
         "VERSION_HISTORY 发布记录",
-        "35_P4_MVP回归验收与版本收口报告.md"
+        "docs/06-operations/release/35_P4_MVP回归验收与版本收口报告.md"
       ]
     },
     {
@@ -425,7 +425,7 @@
         "W24/W23 文件清单",
         "控制文件缺口表",
         "真实样本选择结论",
-        "37_P5-01真实工作区盘点报告.md"
+        "docs/05-delivery/p5-real-workflow/37_P5-01真实工作区盘点报告.md"
       ]
     },
     {
@@ -445,7 +445,7 @@
         "AgentSpec 映射表",
         "ComponentLibrary 映射表",
         "Artifact/Gate/Trace 对象边界",
-        "38_P5-02FlowAG对象映射设计.md"
+        "docs/05-delivery/p5-real-workflow/38_P5-02FlowAG对象映射设计.md"
       ]
     },
     {
@@ -464,7 +464,7 @@
         "W24 主样本导入规则",
         "W23 对照样本导入规则",
         "projection 与真实事件边界",
-        "39_P5-03历史Run只读导入方案.md"
+        "docs/05-delivery/p5-real-workflow/39_P5-03历史Run只读导入方案.md"
       ]
     },
     {
@@ -484,7 +484,7 @@
         "approval_policy.yaml 映射",
         "GateSpec/GateInstance/GateDecision 规则",
         "审核证据边界",
-        "41_P5-04审核策略映射设计.md"
+        "docs/05-delivery/p5-real-workflow/41_P5-04审核策略映射设计.md"
       ]
     },
     {
@@ -504,7 +504,7 @@
         "task_trace.json 映射",
         "task_events.jsonl 映射",
         "缺失证据 projection 规则",
-        "42_P5-05Trace映射设计.md"
+        "docs/05-delivery/p5-real-workflow/42_P5-05Trace映射设计.md"
       ]
     },
     {
@@ -526,7 +526,7 @@
         "Agent/Artifact/Gate 展示验收",
         "Attention 真实根因展示",
         "截图证据要求",
-        "43_P5-06真实历史Run_UI展示验收方案.md"
+        "docs/05-delivery/p5-real-workflow/43_P5-06真实历史Run_UI展示验收方案.md"
       ]
     },
     {
@@ -546,7 +546,7 @@
         "Dry-run 结果",
         "人工确认门",
         "不调用真实 Runner 的安全边界",
-        "44_P5-07半自动新Run草案设计.md"
+        "docs/05-delivery/p5-real-workflow/44_P5-07半自动新Run草案设计.md"
       ]
     },
     {
@@ -566,7 +566,7 @@
         "官方 API Adapter 评估",
         "凭证/审计/回滚边界",
         "首个 Adapter 推荐结论",
-        "45_P5-08首个真实Adapter边界评估.md"
+        "docs/05-delivery/p5-real-workflow/45_P5-08首个真实Adapter边界评估.md"
       ]
     },
     {
@@ -588,7 +588,7 @@
         "截图证据",
         "VERSION_HISTORY 更新",
         "task-baseline 同步",
-        "46_P5回归验收与阶段收口报告.md",
+        "docs/06-operations/release/46_P5回归验收与阶段收口报告.md",
         "assets/reviews/p5-acceptance"
       ]
     },
@@ -610,7 +610,7 @@
         "真实 Run UI 与 RunDraft 任务拆解",
         "Codex CLI Adapter 实现任务拆解",
         "依赖、并行边界和验收标准",
-        "47_P6真实工作流工程实施计划与任务拆解.md"
+        "docs/05-delivery/p6-engineering/47_P6真实工作流工程实施计划与任务拆解.md"
       ]
     },
     {
@@ -623,7 +623,7 @@
       "depends_on": ["p6-01"],
       "can_parallelize": true,
       "recommended_agent": "Agent A",
-      "deliverables": ["historical core types/schema", "W24/W23 projection", "preview/commit API", "source_meta 与只读边界", "48_P6-02HistoricalImporter与Projection交付说明.md"]
+      "deliverables": ["historical core types/schema", "W24/W23 projection", "preview/commit API", "source_meta 与只读边界", "docs/05-delivery/p6-engineering/48_P6-02HistoricalImporter与Projection交付说明.md"]
     },
     {
       "id": "p6-03",
@@ -635,7 +635,7 @@
       "depends_on": ["p6-02"],
       "can_parallelize": true,
       "recommended_agent": "Agent A",
-      "deliverables": ["historical read model", "Run/Attention/Artifact/Gate/Agent UI", "P6 real-run screenshots", "49_P6-03真实Run_API与Web展示交付说明.md"]
+      "deliverables": ["historical read model", "Run/Attention/Artifact/Gate/Agent UI", "P6 real-run screenshots", "docs/05-delivery/p6-engineering/49_P6-03真实Run_API与Web展示交付说明.md"]
     },
     {
       "id": "p6-04",
@@ -647,7 +647,7 @@
       "depends_on": ["p6-01"],
       "can_parallelize": true,
       "recommended_agent": "Agent B",
-      "deliverables": ["RunDraft types/state machine", "draft store/API", "Dry-run/confirmation UI", "draft audit", "50_P6-04RunDraft_API与Web交付说明.md"]
+      "deliverables": ["RunDraft types/state machine", "draft store/API", "Dry-run/confirmation UI", "draft audit", "docs/05-delivery/p6-engineering/50_P6-04RunDraft_API与Web交付说明.md"]
     },
     {
       "id": "p6-05",
@@ -659,7 +659,7 @@
       "depends_on": ["p6-01"],
       "can_parallelize": true,
       "recommended_agent": "Agent C",
-      "deliverables": ["Invocation/Result/Receipt schema", "real Codex manifest", "mock-compatible regression", "51_P6-05AdapterContract与注册表交付说明.md"]
+      "deliverables": ["Invocation/Result/Receipt schema", "real Codex manifest", "mock-compatible regression", "docs/05-delivery/p6-engineering/51_P6-05AdapterContract与注册表交付说明.md"]
     },
     {
       "id": "p6-06",
@@ -671,7 +671,7 @@
       "depends_on": ["p6-05"],
       "can_parallelize": true,
       "recommended_agent": "Agent C",
-      "deliverables": ["Codex health API", "isolated attempt workspace", "fake-codex process control", "timeout/cancel", "52_P6-06CodexCLI健康检查与工作区交付说明.md"]
+      "deliverables": ["Codex health API", "isolated attempt workspace", "fake-codex process control", "timeout/cancel", "docs/05-delivery/p6-engineering/52_P6-06CodexCLI健康检查与工作区交付说明.md"]
     },
     {
       "id": "p6-07",
