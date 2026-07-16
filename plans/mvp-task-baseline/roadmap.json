@@ -76,7 +76,7 @@
       "id": "p1-5",
       "label": "P1.5 技术架构选型",
       "status": "completed",
-      "summary": "明确本地优先、Local Sidecar、Orchestrator 单写入、Adapter 隔离和商业化后端演进边界。",
+      "summary": "明确本地优先、Local Sidecar、Orchestrator 单写入、Adapter 隔离和云端服务演进边界。",
       "evidence_paths": [
         "docs/02-architecture/system/14_技术架构选型与系统架构图.md"
       ]
@@ -759,11 +759,11 @@
       "summary": "补齐队列、失败恢复、重试、资源池、凭证治理和运行审计。"
     },
     {
-      "id": "l5-commercial-platform",
+      "id": "l5-application-system",
       "stage": "L5",
-      "title": "商业化系统",
+      "title": "应用级系统",
       "status": "planned",
-      "summary": "建设 Java/Kotlin 云端控制平面、多租户、权限、计费、团队协作和云同步。"
+      "summary": "建设 Java/Kotlin 云端控制平面、组织与权限、团队协作和云同步。"
     }
   ],
   "parallel_tracks": [
