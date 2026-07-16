@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p6-08",
+  "current_node_id": "p7-01",
   "generated_from": [
     "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
     "docs/04-engineering/p3-detailed-design/23_P3MVP任务拆解与验收计划.md",
@@ -32,8 +32,10 @@
     "docs/05-delivery/p6-engineering/48_P6-02HistoricalImporter与Projection交付说明.md",
     "docs/05-delivery/p6-engineering/49_P6-03真实Run_API与Web展示交付说明.md",
     "docs/05-delivery/p6-engineering/53_P6-07Codex单节点真实执行交付说明.md",
+    "docs/06-operations/release/54_P6回归验收与版本收口报告.md",
     "assets/reviews/p6-07",
     "assets/reviews/p6-real-run-ui",
+    "assets/reviews/p6-acceptance",
     "assets/reviews/p5-acceptance",
     "VERSION_HISTORY.md"
   ],
@@ -198,8 +200,8 @@
     {
       "id": "p6",
       "label": "P6 真实工作流工程接入",
-      "status": "current",
-      "summary": "P6-01 至 P6-07 已完成；confirmed RunDraft 到 Codex CLI、Markdown Artifact、pending Gate 与 Trace 已形成真实单节点闭环，当前进入 P6-08 回归验收与版本收口。",
+      "status": "completed",
+      "summary": "P6-01 至 P6-08 已完成并通过工程、46 项 API、页面和安全真实性验收，发布 v0.8.0 真实工作流工程接入基线。",
       "evidence_paths": [
         "docs/06-operations/release/46_P5回归验收与阶段收口报告.md",
         "docs/05-delivery/p5-real-workflow/45_P5-08首个真实Adapter边界评估.md",
@@ -210,8 +212,21 @@
         "docs/05-delivery/p6-engineering/51_P6-05AdapterContract与注册表交付说明.md",
         "docs/05-delivery/p6-engineering/52_P6-06CodexCLI健康检查与工作区交付说明.md",
         "docs/05-delivery/p6-engineering/53_P6-07Codex单节点真实执行交付说明.md",
+        "docs/06-operations/release/54_P6回归验收与版本收口报告.md",
         "assets/reviews/p6-07",
         "assets/reviews/p6-real-run-ui",
+        "assets/reviews/p6-acceptance",
+        "plans/mvp-task-baseline/roadmap.json"
+      ]
+    },
+    {
+      "id": "p7",
+      "label": "P7 多节点真实执行与 Adapter 扩展",
+      "status": "current",
+      "summary": "P6 已建立真实单节点基线；当前先规划多节点连续执行、重试与 fallback、官方 API 和更多 Agent Runtime Adapter。",
+      "evidence_paths": [
+        "docs/06-operations/release/54_P6回归验收与版本收口报告.md",
+        "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
         "plans/mvp-task-baseline/roadmap.json"
       ]
     }
@@ -693,13 +708,25 @@
       "id": "p6-08",
       "day": "P6-08",
       "title": "P6 回归验收与版本收口",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p6-acceptance",
       "parallel_group": "release",
       "depends_on": ["p6-07"],
       "can_parallelize": false,
       "recommended_agent": "Lead",
-      "deliverables": ["P6 验收报告", "API/UI smoke", "安全真实性复核", "v0.8.0 版本决策", "task-baseline 同步"]
+      "deliverables": ["P6 验收报告", "46 项 API/UI smoke", "安全真实性复核", "v0.8.0 版本发布", "task-baseline 同步", "docs/06-operations/release/54_P6回归验收与版本收口报告.md", "assets/reviews/p6-acceptance"]
+    },
+    {
+      "id": "p7-01",
+      "day": "P7-01",
+      "title": "多节点真实执行与 Adapter 扩展规划",
+      "status": "current",
+      "serial_group": "p7-planning",
+      "parallel_group": "real-adapter-expansion",
+      "depends_on": ["p6-08"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["P7 范围设计", "多节点执行协议", "重试/fallback 边界", "官方 API Adapter 计划", "Hermes/OpenClaw 接入优先级"]
     }
   ],
   "long_term_plan": [
@@ -714,15 +741,15 @@
       "id": "l2-real-workflow",
       "stage": "L2",
       "title": "真实工作流接入",
-      "status": "current",
-      "summary": "P5 已完成真实工作流接入设计基线，P6 开始实现 historical importer、真实 Run UI 和 RunDraft。"
+      "status": "completed",
+      "summary": "P5 完成设计，P6 完成 historical importer、真实 Run UI、RunDraft 和 Codex 单节点执行并发布 v0.8.0。"
     },
     {
       "id": "l3-real-adapters",
       "stage": "L3",
       "title": "真实 Adapter 接入",
-      "status": "planned",
-      "summary": "按 P5-08 结论优先接入 Codex CLI，再实现官方 API 并扩展 Hermes/OpenClaw。"
+      "status": "current",
+      "summary": "Codex CLI 单节点已接入；P7 规划多节点连续执行、官方 API 并扩展 Hermes/OpenClaw。"
     },
     {
       "id": "l4-stable-runtime",

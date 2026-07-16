@@ -15,15 +15,15 @@ P4 第五轮已开始执行能力补齐，D3 Gate reject 返工模型已落地�
 新 Artifact version、新 GateInstance 和下游恢复规则；D4 Gate 返工 UI 与事件审计已接入
 Web 工作台；D5 最小 scheduler 设计与 tick 接口、D6 scheduler 连续推进、Gate 暂停和
 失败 Attention、D7 Adapter 插件目录实体化已完成。D8 Canvas 新增节点生成 NodeSpec
-draft 与 D9 Web run refresh/polling 已落地，D10 MVP 回归验收与版本收口已通过，
-当前形成 `v0.7.0` 本地 MVP 验收基线。P5 真实工作流接入设计与阶段验收已完成，
+draft 与 D9 Web run refresh/polling 已落地，D10 MVP 回归验收与版本收口已通过。
+P5 真实工作流接入设计与阶段验收已完成，
 `P5-01` 真实工作区盘点、`P5-02` Flow A-G 对象映射、`P5-03` 历史 Run
 只读导入方案、`P5-04` 审核策略映射、`P5-05` Trace 映射和 `P5-06`
 UI 展示验收方案、`P5-07` 半自动新 Run 草案设计、`P5-08` 首个真实 Adapter
 边界评估和 `P5-09` 回归验收均已完成。P5 形成真实工作流接入设计基线，首接推荐
 Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与 Projection 和
-`P6-04` 至 `P6-07` 已完成，confirmed RunDraft 到真实 Codex CLI、Markdown Artifact、
-pending Gate 和 Trace 已形成单节点闭环；当前主线进入 `P6-08` 回归验收与版本收口。
+`P6-04` 至 `P6-08` 已完成并通过工程、API、页面、安全与真实性验收，形成 `v0.8.0`
+真实工作流工程接入基线。当前主线进入 `P7-01` 多节点真实执行与 Adapter 扩展规划。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -59,6 +59,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - [16_融合_产品信息架构与设计图规划.md](docs/03-product/information-architecture/16_融合_产品信息架构与设计图规划.md)：当前产品信息架构和 Web 交互基线。
 - [47_P6真实工作流工程实施计划与任务拆解.md](docs/05-delivery/p6-engineering/47_P6真实工作流工程实施计划与任务拆解.md)：当前工程实施计划。
 - [53_P6-07Codex单节点真实执行交付说明.md](docs/05-delivery/p6-engineering/53_P6-07Codex单节点真实执行交付说明.md)：confirmed RunDraft、真实 Codex CLI、Artifact/Gate/Trace 闭环和 opt-in 操作。
+- [54_P6回归验收与版本收口报告.md](docs/06-operations/release/54_P6回归验收与版本收口报告.md)：P6 工程、46 项 API、安全真实性、页面截图和 `v0.8.0` 发布结论。
 - [40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)：启动、菜单操作、版本变化和常见问题。
 
 目录约定：
@@ -67,7 +68,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - `90-reference`：外部研究和参考输入，不替代当前架构真相。
 - `99-archive`：历史评审和候选方案，默认可跳过。
 
-`00-52` 编号继续保留在文件名中，用于阶段追溯；目录只负责按内容领域组织，不替代文档状态。
+`00-54` 编号继续保留在文件名中，用于阶段追溯；目录只负责按内容领域组织，不替代文档状态。
 
 `prototypes/`、`assets/`、`fixtures/`、`apps/`、`packages/` 和 `plans/` 保持为工程或资产目录，不与设计说明 Markdown 混放。
 

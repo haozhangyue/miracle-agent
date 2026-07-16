@@ -134,9 +134,10 @@ progress { width: 100%; height: 8px; accent-color: #1264e8; }
 .dot.warn { background: #f59e0b; }
 .dot.danger { background: #e23b3b; }
 .jsonBlock { overflow: auto; max-height: 420px; background: #0d1729; color: #dce8ff; border-radius: 8px; padding: 14px; font-size: 12px; }
-.eventRow { display: grid; grid-template-columns: 190px 150px minmax(0, 1fr) 220px; align-items: center; padding: 8px 0; }
+.eventRow { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(120px, .75fr) minmax(260px, 2fr) minmax(180px, 1.2fr); align-items: start; padding: 8px 0; }
+.eventRow > * { min-width: 0; }
 .eventRow span { color: #718097; font-size: 12px; }
-.eventRow strong { width: auto; }
+.eventRow strong { width: auto; overflow-wrap: anywhere; }
 .eventRow em { color: #4b5b73; font-style: normal; overflow-wrap: anywhere; }
 .eventRow small { color: #718097; overflow-wrap: anywhere; }
 .eventRow.audit { box-shadow: inset 3px 0 0 #7c5cff; padding-left: 10px; background: #fbfaff; }

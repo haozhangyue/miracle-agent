@@ -30,12 +30,12 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 
 | 项目 | 当前值 |
 |---|---|
-| 当前产品版本 | `v0.7.0` |
+| 当前产品版本 | `v0.8.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
-| 当前阶段 | P5 已验收，进入 P6 真实工作流工程接入 |
-| 当前任务焦点 | `P6-08` P6 回归验收与版本收口 |
+| 当前阶段 | P6 真实工作流工程接入已验收，进入 P7 扩展规划 |
+| 当前任务焦点 | `P7-01` 多节点真实执行与 Adapter 扩展规划 |
 | 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
-| P6 执行基线 | `47_P6真实工作流工程实施计划与任务拆解.md` |
+| P6 验收基线 | `54_P6回归验收与版本收口报告.md` |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
 | 任务基线数据 | `plans/mvp-task-baseline/roadmap.json` |
 
@@ -62,8 +62,8 @@ P6-07 已把 CLI 生命周期接入正式 NodeRun、Artifact、Gate 和 Trace；
 `MIRACLE_RUNTIME_WORKSPACE_DIR` 指定其他仓库外目录；Sidecar 会拒绝仓库内路径和 symlink。
 
 - P4 已形成本地 MVP 验收基线，核心页面和 Sidecar API 可运行。
-- P5 已完成真实工作流接入设计验收，P6 开始把 importer、RunDraft 和 Codex Adapter
-  变成可运行能力。
+- P6 已把 historical importer、RunDraft 和 Codex 单节点 Adapter 变成可运行能力，并
+  通过工程、46 项 API、页面和安全真实性验收。
 - Flow A-G 只是第一个真实样本，不代表 Miracle 被固化为内容生产系统。
 - Node.js Local Sidecar 是 MVP 本地服务，不是商业化云端主后端的最终限定。
 
@@ -321,6 +321,7 @@ Run 节点详情取消活跃 operation。Attempt 页面只显示非敏感元数�
 | P5 回归验收 | 工程测试、20 项 API smoke、真实样本复核和页面截图通过 | 当前运行版本仍是 v0.7.0；真实 importer、RunDraft 和 Adapter 留待 P6 实现 |
 | P6 工程实施计划 | P6-02 至 P6-08 已拆成 historical importer、真实 Run UI、RunDraft、Adapter Contract、Codex CLI 和验收任务 | 用户可按任务基线查看实现顺序；该计划本身不代表功能上线 |
 | P6-02 Historical Importer | 新增 W24/W23 preview/commit、事实型审核投影、内容指纹、可恢复并发锁、回执自愈、source_meta 和只读保护 | 用户可以通过 Sidecar API 在仓库外 runtime workspace 导入历史 Run；缺失审批证据不再显示为 approved，Web 展示和真实 Codex 调用尚未开放 |
+| P6-08 / `v0.8.0` | historical importer、真实 Run UI、RunDraft、Codex 单节点执行全部通过统一验收 | 用户可从真实历史数据观察进入半自动新 Run 和人工 Gate；P6 最终边界见 54 号报告 |
 | 操作手册 | 新增本文 | 用户不再只依赖提交文字，可以按手册启动、操作和理解版本变化 |
 
 ## 7. 相比上一版本的用户变化
@@ -363,6 +364,7 @@ Run 节点详情取消活跃 operation。Attempt 页面只显示非敏感元数�
 | P6-02 | Historical Importer 与 Projection | 增加 allowlist、preview/commit、事实型审核投影、内容哈希幂等、可恢复并发锁、回执自愈、只读保护和 source confidence | 修复伪造 approved/decided、historical mutation、symlink 绕过、残留锁、错误 500、并发冲突、缺失回执、仓库污染和路径逃逸风险 | 新增 Sidecar API 操作及稳定 404/409/422 错误；P6-03 已补充 Web historical 展示 | 是，真实导入需设置仓库外 `MIRACLE_WORKSPACE_DIR` 和 `MIRACLE_IMPORT_ROOTS` |
 | P6-03 | 真实 Run API 与 Web 展示 | Run 列表/详情增加 historical read-only、证据等级和来源缺口；Attention、Agent、Artifact、Gate 跟随选中 Run | 修复跨 Run 切换时旧 NodeRun/Artifact/Gate 请求、非 ASCII 产物路径导致 Artifact ID 重复 | 首页选择 W24/W23 后进入 Run、Attention、智能体、产物和审核页面；历史 Run 隐藏执行、调度、审核和返工操作 | 否，仍需使用仓库外 runtime workspace；截图证据见 `assets/reviews/p6-real-run-ui/` |
 | P6-07 | Codex 单节点真实执行 | confirmed RunDraft 原子启动、受控 Codex 输出、真实 SHA-256、Operation 取消和 Gate 审计 | 修复非 Git attempt workspace 被 CLI 拒绝、结构化 schema 缺少类型导致真实执行失败、启动事务半成品及发布后崩溃重试产生重复 Run 的风险 | 新增“Codex 单节点 Markdown 母稿”模板和“启动正式 Run”；Run 页面展示真实 Adapter、operation、耗时与 Gate | 是，真实调用需设置 `MIRACLE_ENABLE_REAL_CODEX=1`，runtime 必须位于仓库外 |
+| `v0.8.0` / P6-08 | 真实工作流工程接入基线 | W24/W23 historical、RunDraft、真实 Codex、46 项 API 和多 Domain 完整验收 | 修复长 Run/Node/Artifact ID 导致事件审计文本重叠 | 用户可导入真实历史 Run、创建并确认草案、执行 Codex 单节点并进入人工 Gate；下一步为 P7-01 | 启动命令不变；真实导入和执行仍需显式环境变量 |
 
 ### 8.3 提交前同步检查
 

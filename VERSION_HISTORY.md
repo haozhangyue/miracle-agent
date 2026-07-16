@@ -7,11 +7,11 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 当前大版本 | `v0.7.0` |
-| 版本名称 | P4 MVP 本地闭环验收基线 |
-| 当前阶段 | P6-04 至 P6-07 已完成；运行版本仍为 v0.7.0，当前任务为 `P6-08` 回归验收与版本收口 |
-| 基线提交 | `1bd740f` |
-| 基线日期 | 2026-06-18 |
+| 当前大版本 | `v0.8.0` |
+| 版本名称 | 真实工作流工程接入基线 |
+| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；当前任务为 `P7-01` 多节点真实执行与 Adapter 扩展规划 |
+| 基线提交 | P6-08 收口提交（见 Git HEAD） |
+| 基线日期 | 2026-07-16 |
 | 最终评审 | 通过 |
 
 ## 2. 版本维护规则
@@ -67,8 +67,41 @@
 | `v0.5.0` | 2026-06-18 | 架构最终评审基线 | 7 | 13 | 0 | M5 架构评审通过 |
 | `v0.5.1` | 2026-06-18 | 版本演进记录机制 | 1 | 1 | 0 | - |
 | `v0.7.0` | 2026-07-02 | P4 MVP 本地闭环验收基线 | 待统计 | 待统计 | 0 | M6 本地 MVP 验收通过 |
+| `v0.8.0` | 2026-07-16 | 真实工作流工程接入基线 | 待统计 | 待统计 | 0 | M7 真实工作流接入通过 |
 
-## 4. v0.7.0 发布记录
+## 4. v0.8.0 发布记录
+
+**版本：** `v0.8.0`
+**发布日期：** 2026-07-16
+**相对基线：** `v0.7.0`
+**验收报告：** `docs/06-operations/release/54_P6回归验收与版本收口报告.md`
+
+### 变更摘要
+
+- 实装 W24/W23 Historical Importer、Projection、source confidence 和只读保护。
+- Web 支持真实 historical Run、DAG、Event、Attention、Agent、Artifact 和 Gate。
+- 实装 RunDraft、Dry-run、LaunchConfirmation、草案审计和统一 `POST /runs`。
+- 实装 Adapter Invocation/Result/Receipt 强关联、Codex health 和仓库外 Attempt workspace。
+- 完成 `C_md_master` 真实 Codex 单节点执行，生成 Markdown Artifact、pending Gate 和 Trace。
+- P6-08 通过工程回归、46 项 API、W24/W23、真实 Codex、多 Domain、页面和安全真实性验收。
+- 修复长 Run/Node/Artifact ID 导致事件审计文本重叠的问题。
+
+### 验证结果
+
+- Sidecar 76、Web 7、Core 42 项测试通过。
+- `npm run typecheck`、`npm run build`、`git diff --check` 通过。
+- W23/W24 源目录前后快照与关键控制文件 SHA-256 完全一致。
+- Miracle workspace 未复制大媒体，凭证和隐藏推理扫描 0 命中。
+- 本机 Codex CLI `0.144.2` 脱敏真实执行成功。
+
+### 兼容性与边界
+
+- 启动命令和默认端口不变。
+- 真实导入需要仓库外 `MIRACLE_WORKSPACE_DIR` 和 `MIRACLE_IMPORT_ROOTS`。
+- 真实 Codex 执行仍需显式设置 `MIRACLE_ENABLE_REAL_CODEX=1`。
+- 当前只开放单节点真实执行；多节点和更多 Adapter 进入 P7 规划。
+
+## 5. v0.7.0 发布记录
 
 **版本：** `v0.7.0`
 **发布日期：** 2026-07-02
@@ -235,7 +268,7 @@
 
 本节已作为 P4 MVP 工程验收后的 `v0.7.0` 版本记录收口。
 
-## 4.1 未发布变更
+## 5.1 v0.7.0 后续变更（已纳入 v0.8.0）
 
 - 将 00-52 号设计、架构、工程、交付和运维文档按内容领域迁移到 `docs/`，保留原编号、
   文件名和 Git 历史；架构评审和产品候选稿归档到 `docs/99-archive/`。
@@ -351,7 +384,7 @@
 - 启动幂等补强：正式 Run ID 由 `draft_id + plan_hash` 稳定生成，Sidecar 在 Run 发布后、
   草案 converted 提交前崩溃时，重试会复用已完整落盘的 Run。
 
-## 5. 里程碑
+## 6. 里程碑
 
 ### M1 项目规划基线
 
@@ -386,7 +419,13 @@ P4 D10 完成回归验收与版本收口，确认本地 Web、Local Sidecar、co
 Gate、Artifact、Attention、Agent、Canvas、Scheduler、Adapter manifest 和 task-baseline
 形成可运行、可演示、可回归的 MVP 基线。
 
-## 6. 详细版本记录
+### M7 真实工作流接入通过
+
+P6-08 确认 Historical Importer、真实 Run UI、RunDraft、Adapter Contract、Codex CLI
+隔离执行和 `C_md_master` 单节点闭环在同一系统中成立。W24/W23 保持只读和证据等级，
+真实执行形成 Artifact、Gate 与 Trace，发布 `v0.8.0`。
+
+## 7. 详细版本记录
 
 ### v0.5.1 版本演进记录机制
 
@@ -573,15 +612,16 @@ ArtifactSpec 表示运行产物的设计均废止。
 - 初版文档结构完整。
 - 总纲表格格式完成规范化。
 
-## 7. 下一版本规划
+## 8. 下一版本规划
 
-P6 完成 historical importer、RunDraft 和 Codex 单节点真实执行并通过验收后，建议评估发布：
+P6 已完成并发布：
 
 ```text
-v0.8.0 真实工作流工程接入基线
+v0.8.0 真实工作流工程接入基线（已发布）
 ```
 
-若 P6-08 仍有真实执行阻塞项，则继续保持 `v0.7.0`，不得只因文档或部分模块完成而升级。
+下一版本优先完成 P7-01 规划，评估多节点真实连续执行、官方 API Adapter 和跨 Adapter
+交接；在范围评审通过前不预设版本号。
 
 首个具备真实 Schema 校验器、Event Journal 和本地 runner 的可执行技术版本，建议发布：
 
@@ -589,7 +629,7 @@ v0.8.0 真实工作流工程接入基线
 v0.7.0 可执行技术原型
 ```
 
-## 8. 新版本记录模板
+## 9. 新版本记录模板
 
 ```markdown
 ## vX.Y.Z 版本名称

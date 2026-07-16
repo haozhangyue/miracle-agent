@@ -1,10 +1,10 @@
 # P6-07 Codex 单节点真实执行交付说明
 
-> 文档状态：CURRENT
+> 文档状态：ACTIVE
 >
 > 任务状态：P6-07 completed
 >
-> 下一任务：P6-08 回归验收与版本收口
+> 后续任务：P7-01 多节点真实执行与 Adapter 扩展规划；P6 最终结论见 54 号报告
 
 ## 1. 交付结论
 
@@ -113,4 +113,4 @@ POST /api/v0/operations/:operationId/cancel
 - 真实执行默认关闭，必须显式设置 `MIRACLE_ENABLE_REAL_CODEX=1`。
 - W23/W24 历史 Run 保持只读，本轮真实执行使用 Miracle 自有 RunDraft 和脱敏输入。
 - Hermes、OpenClaw、官方 API Adapter 尚未进入真实执行。
-- P6 是否升级到 `v0.8.0` 由 P6-08 全量回归和版本收口决定。
+- P6-08 全量回归已通过并发布 `v0.8.0`；最终结论见 54 号报告。

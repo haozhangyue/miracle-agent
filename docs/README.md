@@ -2,8 +2,8 @@
 
 > 文档状态：已落地目录索引。
 >
-> 本文件定义 Miracle 文档的目录、中文显示名称、文档职责和迁移映射。00-52 文档已按
-> 内容领域完成迁移，链接、阅读导航和版本记录已同步；文档有效性仍由 17 号导航维护。
+> 本文件定义 Miracle 文档的目录、中文显示名称、文档职责和迁移映射。00-54 文档已按
+> 内容领域完成迁移，后续 53-54 也已登记，链接、阅读导航和版本记录已同步；文档有效性仍由 17 号导航维护。
 
 ## 1. 设计目标
 
@@ -11,7 +11,7 @@ Miracle 文档从“按生成时间连续编号”升级为“按内容领域组
 导航”的三层结构：
 
 1. 内容领域决定文档放在哪里，解决用户找不到资料的问题。
-2. 原有 `00-52` 编号保留在文件名中，解决阶段顺序和 Git 历史追溯问题。
+2. 原有 `00-54` 编号保留在文件名中，解决阶段顺序和 Git 历史追溯问题。
 3. `17_文档资产关联与AI阅读导航.md` 继续维护 `CURRENT / ACTIVE / REFERENCE /
    HISTORICAL` 状态，目录位置不再承担全部状态语义。
 4. 根目录只保留仓库级入口、工程目录、任务基线和版本历史，不再堆放业务文档。
@@ -89,7 +89,7 @@ docs/
 | `90-reference`（参考资料） | 保存竞品、外部研究和非核心输入 | 参考资料可被需要时读取，但不能覆盖当前系统真相 |
 | `99-archive`（历史过程资产） | 保存评审意见、候选稿和被取代的计划 | 保留决策证据，但默认不参与 AI 当前任务读取 |
 
-## 4. 00-52 文档精确迁移映射
+## 4. 00-54 文档精确迁移映射
 
 状态说明：`CURRENT` 是当前阶段有效结果，`ACTIVE` 是仍有效的基础设计，`REFERENCE`
 是辅助输入，`HISTORICAL` 是默认可跳过的过程资产。
@@ -184,13 +184,14 @@ docs/
 
 | 原文件 | 目标目录（中文对照） | 状态 | 概念设计与原因 |
 |---|---|---|---|
-| `47_P6真实工作流工程实施计划与任务拆解.md` | `05-delivery/p6-engineering/`（交付/P6 总计划） | CURRENT | 定义 P6 三轨并行、P6-02 至 P6-08 依赖和验收。 |
-| `48_P6-02HistoricalImporter与Projection交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-02 导入） | CURRENT | 记录 Historical Importer、Projection 和只读保护的实现结果。 |
-| `49_P6-03真实Run_API与Web展示交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-03 Run） | CURRENT | 记录真实 Run API、Web 展示和历史运行态验收。 |
-| `50_P6-04RunDraft_API与Web交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-04 RunDraft） | CURRENT | 记录 RunDraft、Dry-run、确认、撤回和取消能力。 |
-| `51_P6-05AdapterContract与注册表交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-05 Adapter） | CURRENT | 记录 Adapter Invocation/Result/Receipt 和注册表边界。 |
-| `52_P6-06CodexCLI健康检查与工作区交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-06 Codex） | CURRENT | 记录 Codex CLI 健康检查、隔离工作区、进程控制和安全审查。 |
-| `53_P6-07Codex单节点真实执行交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-07 真实执行） | CURRENT | 记录 confirmed RunDraft 到真实 Codex CLI、Markdown Artifact、pending Gate 和 Trace 的完整闭环。 |
+| `47_P6真实工作流工程实施计划与任务拆解.md` | `05-delivery/p6-engineering/`（交付/P6 总计划） | ACTIVE | 定义 P6 三轨并行、P6-02 至 P6-08 依赖和验收。 |
+| `48_P6-02HistoricalImporter与Projection交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-02 导入） | ACTIVE | 记录 Historical Importer、Projection 和只读保护的实现结果。 |
+| `49_P6-03真实Run_API与Web展示交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-03 Run） | ACTIVE | 记录真实 Run API、Web 展示和历史运行态验收。 |
+| `50_P6-04RunDraft_API与Web交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-04 RunDraft） | ACTIVE | 记录 RunDraft、Dry-run、确认、撤回和取消能力。 |
+| `51_P6-05AdapterContract与注册表交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-05 Adapter） | ACTIVE | 记录 Adapter Invocation/Result/Receipt 和注册表边界。 |
+| `52_P6-06CodexCLI健康检查与工作区交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-06 Codex） | ACTIVE | 记录 Codex CLI 健康检查、隔离工作区、进程控制和安全审查。 |
+| `53_P6-07Codex单节点真实执行交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-07 真实执行） | ACTIVE | 记录 confirmed RunDraft 到真实 Codex CLI、Markdown Artifact、pending Gate 和 Trace 的完整闭环。 |
+| `54_P6回归验收与版本收口报告.md` | `06-operations/release/`（运维/P6 版本收口） | CURRENT | 记录 P6 工程、API、页面、安全真实性验收和 `v0.8.0` 发布结论。 |
 
 ### 4.9 操作、发布和仓库级资产
 
@@ -240,14 +241,14 @@ P4/P5/P6 实现  -> 05-delivery/ 当前阶段计划 + 对应工程代码
 本次迁移已执行以下边界：
 
 1. 只调整文档归档位置、链接和导航，不修改文档正文中的架构结论。
-2. 保留 `00-52` 编号和文件名，不用目录名称替代文档状态。
+2. 保留 `00-54` 编号和文件名，不用目录名称替代文档状态。
 3. 不改变 task-baseline 的目录和数据结构，只同步其中的证据路径。
 4. `prototypes/`、`assets/`、`fixtures/`、`apps/`、`packages/` 和 `plans/` 保持原位置。
 5. 历史评审和候选方案进入 `99-archive/`，默认不参与 AI 当前任务读取。
 
 ## 7. 执行结果与阅读入口
 
-- 00-52 文档已全部进入 `docs/` 对应领域目录，历史评审和候选方案进入 `99-archive/`。
+- 00-54 文档已全部进入 `docs/` 对应领域目录，历史评审和候选方案进入 `99-archive/`。
 - 根目录 README 只保留仓库入口、工程目录、任务基线和版本历史；详细文档目录以本文件为准。
 - AI 阅读顺序与 CURRENT 结果以 [`17_文档资产关联与AI阅读导航.md`](00-navigation/asset-index/17_文档资产关联与AI阅读导航.md) 为准。
 - 当前阶段路线与任务拆解见 [`07_后续对接路线图与任务拆解.md`](01-strategy/roadmap/07_后续对接路线图与任务拆解.md)。
