@@ -22,7 +22,8 @@ draft 与 D9 Web run refresh/polling 已落地，D10 MVP 回归验收与版本�
 UI 展示验收方案、`P5-07` 半自动新 Run 草案设计、`P5-08` 首个真实 Adapter
 边界评估和 `P5-09` 回归验收均已完成。P5 形成真实工作流接入设计基线，首接推荐
 Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与 Projection 和
-`P6-04` 至 `P6-06` 已完成；当前主线进入 `P6-07` C_md_master 单节点真实执行。
+`P6-04` 至 `P6-07` 已完成，confirmed RunDraft 到真实 Codex CLI、Markdown Artifact、
+pending Gate 和 Trace 已形成单节点闭环；当前主线进入 `P6-08` 回归验收与版本收口。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -57,6 +58,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - [14_技术架构选型与系统架构图.md](docs/02-architecture/system/14_技术架构选型与系统架构图.md)：技术选型和系统架构基线。
 - [16_融合_产品信息架构与设计图规划.md](docs/03-product/information-architecture/16_融合_产品信息架构与设计图规划.md)：当前产品信息架构和 Web 交互基线。
 - [47_P6真实工作流工程实施计划与任务拆解.md](docs/05-delivery/p6-engineering/47_P6真实工作流工程实施计划与任务拆解.md)：当前工程实施计划。
+- [53_P6-07Codex单节点真实执行交付说明.md](docs/05-delivery/p6-engineering/53_P6-07Codex单节点真实执行交付说明.md)：confirmed RunDraft、真实 Codex CLI、Artifact/Gate/Trace 闭环和 opt-in 操作。
 - [40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)：启动、菜单操作、版本变化和常见问题。
 
 目录约定：

@@ -277,7 +277,22 @@ export class CodexCliAdapter {
     try {
       const canonicalAttempt = await this.verifyCanonicalAttemptWorkspace(invocation, attempt);
 
-      const child = spawn(this.executablePath, [...(this.options.command_prefix_args ?? []), "exec", "--json", "--ephemeral", "--sandbox", invocation.runtime_control.sandbox, "--cd", canonicalAttempt.work_dir, "-"], {
+      const child = spawn(this.executablePath, [
+        ...(this.options.command_prefix_args ?? []),
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--sandbox",
+        invocation.runtime_control.sandbox,
+        "--cd",
+        canonicalAttempt.work_dir,
+        "--skip-git-repo-check",
+        "--output-schema",
+        path.join(canonicalAttempt.meta_dir, "output.schema.json"),
+        "--output-last-message",
+        path.join(canonicalAttempt.output_dir, "final.json"),
+        "-"
+      ], {
         cwd: canonicalAttempt.work_dir,
         env: this.childEnvironment(),
         detached: process.platform !== "win32",
@@ -354,6 +369,21 @@ export class CodexCliAdapter {
     if (operation.settled || operation.intent) return "already_finished";
     await this.requestTermination(operation, "cancelled");
     return "cancelled";
+  }
+
+  listActiveOperations(runId?: string) {
+    return Array.from(this.operations.values())
+      .filter((operation) => !operation.settled && (!runId || operation.invocation.run_id === runId))
+      .map((operation) => ({
+        operation_id: operation.invocation.operation_id,
+        attempt_id: operation.invocation.attempt_id,
+        run_id: operation.invocation.run_id,
+        node_run_id: operation.invocation.node_run_id,
+        adapter_id: operation.invocation.adapter_id,
+        provider: operation.invocation.provider,
+        status: operation.intent === "cancelled" ? "cancel_requested" : "running",
+        started_at: operation.startedAt
+      }));
   }
 
   async recoverOrphanedOperations() {
@@ -554,6 +584,7 @@ export class CodexCliAdapter {
       ...(errorCode ? { error: { code: errorCode, recoverable } } : {})
     });
     await this.safeWriteAttemptMetadata(operation.attempt, status);
+    this.operations.delete(operation.invocation.operation_id);
     operation.resolve(result);
   }
 

@@ -1,5 +1,15 @@
 [
   {
+    "template_id": "codex-md-master-v0",
+    "workflow_id": "codex-md-master-v0",
+    "domain": "content-production",
+    "name": "Codex 单节点 Markdown 母稿",
+    "version": "0.1.0",
+    "status": "experimental",
+    "source": "local_registry",
+    "tags": ["Codex CLI", "single-node", "manual-gate"]
+  },
+  {
     "template_id": "content-production-v0",
     "workflow_id": "content-production-v0",
     "domain": "content-production",

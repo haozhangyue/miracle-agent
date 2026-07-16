@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+
 const args = process.argv.slice(2);
 
 if (args.length === 1 && args[0] === "--version") {
@@ -40,6 +43,23 @@ if (args[0] === "exec") {
     process.on("SIGTERM", () => {});
     setInterval(() => {}, 1_000);
   } else {
+    const outputFlag = args.indexOf("--output-last-message");
+    if (outputFlag >= 0 && args[outputFlag + 1]) {
+      const outputPath = path.resolve(args[outputFlag + 1]);
+      const cdFlag = args.indexOf("--cd");
+      const workDir = cdFlag >= 0 && args[cdFlag + 1] ? path.resolve(args[cdFlag + 1]) : process.cwd();
+      const launchContext = await readFile(path.resolve(workDir, "../input/launch_context.json"), "utf8")
+        .then((value) => JSON.parse(value))
+        .catch(() => ({}));
+      await mkdir(path.dirname(outputPath), { recursive: true });
+      await writeFile(
+        outputPath,
+        launchContext.inputs?.force_invalid_output
+          ? JSON.stringify({ artifact_type: "text", content: "invalid" })
+          : JSON.stringify({ artifact_type: "markdown", content: "# Miracle P6-07\n\n这是 fake-codex 生成并经过校验的 Markdown 母稿。\n" }),
+        "utf8"
+      );
+    }
     process.stdout.write('{"type":"thread.started","thread_id":"thread_fake"}\n');
     process.stdout.write('{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}\n');
     process.exit(0);

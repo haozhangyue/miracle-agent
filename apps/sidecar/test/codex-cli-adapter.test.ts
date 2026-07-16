@@ -339,9 +339,13 @@ describe("CodexCliAdapter process lifecycle", () => {
     const attempt = await createWorkspace(adapter, "attempt_cancel");
     const handle = await adapter.startOperation({ invocation: invocation(attempt, "op_cancel"), attempt_workspace: attempt, timeout_ms: 1_000 });
 
+    expect(adapter.listActiveOperations("run_001")).toEqual([
+      expect.objectContaining({ operation_id: "op_cancel", node_run_id: "nr_001", adapter_id: "codex-cli-real", status: "running" })
+    ]);
     await expect(handle.cancel()).resolves.toBe("cancelled");
     await expect(adapter.cancelOperation("op_cancel")).resolves.toBe("already_finished");
     await expect(handle.result).resolves.toMatchObject({ status: "cancelled", error: { code: "operation_cancelled", recoverable: false } });
+    expect(adapter.listActiveOperations("run_001")).toEqual([]);
   });
 
   it("continues cancellation and timeout signalling when operation receipt writes fail", async () => {

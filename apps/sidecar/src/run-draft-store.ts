@@ -55,7 +55,7 @@ export interface RunDraftBundle {
 }
 
 export interface RunDraftAuditRecord {
-  type: "run_draft_created" | "run_draft_updated" | "dry_run_generated" | "launch_confirmation_recorded" | "run_draft_cancelled";
+  type: "run_draft_created" | "run_draft_updated" | "dry_run_generated" | "launch_confirmation_recorded" | "run_draft_cancelled" | "run_draft_converted";
   draft_id: string;
   actor: string;
   timestamp: string;
@@ -232,7 +232,7 @@ export class RunDraftStore {
   private async appendAudit(input: {
     draft: RunDraft;
     actor: string;
-    type: "run_draft_created" | "run_draft_updated" | "dry_run_generated" | "launch_confirmation_recorded" | "run_draft_cancelled";
+    type: RunDraftAuditRecord["type"];
     previous_hash?: string;
     next_hash?: string;
     changed_fields: string[];
@@ -542,21 +542,62 @@ export class RunDraftStore {
     });
   }
 
-  async requestLaunch(input: { draft_id: string; adapter_ready: boolean; draft_plan_id: string; plan_hash: string; confirmation_id: string }) {
+  async requestLaunch(input: {
+    draft_id: string;
+    adapter_ready: boolean;
+    draft_plan_id: string;
+    plan_hash: string;
+    confirmation_id: string;
+    actor?: string;
+    launch?: (bundle: RunDraftBundle & { plan: RunDraftDryRunPlan; confirmation: LaunchConfirmation }) => Promise<{
+      run_id: string;
+      reused?: boolean;
+      rollback?: () => Promise<void>;
+    }>;
+  }) {
     return this.withDraftLock(input.draft_id, async () => {
-    const { draft, plan, confirmation, snapshot } = await this.readUnlocked(input.draft_id);
-    const currentWorkflow = await this.readWorkflow(draft.workflow_id);
-    const currentWorkflowHash = canonicalPlanHash(currentWorkflow);
-    if (draft.status !== "confirmed") {
+    const bundle = await this.readUnlocked(input.draft_id);
+    const { draft, plan, confirmation, snapshot } = bundle;
+    if (draft.status !== "confirmed" && draft.status !== "converted") {
       throw new RunDraftStoreError("launch_handoff_required", "Only a confirmed RunDraft may be handed to the Run launch service.");
     }
-    if (!plan || !confirmation || input.draft_plan_id !== plan.draft_plan_id || input.plan_hash !== plan.plan_hash || input.confirmation_id !== confirmation.confirmation_id || confirmation.decision !== "confirmed" || confirmation.plan_hash !== plan.plan_hash || draft.latest_plan_hash !== plan.plan_hash || draft.confirmation_id !== confirmation.confirmation_id || snapshot.workflow_source_hash !== draft.workflow_source_hash || currentWorkflowHash !== draft.workflow_source_hash) {
+    const currentWorkflowHash = draft.status === "confirmed" ? canonicalPlanHash(await this.readWorkflow(draft.workflow_id)) : undefined;
+    if (!plan || !confirmation || input.draft_plan_id !== plan.draft_plan_id || input.plan_hash !== plan.plan_hash || input.confirmation_id !== confirmation.confirmation_id || confirmation.decision !== "confirmed" || confirmation.plan_hash !== plan.plan_hash || draft.latest_plan_hash !== plan.plan_hash || draft.confirmation_id !== confirmation.confirmation_id || snapshot.workflow_source_hash !== draft.workflow_source_hash || (draft.status === "confirmed" && currentWorkflowHash !== draft.workflow_source_hash)) {
       throw new RunDraftStoreError("launch_handoff_required", "RunDraft launch references do not match the latest frozen plan and confirmation.");
+    }
+    if (draft.status === "converted" && draft.converted_run_id) {
+      return { run_id: draft.converted_run_id, reused: true };
     }
     if (!input.adapter_ready) {
       throw new RunDraftStoreError("adapter_not_ready", "Adapter is not ready; the confirmed RunDraft remains unchanged.");
     }
-    throw new RunDraftStoreError("launch_handoff_required", "Run launch wiring belongs to the unified POST /runs service.");
+    if (!input.launch) {
+      throw new RunDraftStoreError("launch_handoff_required", "Run launch wiring belongs to the unified POST /runs service.");
+    }
+    let launched: Awaited<ReturnType<typeof input.launch>> | undefined;
+    try {
+      launched = await input.launch({ ...bundle, plan, confirmation });
+      const converted: RunDraft = {
+        ...draft,
+        status: "converted",
+        converted_run_id: launched.run_id,
+        revision: draft.revision + 1,
+        updated_at: this.now()
+      };
+      await this.writeJson(this.paths(input.draft_id).draft, converted);
+      await this.appendAudit({
+        draft: converted,
+        actor: input.actor ?? "system",
+        type: "run_draft_converted",
+        previous_hash: canonicalPlanHash(draft),
+        next_hash: canonicalPlanHash(converted),
+        changed_fields: ["status", "converted_run_id"]
+      });
+      return { run_id: launched.run_id, reused: launched.reused ?? false };
+    } catch (error) {
+      await launched?.rollback?.().catch(() => undefined);
+      throw error;
+    }
     });
   }
 }

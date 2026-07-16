@@ -21,6 +21,7 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Square,
   Workflow,
   XCircle
 } from "lucide-react";
@@ -119,6 +120,12 @@ function executionFeedback(status: string) {
       body: "轮询会自动刷新 NodeRun、Attempt 和事件审计。若长期无新事件，可手动刷新或检查 Sidecar 日志。",
       action: "等待 AdapterResult 回执",
       tone: "info"
+    },
+    reviewing: {
+      title: "产物等待人工审核",
+      body: "节点执行已经完成，ArtifactManifest 与 GateInstance 已提交。审核通过前不会自动进入受 Gate 约束的下游。",
+      action: "查看 Gate",
+      tone: "warn"
     },
     queued: {
       title: "节点等待调度",
@@ -529,7 +536,7 @@ function DryRunPage({ workflowId, draftId, setRunId, go }: { workflowId: string;
         <button onClick={() => decideDraft("revise")} disabled={draft?.status !== "confirmed"}>撤回确认</button>
         <button className="dangerAction" onClick={() => decideDraft("cancel")} disabled={draft?.status === "cancelled" || draft?.status === "converted"}>取消草案</button>
         <button className="primary" onClick={confirmDraft} disabled={!confirmable}><CheckCircle2 size={16} /> 确认当前计划</button>
-        <button onClick={tryStartRun} disabled={draft?.status !== "confirmed"}><Play size={16} /> 检查启动条件</button>
+        <button onClick={tryStartRun} disabled={draft?.status !== "confirmed"}><Play size={16} /> 启动正式 Run</button>
       </div>
       {actionState && <div className="receiptLine">{actionState}</div>}
     </section>
@@ -546,11 +553,14 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
   const run = useApi<any>(`/runs/${runId}`, [runId, refresh]);
   const dag = useApi<any>(`/runs/${runId}/dag`, [runId, refresh]);
   const events = useApi<any>(`/runs/${runId}/events`, [runId, refresh]);
+  const operations = useApi<{ operations: any[] }>(`/operations?run_id=${runId}`, [runId, refresh]);
   const attention = useApi<any>(`/attention?run_id=${runId}`, [runId, refresh]);
   const nodesForRun = (dag.data?.dag.nodes ?? []).filter((item: any) => String(item.node_run_id ?? "").startsWith(`nr_${runId}_`));
   const selectedNodeForRun = selectedNode.startsWith(`nr_${runId}_`) && nodesForRun.some((item: any) => item.node_run_id === selectedNode) ? selectedNode : (nodesForRun[0]?.node_run_id ?? "");
   const node = useApi<any>(`/runs/${runId}/nodes/${selectedNodeForRun}`, [runId, selectedNodeForRun, refresh], Boolean(selectedNodeForRun));
   const historical = isHistoricalRun(run.data?.run, run.data?.view_meta);
+  const activeOperation = operations.data?.operations.find((operation) => operation.node_run_id === selectedNodeForRun);
+  const selectedGateForNode = run.data?.gates?.find((gate: any) => (node.data?.node?.output_artifacts ?? []).includes(gate.target?.id));
   const statusSummary = useMemo(() => nodeStatusSummary(run.data?.nodes ?? []), [run.data?.nodes]);
   const attentionCount = attention.data?.attention?.length ?? run.data?.attention?.length ?? 0;
   const stages = useMemo(() => {
@@ -635,6 +645,17 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
       setSchedulerState(error instanceof Error ? error.message : "Scheduler 自动推进失败");
     }
   }
+  async function cancelActiveOperation() {
+    if (!activeOperation) return;
+    setExecuteState(`正在取消 ${activeOperation.operation_id}`);
+    try {
+      const result = await api<any>(`/operations/${activeOperation.operation_id}/cancel`, { method: "POST", body: JSON.stringify({}) });
+      setExecuteState(`取消请求 · ${result.status}`);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setExecuteState(error instanceof Error ? error.message : "取消操作失败");
+    }
+  }
   const selectedStatus = String(node.data?.node?.status ?? "");
   const executable = ["queued", "running"].includes(selectedStatus);
 
@@ -712,8 +733,24 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
               <ExecutionFeedback status={selectedStatus} go={go} onRefresh={() => setRefresh((value) => value + 1)} />
               <div className="safeActions">
                 {!historical && <button onClick={executeSelectedNode} disabled={!executable}><Play size={16} /> 执行当前节点</button>}
+                {!historical && activeOperation && <button className="dangerAction" onClick={cancelActiveOperation}><Square size={15} /> 取消 Operation</button>}
+                {selectedGateForNode && <button onClick={() => go("review")}><ClipboardCheck size={15} /> 查看 Gate</button>}
                 <button onClick={() => setRefresh((value) => value + 1)}>刷新</button>
               </div>
+              {activeOperation && (
+                <div className="operationCard">
+                  <div><strong>实时 Operation</strong><Pill value={activeOperation.status} /></div>
+                  <span>{activeOperation.adapter_id} · {activeOperation.provider}</span>
+                  <small>{activeOperation.operation_id}</small>
+                </div>
+              )}
+              {selectedGateForNode && (
+                <div className="gateInline">
+                  <strong>{selectedGateForNode.gate_spec_id}</strong>
+                  <Pill value={selectedGateForNode.status} />
+                  <small>Artifact · {selectedGateForNode.target?.id}</small>
+                </div>
+              )}
               {historical && <div className="readOnlyNote">Historical Run 仅供查看，节点执行与调度操作已隐藏。</div>}
               {executeState && <div className="receiptLine">{executeState}</div>}
               <h3>NodeRun</h3>
@@ -727,7 +764,9 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
                     <div key={attempt.attempt_id}>
                       <strong>{attempt.attempt_id}</strong>
                       <Pill value={attempt.status} />
-                      <small>{attempt.operation_id}</small>
+                      <span>{attempt.provider_receipt?.adapter_id ?? "-"} · {attempt.provider_receipt?.provider ?? "-"}</span>
+                      <small>{attempt.operation_id} · {attempt.provider_receipt?.latency_ms ?? 0} ms · cost {attempt.provider_receipt?.cost ?? "-"}</small>
+                      <small>隔离工作区元数据：{attempt.attempt_id}（不显示外部 runtime 绝对路径）</small>
                     </div>
                   ))}
                 </div>

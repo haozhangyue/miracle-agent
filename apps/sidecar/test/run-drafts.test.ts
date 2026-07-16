@@ -290,6 +290,51 @@ describe("RunDraftStore", () => {
     expect((await store.read(confirmed.draft.draft_id)).draft.status).toBe("confirmed");
   });
 
+  it("rolls back a launched run when the converted draft cannot be committed", async () => {
+    const confirmed = await createConfirmedDraft("rundraft_store_launch_rollback");
+    if (!confirmed.plan) throw new Error("Expected a stored dry-run plan");
+    const auditPath = path.join(workspaceDir, "run-drafts", confirmed.draft.draft_id, "draft_audit.jsonl");
+    let rolledBack = false;
+
+    await expect(store.requestLaunch({
+      draft_id: confirmed.draft.draft_id,
+      adapter_ready: true,
+      draft_plan_id: confirmed.plan.draft_plan_id,
+      plan_hash: confirmed.plan.plan_hash,
+      confirmation_id: confirmed.confirmation.confirmation_id,
+      actor: "operator",
+      launch: async () => {
+        await rm(auditPath, { force: true });
+        await mkdir(auditPath);
+        return { run_id: "run_should_rollback", rollback: async () => { rolledBack = true; } };
+      }
+    })).rejects.toBeTruthy();
+
+    expect(rolledBack).toBe(true);
+    const restored = (await store.read(confirmed.draft.draft_id)).draft;
+    expect(restored.status).toBe("confirmed");
+    expect(restored).not.toHaveProperty("converted_run_id");
+  });
+
+  it("reuses a converted run from frozen references after the registry workflow changes", async () => {
+    const confirmed = await createConfirmedDraft("rundraft_store_launch_reuse");
+    if (!confirmed.plan) throw new Error("Expected a stored dry-run plan");
+    const launchInput = {
+      draft_id: confirmed.draft.draft_id,
+      adapter_ready: true,
+      draft_plan_id: confirmed.plan.draft_plan_id,
+      plan_hash: confirmed.plan.plan_hash,
+      confirmation_id: confirmed.confirmation.confirmation_id,
+      actor: "operator",
+      launch: async () => ({ run_id: "run_reused" })
+    };
+
+    await expect(store.requestLaunch(launchInput)).resolves.toEqual({ run_id: "run_reused", reused: false });
+    await writeFile(path.join(workflowsDir, `${workflow.id}.json`), JSON.stringify({ ...workflow, version: "0.2.0" }), "utf8");
+    await expect(store.requestLaunch(launchInput)).resolves.toEqual({ run_id: "run_reused", reused: true });
+    await expect(store.requestLaunch({ ...launchInput, confirmation_id: "launch_confirm_other" })).rejects.toMatchObject({ code: "launch_handoff_required" });
+  });
+
   it("recovers the previous complete bundle after a crashed multi-file transaction", async () => {
     const created = await store.create({ draft_id: "rundraft_store_recovery", workflow_id: workflow.id, actor: "operator" });
     const draftDir = path.join(workspaceDir, "run-drafts", created.draft.draft_id);

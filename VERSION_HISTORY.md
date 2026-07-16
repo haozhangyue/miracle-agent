@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.7.0` |
 | 版本名称 | P4 MVP 本地闭环验收基线 |
-| 当前阶段 | P6-04 至 P6-06 已完成；运行版本仍为 v0.7.0，当前任务为 `P6-07` C_md_master 单节点真实执行 |
+| 当前阶段 | P6-04 至 P6-07 已完成；运行版本仍为 v0.7.0，当前任务为 `P6-08` 回归验收与版本收口 |
 | 基线提交 | `1bd740f` |
 | 基线日期 | 2026-06-18 |
 | 最终评审 | 通过 |
@@ -338,6 +338,18 @@
 - 修复 monorepo 根级命令可能读取旧 `packages/core/dist` 的问题：`dev`、`test` 和
   `build` 现在先构建 Core，再启动或验证 Sidecar/Web，确保干净克隆和分支合并后的
   RunDraft/Codex 导出保持一致。
+- 完成 `P6-07` Codex 单节点真实执行：confirmed RunDraft 可原子转换为正式 Run，
+  Scheduler 调用仓库外隔离 Codex CLI，受控输出经 schema、路径、UTF-8、大小和 SHA-256
+  校验后提交 Markdown Artifact、pending Gate、NodeAttempt 和 TraceEvent。
+- 新增 `codex-md-master-v0` 实验模板、active operation 查询/取消和 Run 工作区真实
+  Adapter、operation、耗时、Gate 与隔离元数据展示。
+- 修复真实 Codex 在非 Git attempt workspace 中退出的问题，加入
+  `--skip-git-repo-check`；修复结构化 output schema 的 `artifact_type` 缺少 type 导致
+  官方 API 拒绝的问题。
+- fake-codex 自动回归覆盖成功、无效输出、幂等引用和事务回滚；本机 Codex CLI
+  `0.144.2` 脱敏小样本执行通过。同步操作手册、截图和 task-baseline，当前进入 P6-08。
+- 启动幂等补强：正式 Run ID 由 `draft_id + plan_hash` 稳定生成，Sidecar 在 Run 发布后、
+  草案 converted 提交前崩溃时，重试会复用已完整落盘的 Run。
 
 ## 5. 里程碑
 

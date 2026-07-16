@@ -190,6 +190,7 @@ docs/
 | `50_P6-04RunDraft_API与Web交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-04 RunDraft） | CURRENT | 记录 RunDraft、Dry-run、确认、撤回和取消能力。 |
 | `51_P6-05AdapterContract与注册表交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-05 Adapter） | CURRENT | 记录 Adapter Invocation/Result/Receipt 和注册表边界。 |
 | `52_P6-06CodexCLI健康检查与工作区交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-06 Codex） | CURRENT | 记录 Codex CLI 健康检查、隔离工作区、进程控制和安全审查。 |
+| `53_P6-07Codex单节点真实执行交付说明.md` | `05-delivery/p6-engineering/`（交付/P6-07 真实执行） | CURRENT | 记录 confirmed RunDraft 到真实 Codex CLI、Markdown Artifact、pending Gate 和 Trace 的完整闭环。 |
 
 ### 4.9 操作、发布和仓库级资产
 

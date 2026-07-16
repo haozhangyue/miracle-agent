@@ -1,0 +1,57 @@
+{
+  "id": "codex-md-master-v0",
+  "name": "Codex 单节点 Markdown 母稿",
+  "version": "0.1.0",
+  "domain": "content-production",
+  "category": "content",
+  "nodes": [
+    {
+      "id": "C_md_master",
+      "name": "内容 MD 母稿",
+      "type": "agent",
+      "capability_requirements": ["content.longform_draft", "fact.safe_writing"],
+      "recommended_libraries": ["content-packaging-library"],
+      "agent_candidates": ["content-agent"],
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "md_master",
+          "kind": "artifact",
+          "artifact_type": "markdown",
+          "artifact_spec_ref": "md_master_artifact",
+          "required": true
+        }
+      ],
+      "review_gate_ref": "C_md_master_gate",
+      "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    }
+  ],
+  "edges": [],
+  "gates": [
+    {
+      "id": "C_md_master_gate",
+      "name": "母稿人工审核",
+      "target_artifact_ref": "md_master_artifact",
+      "required_before": [],
+      "actions": ["approve", "reject", "request_changes"]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "md_master_artifact",
+      "type": "markdown",
+      "produced_by": "C_md_master",
+      "review_policy": { "mode": "manual", "gate_spec_id": "C_md_master_gate" },
+      "required_for": [],
+      "versioning": { "immutable": true, "compare_by": "hash" }
+    }
+  ],
+  "provider_policy": {
+    "default_provider": "codex-local",
+    "allowed_providers": ["codex-local"],
+    "required_credentials": [],
+    "fallback_providers": []
+  },
+  "layouts": { "dag": { "C_md_master": { "x": 80, "y": 80, "stage": "内容生成" } } },
+  "registry_meta": { "source": "local_registry", "status": "experimental" }
+}
