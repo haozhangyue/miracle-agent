@@ -23,8 +23,8 @@ UI 展示验收方案、`P5-07` 半自动新 Run 草案设计、`P5-08` 首个�
 边界评估和 `P5-09` 回归验收均已完成。P5 形成真实工作流接入设计基线，首接推荐
 Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与 Projection 和
 `P6-04` 至 `P6-08` 已完成并通过工程、API、页面、安全与真实性验收，形成 `v0.8.0`
-真实工作流工程接入基线。当前主线为 `P7-01` 多节点真实执行与模型 Adapter
-扩展设计评审：先用 Codex CLI 完成多节点纵向闭环和 retry/fallback，再通过
+真实工作流工程接入基线。`P7-01` 总体设计已通过人工评审，当前主线推进到
+`P7-02` 多节点 ExecutionPlan 与输入解析：先用 Codex CLI 完成多节点纵向闭环和 retry/fallback，再通过
 通用 Model API Adapter 接入 DeepSeek、Kimi 和 MiniMax；P7 不接入 OpenAI 官方 API。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
@@ -63,6 +63,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - [53_P6-07Codex单节点真实执行交付说明.md](docs/05-delivery/p6-engineering/53_P6-07Codex单节点真实执行交付说明.md)：confirmed RunDraft、真实 Codex CLI、Artifact/Gate/Trace 闭环和 opt-in 操作。
 - [54_P6回归验收与版本收口报告.md](docs/06-operations/release/54_P6回归验收与版本收口报告.md)：P6 工程、46 项 API、安全真实性、页面截图和 `v0.8.0` 发布结论。
 - [55_P7多节点真实执行与模型Adapter扩展总体设计.md](docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md)：P7 Codex 纵向闭环、retry/fallback 和低成本模型 API 扩展评审基线。
+- [56_P7工程实施计划与任务拆解.md](docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md)：P7-02 至 P7-10 的逐文件 TDD 实施步骤、依赖、提交点和验收命令。
 - [40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)：启动、菜单操作、版本变化和常见问题。
 
 目录约定：
@@ -71,7 +72,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - `90-reference`：外部研究和参考输入，不替代当前架构真相。
 - `99-archive`：历史评审和候选方案，默认可跳过。
 
-`00-55` 编号继续保留在文件名中，用于阶段追溯；目录只负责按内容领域组织，不替代文档状态。
+`00-56` 编号继续保留在文件名中，用于阶段追溯；目录只负责按内容领域组织，不替代文档状态。
 
 `prototypes/`、`assets/`、`fixtures/`、`apps/`、`packages/` 和 `plans/` 保持为工程或资产目录，不与设计说明 Markdown 混放。
 

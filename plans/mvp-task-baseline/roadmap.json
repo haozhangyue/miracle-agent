@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p7-01",
+  "current_node_id": "p7-02",
   "generated_from": [
     "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
     "docs/04-engineering/p3-detailed-design/23_P3MVP任务拆解与验收计划.md",
@@ -16,6 +16,8 @@
     "docs/05-delivery/p4-mvp/32_P4第五轮_D7_Adapter插件目录实体化交付说明.md",
     "docs/05-delivery/p4-mvp/33_P4_MVP回归验收预备清单.md",
     "docs/05-delivery/p4-mvp/34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md",
+    "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md",
+    "docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md",
     "docs/06-operations/release/35_P4_MVP回归验收与版本收口报告.md",
     "docs/05-delivery/p5-real-workflow/36_P5真实工作流接入详细计划与任务拆解.md",
     "docs/05-delivery/p5-real-workflow/37_P5-01真实工作区盘点报告.md",
@@ -227,6 +229,7 @@
       "evidence_paths": [
         "docs/06-operations/release/54_P6回归验收与版本收口报告.md",
         "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md",
+        "docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md",
         "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
         "plans/mvp-task-baseline/roadmap.json"
       ]
@@ -721,25 +724,25 @@
       "id": "p7-01",
       "day": "P7-01",
       "title": "多节点执行与模型路由总体设计",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p7-planning",
       "parallel_group": "real-adapter-expansion",
       "depends_on": ["p6-08"],
       "can_parallelize": false,
       "recommended_agent": "Lead",
-      "deliverables": ["P7 范围与顺序", "ExecutionPlan 与真实 Artifact 交接协议", "retry/fallback 边界", "ModelApiAdapter/ProviderDriver/ProviderProfile 分层", "DeepSeek/Kimi/MiniMax 接入顺序", "OpenAI 官方 API 排除声明", "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md"]
+      "deliverables": ["P7 范围与顺序", "ExecutionPlan 与真实 Artifact 交接协议", "retry/fallback 边界", "ModelApiAdapter/ProviderDriver/ProviderProfile 分层", "DeepSeek/Kimi/MiniMax 接入顺序", "OpenAI 官方 API 排除声明", "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md", "docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md"]
     },
     {
       "id": "p7-02",
       "day": "P7-02",
       "title": "多节点 ExecutionPlan 与输入解析",
-      "status": "planned",
+      "status": "current",
       "serial_group": "p7-vertical-closure",
       "parallel_group": "p7-mainline",
       "depends_on": ["p7-01"],
       "can_parallelize": false,
       "recommended_agent": "Lead",
-      "deliverables": ["ExecutionPlan", "NodeExecutionDecision", "ResolvedNodeInput", "Artifact 绑定与就绪判断"]
+      "deliverables": ["ExecutionPlan", "NodeExecutionDecision", "ResolvedNodeInput", "Artifact 绑定与就绪判断", "docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md"]
     },
     {
       "id": "p7-03",
