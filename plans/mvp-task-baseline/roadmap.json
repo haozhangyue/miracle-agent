@@ -221,11 +221,12 @@
     },
     {
       "id": "p7",
-      "label": "P7 多节点真实执行与 Adapter 扩展",
+      "label": "P7 Codex 多节点执行与模型 Adapter 扩展",
       "status": "current",
-      "summary": "P6 已建立真实单节点基线；当前先规划多节点连续执行、重试与 fallback、官方 API 和更多 Agent Runtime Adapter。",
+      "summary": "先以 Codex CLI 完成多节点纵向闭环和 retry/fallback，再通过通用 Model API Adapter 接入 DeepSeek、Kimi 和 MiniMax；P7 不接 OpenAI 官方 API。",
       "evidence_paths": [
         "docs/06-operations/release/54_P6回归验收与版本收口报告.md",
+        "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md",
         "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
         "plans/mvp-task-baseline/roadmap.json"
       ]
@@ -719,14 +720,122 @@
     {
       "id": "p7-01",
       "day": "P7-01",
-      "title": "多节点真实执行与 Adapter 扩展规划",
+      "title": "多节点执行与模型路由总体设计",
       "status": "current",
       "serial_group": "p7-planning",
       "parallel_group": "real-adapter-expansion",
       "depends_on": ["p6-08"],
       "can_parallelize": false,
       "recommended_agent": "Lead",
-      "deliverables": ["P7 范围设计", "多节点执行协议", "重试/fallback 边界", "官方 API Adapter 计划", "Hermes/OpenClaw 接入优先级"]
+      "deliverables": ["P7 范围与顺序", "ExecutionPlan 与真实 Artifact 交接协议", "retry/fallback 边界", "ModelApiAdapter/ProviderDriver/ProviderProfile 分层", "DeepSeek/Kimi/MiniMax 接入顺序", "OpenAI 官方 API 排除声明", "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md"]
+    },
+    {
+      "id": "p7-02",
+      "day": "P7-02",
+      "title": "多节点 ExecutionPlan 与输入解析",
+      "status": "planned",
+      "serial_group": "p7-vertical-closure",
+      "parallel_group": "p7-mainline",
+      "depends_on": ["p7-01"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["ExecutionPlan", "NodeExecutionDecision", "ResolvedNodeInput", "Artifact 绑定与就绪判断"]
+    },
+    {
+      "id": "p7-03",
+      "day": "P7-03",
+      "title": "Codex 多节点产物交接",
+      "status": "planned",
+      "serial_group": "p7-vertical-closure",
+      "parallel_group": "p7-mainline",
+      "depends_on": ["p7-02"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["Artifact 版本/hash 交接", "下游 AdapterInvocation 输入快照", "真实交接测试"]
+    },
+    {
+      "id": "p7-04",
+      "day": "P7-04",
+      "title": "Codex Scheduler 连续执行闭环",
+      "status": "planned",
+      "serial_group": "p7-vertical-closure",
+      "parallel_group": "p7-mainline",
+      "depends_on": ["p7-03"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["多节点连续执行", "Gate 暂停/批准/拒绝/恢复", "脱敏真实工作流"]
+    },
+    {
+      "id": "p7-05",
+      "day": "P7-05",
+      "title": "Retry 与故障恢复",
+      "status": "planned",
+      "serial_group": "p7-vertical-closure",
+      "parallel_group": "p7-mainline",
+      "depends_on": ["p7-04"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["错误分类", "退避与次数/时间/成本预算", "NodeAttempt 历史", "Attention 恢复动作"]
+    },
+    {
+      "id": "p7-06",
+      "day": "P7-06",
+      "title": "通用 Model API Adapter",
+      "status": "planned",
+      "serial_group": "p7-vertical-closure",
+      "parallel_group": "p7-mainline",
+      "depends_on": ["p7-05"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["ModelApiAdapter", "ProviderDriver", "ProviderProfile", "凭证、usage、超时和取消契约"]
+    },
+    {
+      "id": "p7-07",
+      "day": "P7-07",
+      "title": "DeepSeek/Kimi/MiniMax Provider 接入",
+      "status": "planned",
+      "serial_group": "p7-provider-drivers",
+      "parallel_group": "provider-drivers",
+      "depends_on": ["p7-06"],
+      "can_parallelize": true,
+      "recommended_agent": "Provider agents",
+      "deliverables": ["三个 Provider Driver", "fake server 契约测试", "至少一个真实脱敏小样本", "configured_unverified 状态", "官方文档核对记录"]
+    },
+    {
+      "id": "p7-08",
+      "day": "P7-08",
+      "title": "Provider fallback 与灵活路由",
+      "status": "planned",
+      "serial_group": "p7-vertical-closure",
+      "parallel_group": "p7-mainline",
+      "depends_on": ["p7-05", "p7-07"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["ProviderRoutingDecision", "同类 Provider fallback", "Codex/Model API 人工确认边界", "成本与 capability 策略"]
+    },
+    {
+      "id": "p7-09",
+      "day": "P7-09",
+      "title": "多运行时 UI 与可观测性",
+      "status": "planned",
+      "serial_group": "p7-vertical-closure",
+      "parallel_group": "p7-mainline",
+      "depends_on": ["p7-08"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["Run runtime/provider 展示", "retry/fallback Attempt 历史", "usage/成本", "Attention 恢复操作"]
+    },
+    {
+      "id": "p7-10",
+      "day": "P7-10",
+      "title": "P7 回归验收与版本收口",
+      "status": "planned",
+      "serial_group": "p7-vertical-closure",
+      "parallel_group": "p7-mainline",
+      "depends_on": ["p7-09"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["全量测试", "真实 Codex 多节点样本", "模型 API 真实小样本", "截图、手册、版本和 task-baseline"]
     }
   ],
   "long_term_plan": [
@@ -747,9 +856,9 @@
     {
       "id": "l3-real-adapters",
       "stage": "L3",
-      "title": "真实 Adapter 接入",
+      "title": "Codex 多节点执行与低成本模型 Adapter",
       "status": "current",
-      "summary": "Codex CLI 单节点已接入；P7 规划多节点连续执行、官方 API 并扩展 Hermes/OpenClaw。"
+      "summary": "Codex CLI 单节点已接入；P7 先完成 Codex 多节点纵向闭环和 retry/fallback，再接入 DeepSeek、Kimi 和 MiniMax。"
     },
     {
       "id": "l4-stable-runtime",
