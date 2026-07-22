@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calculateExecutionPlan as coreCalculateExecutionPlan,
+  executionPlanSchema,
   resolveNodeInputs as coreResolveNodeInputs,
   type ArtifactManifest,
   type GateInstance,
@@ -356,6 +357,23 @@ describe("execution plan", () => {
     expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")?.decision).toBe("execute");
   });
 
+  it("does not select a sibling gate when its required target artifact is absent", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.artifacts.push(artifactSpec("plan_sibling", "markdown", "B_content_plan"));
+    const sibling = { ...artifact("art_plan_sibling", "B_content_plan", "markdown", 2, "sha256:sibling", "approved"), artifact_spec_ref: "plan_sibling" };
+    const siblingGate = {
+      ...pendingPlanGate(),
+      gate_instance_id: "gate_sibling_only",
+      target: { type: "ArtifactManifest" as const, id: sibling.artifact_id },
+      status: "decided" as const,
+      decisions: [gateDecision("reject", now)]
+    };
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: [artifacts()[0]!, sibling], gates: [siblingGate], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ decision: "pause_for_gate", reason_code: "required_gate_pending" });
+  });
+
   it("does not qualify persisted artifacts from failed producers", () => {
     const workflow = workflowWithOptionalVideo();
     workflow.gates = [];
@@ -378,6 +396,7 @@ describe("execution plan", () => {
     const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: [artifacts()[0]!, malformed], gates: [], calculatedAt: now });
 
     expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "blocked", required_edge_status: [expect.objectContaining({ satisfied: false })] });
+    expect(executionPlanSchema.parse(plan)).toEqual(plan);
   });
 
   it("scopes direct input resolution to its explicit run", () => {
@@ -419,6 +438,18 @@ describe("execution plan", () => {
 
     expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ decision: "blocked", reason_code: "optional_edge_no_qualified_artifact_block_downstream" });
     expect(reversed.decisions.find((item) => item.node_id === "D_platform_summary")).toEqual(plan.decisions.find((item) => item.node_id === "D_platform_summary"));
+  });
+
+  it("lets an optional block override a required edge that is still waiting", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    const optional = workflow.edges.find((item) => item.from === "F_optional_video" && item.to === "D_platform_summary")!;
+    optional.join_policy.on_no_qualified_artifact = "block_downstream";
+    const facts = nodeRuns().map((item) => (item.node_id === "B_content_plan" ? { ...item, status: "running" as const, started_at: now } : item));
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: facts, artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ decision: "blocked", reason_code: "optional_edge_no_qualified_artifact_block_downstream" });
   });
 
   it("projects terminal runs from terminal node facts without dispatching end nodes", () => {

@@ -118,10 +118,12 @@ function latestArtifactForSpec(workflow: WorkflowSpec, artifactSpecId: string, n
 
 function gateForSpec(workflow: WorkflowSpec, gates: GateInstance[], gateSpecId: string, runId: string, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
   const gateSpec = workflow.gates.find((gate) => gate.id === gateSpecId);
-  const targetArtifact = gateSpec && latestArtifactForSpec(workflow, gateSpec.target_artifact_ref, nodeRuns, artifacts);
+  if (!gateSpec) return undefined;
+  const targetArtifact = latestArtifactForSpec(workflow, gateSpec.target_artifact_ref, nodeRuns, artifacts);
+  if (!targetArtifact) return undefined;
   return [...gates]
     .filter((gate) => gate.gate_spec_id === gateSpecId && gate.run_id === runId)
-    .filter((gate) => !targetArtifact || gate.target.id === targetArtifact.artifact_id)
+    .filter((gate) => gate.target.id === targetArtifact.artifact_id)
     .sort((left, right) => left.gate_instance_id.localeCompare(right.gate_instance_id))[0];
 }
 
@@ -202,9 +204,6 @@ function nodeDecision(input: CalculateExecutionPlanInput, node: NodeSpec): NodeE
   const requiredBlocked = requiredEdgeStatus.find((status) => !status.satisfied && !activeStatuses.has(nodeRunForNodeId(input.nodeRuns, status.edge_id.split("->")[0])?.status ?? "blocked"));
   const requiredWaiting = requiredEdgeStatus.some((status) => !status.satisfied && activeStatuses.has(nodeRunForNodeId(input.nodeRuns, status.edge_id.split("->")[0])?.status ?? "blocked"));
   const missingRequiredInput = node.inputs.some((nodeInput) => nodeInput.kind === "artifact" && nodeInput.required && !resolvedInputs.some((resolved) => resolved.input_id === nodeInput.id));
-  if (requiredBlocked) return { ...base, decision: "blocked", reason_code: missingRequiredInput ? "required_input_missing" : "required_edge_unsatisfied" };
-  if (requiredWaiting) return { ...base, decision: "wait", reason_code: "required_edge_active" };
-  if (missingRequiredInput) return { ...base, decision: "blocked", reason_code: "required_input_missing" };
 
   const optionalStates = incomingEdges.filter((edge) => !edge.required).map((edge) => {
     if (qualifiedArtifactsForDestinationEdge(input.workflow, node, edge, input.nodeRuns, input.artifacts).length > 0) return "continue" as const;
@@ -216,12 +215,15 @@ function nodeDecision(input: CalculateExecutionPlanInput, node: NodeSpec): NodeE
     return edge.join_policy.on_no_qualified_artifact === "ignore_optional" ? "continue" as const : "blocked" as const;
   });
   const blockedOptionalIndex = optionalStates.findIndex((state) => state === "blocked");
+  if (requiredBlocked) return { ...base, decision: "blocked", reason_code: missingRequiredInput ? "required_input_missing" : "required_edge_unsatisfied" };
+  if (missingRequiredInput && !requiredWaiting) return { ...base, decision: "blocked", reason_code: "required_input_missing" };
   if (blockedOptionalIndex >= 0) {
     const blockedEdge = incomingEdges.filter((edge) => !edge.required)[blockedOptionalIndex]!;
     const sourceRun = nodeRunForNodeId(input.nodeRuns, blockedEdge.from);
     const timedOut = sourceRun && blockedEdge.join_policy.wait_if_active && activeStatuses.has(sourceRun.status) && joinTimedOut(blockedEdge, sourceRun, input.calculatedAt);
     return { ...base, decision: "blocked", reason_code: timedOut ? `optional_edge_timeout_${blockedEdge.join_policy.on_timeout}` : `optional_edge_no_qualified_artifact_${blockedEdge.join_policy.on_no_qualified_artifact}` };
   }
+  if (requiredWaiting) return { ...base, decision: "wait", reason_code: "required_edge_active" };
   if (optionalStates.includes("wait")) return { ...base, decision: "wait", reason_code: "optional_edge_active" };
   return { ...base, decision: "execute", reason_code: "ready" };
 }
