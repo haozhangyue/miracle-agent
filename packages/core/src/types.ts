@@ -366,6 +366,66 @@ export interface GateDecision {
   created_at: string;
 }
 
+export type ExecutionDecision = "execute" | "wait" | "pause_for_gate" | "blocked" | "skip";
+
+export interface ResolvedNodeInput {
+  input_id: string;
+  source_kind: "run_input" | "artifact" | "parameter";
+  source_ref: string;
+  artifact_id?: string;
+  artifact_version?: number;
+  artifact_hash?: string;
+  media_type: string;
+  required: boolean;
+  resolved_at: string;
+}
+
+export interface NodeExecutionDecision {
+  node_run_id: string;
+  node_id: string;
+  decision: ExecutionDecision;
+  reason_code: string;
+  required_edge_status: Array<{
+    edge_id: string;
+    source_node_run_id: string;
+    satisfied: boolean;
+  }>;
+  resolved_inputs: ResolvedNodeInput[];
+  eligible_adapter_kinds: Array<"codex" | "model-api">;
+  selected_provider_profile_id?: string;
+}
+
+export interface ExecutionPlan {
+  run_id: string;
+  workflow_snapshot_id: string;
+  calculated_at: string;
+  revision: number;
+  decisions: NodeExecutionDecision[];
+  ready_node_run_ids: string[];
+  paused_node_run_ids: string[];
+  blocked_node_run_ids: string[];
+  terminal: boolean;
+}
+
+export interface ResolveNodeInputsInput {
+  workflow: WorkflowSpec;
+  node: NodeSpec;
+  nodeRuns: NodeRun[];
+  artifacts: ArtifactManifest[];
+  calculatedAt: string;
+}
+
+export interface CalculateExecutionPlanInput {
+  workflow: WorkflowSpec;
+  nodeRuns: NodeRun[];
+  artifacts: ArtifactManifest[];
+  gates: GateInstance[];
+  calculatedAt: string;
+  runId?: string;
+  workflowSnapshotId?: string;
+  revision?: number;
+}
+
 export interface AgentHealthProjection {
   agent_id: string;
   name: string;

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AdapterInvocation, AdapterResult } from "./types";
+import type { AdapterInvocation, AdapterResult, ExecutionPlan, NodeExecutionDecision, ResolvedNodeInput } from "./types";
 
 const credentialScopeSchema = z.object({
   credential_ref: z.string(),
@@ -107,6 +107,45 @@ export const workflowSpecSchema = z.object({
     source: z.string(),
     status: z.string()
   })
+});
+
+export const resolvedNodeInputSchema: z.ZodType<ResolvedNodeInput> = z.object({
+  input_id: z.string().min(1),
+  source_kind: z.enum(["run_input", "artifact", "parameter"]),
+  source_ref: z.string().min(1),
+  artifact_id: z.string().min(1).optional(),
+  artifact_version: z.number().int().positive().optional(),
+  artifact_hash: z.string().min(1).optional(),
+  media_type: z.string().min(1),
+  required: z.boolean(),
+  resolved_at: z.string().min(1)
+});
+
+export const nodeExecutionDecisionSchema: z.ZodType<NodeExecutionDecision> = z.object({
+  node_run_id: z.string(),
+  node_id: z.string().min(1),
+  decision: z.enum(["execute", "wait", "pause_for_gate", "blocked", "skip"]),
+  reason_code: z.string().min(1),
+  required_edge_status: z.array(z.object({
+    edge_id: z.string().min(1),
+    source_node_run_id: z.string(),
+    satisfied: z.boolean()
+  })),
+  resolved_inputs: z.array(resolvedNodeInputSchema),
+  eligible_adapter_kinds: z.array(z.enum(["codex", "model-api"])),
+  selected_provider_profile_id: z.string().min(1).optional()
+});
+
+export const executionPlanSchema: z.ZodType<ExecutionPlan> = z.object({
+  run_id: z.string(),
+  workflow_snapshot_id: z.string(),
+  calculated_at: z.string().min(1),
+  revision: z.number().int().nonnegative(),
+  decisions: z.array(nodeExecutionDecisionSchema),
+  ready_node_run_ids: z.array(z.string()),
+  paused_node_run_ids: z.array(z.string()),
+  blocked_node_run_ids: z.array(z.string()),
+  terminal: z.boolean()
 });
 
 export const domainPackSchema = z.object({
