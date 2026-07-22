@@ -36,9 +36,18 @@ function latestGateDecision(gate: GateInstance) {
   })[0];
 }
 
-function gateForSpec(gates: GateInstance[], gateSpecId: string, runId: string) {
+function latestArtifactForSpec(workflow: WorkflowSpec, artifactSpecId: string, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
+  const artifactSpec = workflow.artifacts.find((item) => item.id === artifactSpecId);
+  if (!artifactSpec) return undefined;
+  const producerRun = nodeRunForNodeId(nodeRuns, artifactSpec.produced_by);
+  return newestArtifact(artifacts.filter((artifact) => artifact.node_run_id === producerRun?.node_run_id && artifact.status === "created" && artifact.type === artifactSpec.type));
+}
+
+function gateForSpec(workflow: WorkflowSpec, gates: GateInstance[], gateSpecId: string, runId: string, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
+  const targetArtifact = latestArtifactForSpec(workflow, workflow.gates.find((gate) => gate.id === gateSpecId)?.target_artifact_ref ?? "", nodeRuns, artifacts);
   return [...gates]
     .filter((gate) => gate.gate_spec_id === gateSpecId && gate.run_id === runId)
+    .filter((gate) => !targetArtifact || gate.target.id === targetArtifact.artifact_id)
     .sort((left, right) => left.gate_instance_id.localeCompare(right.gate_instance_id))[0];
 }
 
@@ -82,6 +91,10 @@ function inputMatchesEdge(workflow: WorkflowSpec, node: NodeSpec, input: NodeSpe
   return artifactSpec?.produced_by === edge.from && (!input.artifact_type || artifactSpec.type === input.artifact_type);
 }
 
+function requiredArtifactType(workflow: WorkflowSpec, input: NodeSpec["inputs"][number]) {
+  return input.artifact_type ?? (input.artifact_spec_ref ? workflow.artifacts.find((item) => item.id === input.artifact_spec_ref)?.type : undefined);
+}
+
 function resolvedArtifactInput(input: NodeSpec["inputs"][number], artifact: ArtifactManifest, calculatedAt: string): ResolvedNodeInput {
   return {
     input_id: input.id,
@@ -113,16 +126,16 @@ export function resolveNodeInputs(input: ResolveNodeInputsInput): ResolvedNodeIn
     const candidates = incomingEdges
       .filter((edge) => inputMatchesEdge(input.workflow, input.node, nodeInput, edge))
       .flatMap((edge) => artifactsForEdge(input.workflow, edge, input.nodeRuns, input.artifacts))
-      .filter((artifact) => !nodeInput.artifact_type || artifact.type === nodeInput.artifact_type);
+      .filter((artifact) => !requiredArtifactType(input.workflow, nodeInput) || artifact.type === requiredArtifactType(input.workflow, nodeInput));
     const artifact = newestArtifact(candidates);
     return artifact ? [resolvedArtifactInput(nodeInput, artifact, input.calculatedAt)] : [];
   });
 }
 
-function gateDecision(node: NodeSpec, workflow: WorkflowSpec, gates: GateInstance[], runId: string): { decision?: ExecutionDecision; reasonCode?: string } {
+function gateDecision(node: NodeSpec, workflow: WorkflowSpec, nodeRuns: NodeRun[], artifacts: ArtifactManifest[], gates: GateInstance[], runId: string): { decision?: ExecutionDecision; reasonCode?: string } {
   const requiredGates = workflow.gates.filter((gate) => gate.required_before.includes(node.id));
   for (const requiredGate of requiredGates) {
-    const gate = gateForSpec(gates, requiredGate.id, runId);
+    const gate = gateForSpec(workflow, gates, requiredGate.id, runId, nodeRuns, artifacts);
     const latestDecision = gate && latestGateDecision(gate)?.decision;
     if (gate?.status === "decided" && latestDecision === "approve") continue;
     if (latestDecision === "reject" || latestDecision === "request_changes" || gate?.status === "invalidated") {
@@ -160,7 +173,7 @@ function nodeDecision(input: CalculateExecutionPlanInput, node: NodeSpec, runId:
   if (nodeRun.status === "blocked") return { ...base, decision: "blocked", reason_code: "node_run_blocked" };
   if (nodeRun.status === "waiting" || nodeRun.status === "reviewing") return { ...base, decision: "wait", reason_code: "node_run_waiting" };
 
-  const gate = gateDecision(node, input.workflow, input.gates, runId);
+  const gate = gateDecision(node, input.workflow, input.nodeRuns, input.artifacts, input.gates, runId);
   if (gate.decision) return { ...base, decision: gate.decision, reason_code: gate.reasonCode! };
 
   const unsatisfiedRequired = requiredEdges.find((edge) => artifactsForEdge(input.workflow, edge, input.nodeRuns, input.artifacts).length === 0);
@@ -203,7 +216,13 @@ function nodeDecision(input: CalculateExecutionPlanInput, node: NodeSpec, runId:
 
 export function calculateExecutionPlan(input: CalculateExecutionPlanInput): ExecutionPlan {
   const runId = input.runId ?? [...new Set(input.nodeRuns.map((nodeRun) => nodeRun.run_id))].sort()[0] ?? "";
-  const decisions = input.workflow.nodes.map((node) => nodeDecision(input, node, runId));
+  const scopedInput: CalculateExecutionPlanInput = {
+    ...input,
+    nodeRuns: input.nodeRuns.filter((nodeRun) => nodeRun.run_id === runId),
+    artifacts: input.artifacts.filter((artifact) => artifact.run_id === runId),
+    gates: input.gates.filter((gate) => gate.run_id === runId)
+  };
+  const decisions = scopedInput.workflow.nodes.map((node) => nodeDecision(scopedInput, node, runId));
   return {
     run_id: runId,
     workflow_snapshot_id: input.workflowSnapshotId ?? `snap_${runId}`,
@@ -213,9 +232,9 @@ export function calculateExecutionPlan(input: CalculateExecutionPlanInput): Exec
     ready_node_run_ids: decisions.filter((decision) => decision.decision === "execute").map((decision) => decision.node_run_id),
     paused_node_run_ids: decisions.filter((decision) => decision.decision === "pause_for_gate").map((decision) => decision.node_run_id),
     blocked_node_run_ids: decisions.filter((decision) => decision.decision === "blocked").map((decision) => decision.node_run_id),
-    terminal: input.workflow.nodes.every((node) => {
-      const nodeRun = nodeRunForNodeId(input.nodeRuns, node.id);
+    terminal: scopedInput.workflow.nodes.every((node) => {
+      const nodeRun = nodeRunForNodeId(scopedInput.nodeRuns, node.id);
       return nodeRun !== undefined && terminalStatuses.has(nodeRun.status);
-    }) && input.gates.every((gate) => gate.status !== "pending_review")
+    }) && scopedInput.gates.every((gate) => gate.status !== "pending_review")
   };
 }

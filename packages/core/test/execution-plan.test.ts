@@ -264,6 +264,53 @@ describe("execution plan", () => {
     expect(plan.decisions.find((item) => item.node_id === "C_md_master")?.decision).toBe("execute");
   });
 
+  it("uses the gate for the latest target artifact after rework", () => {
+    const workflow = workflowWithOptionalVideo();
+    const artifactsAfterRework = [...artifacts(), { ...artifact("art_plan_v2", "B_content_plan", "markdown", 2, "sha256:plan-v2", "approved"), created_at: "2026-07-22T08:00:02.000Z" }];
+    const rejectedV1 = { ...pendingPlanGate(), gate_instance_id: "gate_plan_v1", target: { type: "ArtifactManifest" as const, id: "art_plan_v1" }, status: "decided" as const, decisions: [gateDecision("reject", "2026-07-22T08:00:01.000Z")] };
+    const approvedV2 = { ...pendingPlanGate(), gate_instance_id: "gate_plan_v2", target: { type: "ArtifactManifest" as const, id: "art_plan_v2" }, status: "decided" as const, decisions: [gateDecision("approve", "2026-07-22T08:00:03.000Z")] };
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: artifactsAfterRework, gates: [rejectedV1, approvedV2], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")?.decision).toBe("execute");
+  });
+
+  it("filters foreign run facts before selecting artifacts and gates", () => {
+    const workflow = workflowWithOptionalVideo();
+    const approvedCurrentGate = { ...pendingPlanGate(), status: "decided" as const, decisions: [gateDecision("approve", now)] };
+    const foreignRun = "run_other";
+    const foreignNodeRun = { ...nodeRun("B_content_plan", "done"), run_id: foreignRun, node_run_id: "nr_other_B_content_plan", updated_at: "2026-07-22T09:00:00.000Z" };
+    const foreignArtifact = { ...artifact("art_plan_other", "B_content_plan", "markdown", 99, "sha256:other", "approved"), run_id: foreignRun, node_run_id: foreignNodeRun.node_run_id, created_at: "2026-07-22T09:00:00.000Z" };
+    const foreignGate = { ...pendingPlanGate(), run_id: foreignRun, target: { type: "ArtifactManifest" as const, id: foreignArtifact.artifact_id } };
+
+    const plan = calculateExecutionPlan({
+      workflow,
+      runId: "run_p7_02",
+      nodeRuns: [...nodeRuns(), foreignNodeRun],
+      artifacts: [...artifacts(), foreignArtifact],
+      gates: [foreignGate, approvedCurrentGate],
+      calculatedAt: now
+    });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "execute", resolved_inputs: [expect.objectContaining({ artifact_id: "art_plan_v1" })] });
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")?.decision).toBe("execute");
+  });
+
+  it("uses the referenced ArtifactSpec type when a port omits artifact_type", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    const contentPlan = workflow.nodes.find((item) => item.id === "C_md_master")!;
+    contentPlan.inputs = [{ id: "content_plan", kind: "artifact", required: true, artifact_spec_ref: "plan_artifact" }];
+    const planEdge = workflow.edges.find((item) => item.from === "B_content_plan" && item.to === "C_md_master")!;
+    delete planEdge.artifact_selector;
+    workflow.artifacts.push(artifactSpec("plan_json_artifact", "json", "B_content_plan"));
+    const wrongArtifact = artifact("art_plan_json", "B_content_plan", "json", 2, "sha256:json", "approved");
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: [wrongArtifact], gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "blocked", reason_code: "required_input_missing", resolved_inputs: [] });
+  });
+
   it("projects terminal runs from terminal node facts without dispatching end nodes", () => {
     const workflow = workflowWithOptionalVideo();
     const terminalRuns = nodeRuns().map((item) => (item.node_id === "G_end" ? { ...item, status: "skipped" as const } : { ...item, status: "done" as const }));
