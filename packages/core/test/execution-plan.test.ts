@@ -156,6 +156,114 @@ describe("execution plan", () => {
     expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ decision: "blocked", reason_code: "optional_edge_timeout_require_decision" });
   });
 
+  it("blocks when an optional edge has no qualifying artifact and requires downstream blocking", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    const optionalEdge = workflow.edges.find((item) => item.from === "F_optional_video" && item.to === "D_platform_summary");
+    optionalEdge!.join_policy.on_no_qualified_artifact = "block_downstream";
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ decision: "blocked", reason_code: "optional_edge_no_qualified_artifact_block_downstream" });
+  });
+
+  it("blocks when an optional edge has no qualifying artifact and requires a decision", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    const optionalEdge = workflow.edges.find((item) => item.from === "F_optional_video" && item.to === "D_platform_summary");
+    optionalEdge!.join_policy.on_no_qualified_artifact = "require_decision";
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ decision: "blocked", reason_code: "optional_edge_no_qualified_artifact_require_decision" });
+  });
+
+  it("continues when an optional edge has no qualifying artifact and may be ignored", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")?.decision).toBe("execute");
+  });
+
+  it("uses the newest timestamped gate decision regardless of decision array order", () => {
+    const workflow = workflowWithOptionalVideo();
+    const gate = { ...pendingPlanGate(), status: "decided" as const, decisions: [gateDecision("approve", "2026-07-22T08:00:01.000Z"), gateDecision("reject", "2026-07-22T08:00:02.000Z")] };
+    const reorderedGate = { ...gate, decisions: [...gate.decisions].reverse() };
+
+    const firstPlan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: artifacts(), gates: [gate], calculatedAt: now });
+    const reorderedPlan = calculateExecutionPlan({ workflow, nodeRuns: [...nodeRuns()].reverse(), artifacts: [...artifacts()].reverse(), gates: [reorderedGate], calculatedAt: now });
+
+    expect(firstPlan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ decision: "blocked", reason_code: "required_gate_rejected" });
+    expect(reorderedPlan).toEqual(firstPlan);
+  });
+
+  it("executes after an approved gate", () => {
+    const workflow = workflowWithOptionalVideo();
+    const approvedGate = { ...pendingPlanGate(), status: "decided" as const, decisions: [gateDecision("approve", now)] };
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: artifacts(), gates: [approvedGate], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")?.decision).toBe("execute");
+  });
+
+  it("keeps a terminal run open only for pending gates", () => {
+    const workflow = workflowWithOptionalVideo();
+    const terminalRuns = nodeRuns().map((item) => ({ ...item, status: "done" as const }));
+    const pending = pendingPlanGate();
+    const decided = { ...pending, status: "decided" as const, decisions: [gateDecision("approve", now)] };
+    const invalidated = { ...pending, status: "invalidated" as const };
+
+    expect(calculateExecutionPlan({ workflow, nodeRuns: terminalRuns, artifacts: artifacts(), gates: [pending], calculatedAt: now }).terminal).toBe(false);
+    expect(calculateExecutionPlan({ workflow, nodeRuns: terminalRuns, artifacts: artifacts(), gates: [decided], calculatedAt: now }).terminal).toBe(true);
+    expect(calculateExecutionPlan({ workflow, nodeRuns: terminalRuns, artifacts: artifacts(), gates: [invalidated], calculatedAt: now }).terminal).toBe(true);
+  });
+
+  it("does not bind an artifact input without a spec ref to an incompatible port type", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    workflow.artifacts = [];
+    const contentPlan = workflow.nodes.find((item) => item.id === "C_md_master")!;
+    contentPlan.inputs = [{ id: "content_plan", kind: "artifact", artifact_type: "markdown", required: true }];
+    const planEdge = workflow.edges.find((item) => item.from === "B_content_plan" && item.to === "C_md_master")!;
+    delete planEdge.artifact_selector;
+    const wrongArtifact = artifact("art_plan_json", "B_content_plan", "json", 1, "sha256:json", "approved");
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: [wrongArtifact], gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "blocked", reason_code: "required_input_missing", resolved_inputs: [] });
+  });
+
+  it("keeps queued node runs eligible for execution", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")?.decision).toBe("execute");
+  });
+
+  it("keeps waiting node runs waiting", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    const waitingRuns = nodeRuns().map((item) => (item.node_id === "C_md_master" ? { ...item, status: "waiting" as const } : item));
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: waitingRuns, artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "wait", reason_code: "node_run_waiting" });
+  });
+
+  it("keeps restored running node runs eligible for execution", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    const runningRuns = nodeRuns().map((item) => (item.node_id === "C_md_master" ? { ...item, status: "running" as const } : item));
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: runningRuns, artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")?.decision).toBe("execute");
+  });
+
   it("projects terminal runs from terminal node facts without dispatching end nodes", () => {
     const workflow = workflowWithOptionalVideo();
     const terminalRuns = nodeRuns().map((item) => (item.node_id === "G_end" ? { ...item, status: "skipped" as const } : { ...item, status: "done" as const }));
@@ -232,4 +340,8 @@ function artifact(id: string, nodeId: string, type: string, version: number, has
     producer: "content-agent",
     created_at: now
   };
+}
+
+function gateDecision(decision: "approve" | "reject" | "request_changes", createdAt: string) {
+  return { decision_id: `decision_${decision}_${createdAt}`, actor: "reviewer", decision, comment: decision, created_at: createdAt };
 }
