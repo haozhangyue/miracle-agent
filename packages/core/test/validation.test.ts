@@ -127,7 +127,7 @@ describe("workflow validation", () => {
     expect(result.operation_id).toBe(invocation.operation_id);
     expect(result.artifact_descriptors[0]).toMatchObject({ type: "markdown", review_status: "pending_review" });
     expect(attempt).toMatchObject({ node_run_id: nodeRun.node_run_id, status: "succeeded" });
-    expect(artifacts[0]).toMatchObject({ run_id: "run_test_runner", review_status: "pending_review", producer: "content-agent" });
+    expect(artifacts[0]).toMatchObject({ run_id: "run_test_runner", review_status: "pending_review", producer: "content-agent", artifact_spec_ref: "md_master_artifact" });
   });
 
   it("builds adapter registry with credential status and selects Codex mock-compatible adapter", () => {

@@ -1,5 +1,6 @@
 import type {
   ArtifactManifest,
+  ArtifactSpec,
   CalculateExecutionPlanInput,
   EdgeSpec,
   ExecutionDecision,
@@ -20,6 +21,10 @@ function edgeId(edge: EdgeSpec) {
   return `${edge.from}->${edge.to}`;
 }
 
+function sortedEdges(edges: EdgeSpec[]) {
+  return [...edges].sort((left, right) => edgeId(left).localeCompare(edgeId(right)));
+}
+
 function compareNodeRuns(left: NodeRun, right: NodeRun) {
   if (left.updated_at !== right.updated_at) return right.updated_at.localeCompare(left.updated_at);
   return left.node_run_id.localeCompare(right.node_run_id);
@@ -29,6 +34,14 @@ function nodeRunForNodeId(nodeRuns: NodeRun[], nodeId: string) {
   return [...nodeRuns].filter((nodeRun) => nodeRun.node_id === nodeId).sort(compareNodeRuns)[0];
 }
 
+function newestArtifact(artifacts: ArtifactManifest[]) {
+  return [...artifacts].sort((left, right) => {
+    if (left.version !== right.version) return right.version - left.version;
+    if (left.created_at !== right.created_at) return right.created_at.localeCompare(left.created_at);
+    return left.artifact_id.localeCompare(right.artifact_id);
+  })[0];
+}
+
 function latestGateDecision(gate: GateInstance) {
   return [...gate.decisions].sort((left, right) => {
     if (left.created_at !== right.created_at) return right.created_at.localeCompare(left.created_at);
@@ -36,39 +49,80 @@ function latestGateDecision(gate: GateInstance) {
   })[0];
 }
 
-function latestArtifactForSpec(workflow: WorkflowSpec, artifactSpecId: string, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
-  const artifactSpec = workflow.artifacts.find((item) => item.id === artifactSpecId);
-  if (!artifactSpec) return undefined;
-  const producerRun = nodeRunForNodeId(nodeRuns, artifactSpec.produced_by);
-  return newestArtifact(artifacts.filter((artifact) => artifact.node_run_id === producerRun?.node_run_id && artifact.status === "created" && artifact.type === artifactSpec.type));
+function artifactMetadataValid(artifact: ArtifactManifest) {
+  return Number.isInteger(artifact.version) && artifact.version > 0 && artifact.hash.trim().length > 0 && artifact.path.trim().length > 0;
 }
 
-function gateForSpec(workflow: WorkflowSpec, gates: GateInstance[], gateSpecId: string, runId: string, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
-  const targetArtifact = latestArtifactForSpec(workflow, workflow.gates.find((gate) => gate.id === gateSpecId)?.target_artifact_ref ?? "", nodeRuns, artifacts);
-  return [...gates]
-    .filter((gate) => gate.gate_spec_id === gateSpecId && gate.run_id === runId)
-    .filter((gate) => !targetArtifact || gate.target.id === targetArtifact.artifact_id)
-    .sort((left, right) => left.gate_instance_id.localeCompare(right.gate_instance_id))[0];
+function artifactMatchesSpec(workflow: WorkflowSpec, artifact: ArtifactManifest, artifactSpec: ArtifactSpec) {
+  if (artifact.type !== artifactSpec.type) return false;
+  if (artifact.artifact_spec_ref) return artifact.artifact_spec_ref === artifactSpec.id;
+  return workflow.artifacts.filter((item) => item.produced_by === artifactSpec.produced_by && item.type === artifactSpec.type).length === 1;
 }
 
-function artifactsForEdge(workflow: WorkflowSpec, edge: EdgeSpec, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
-  const sourceRun = nodeRunForNodeId(nodeRuns, edge.from);
-  const sourceArtifactSpecs = workflow.artifacts.filter((artifactSpec) => artifactSpec.produced_by === edge.from);
-  return artifacts.filter((artifact) => {
-    if (artifact.node_run_id !== sourceRun?.node_run_id || artifact.status !== "created") return false;
-    if (sourceArtifactSpecs.length > 0 && !sourceArtifactSpecs.some((artifactSpec) => artifactSpec.type === artifact.type)) return false;
-    if (edge.artifact_selector?.artifact_type && artifact.type !== edge.artifact_selector.artifact_type) return false;
-    if (edge.artifact_selector?.review_status && artifact.review_status !== edge.artifact_selector.review_status) return false;
+function artifactQualifies(input: {
+  workflow: WorkflowSpec;
+  sourceNodeId: string;
+  nodeRuns: NodeRun[];
+  artifacts: ArtifactManifest[];
+  artifactSpec?: ArtifactSpec;
+  artifactType?: string;
+  edge?: EdgeSpec;
+}) {
+  const sourceRun = nodeRunForNodeId(input.nodeRuns, input.sourceNodeId);
+  if (!sourceRun || sourceRun.status !== "done") return [];
+  return input.artifacts.filter((artifact) => {
+    if (artifact.node_run_id !== sourceRun.node_run_id || artifact.status !== "created" || !artifactMetadataValid(artifact)) return false;
+    if (input.artifactSpec && !artifactMatchesSpec(input.workflow, artifact, input.artifactSpec)) return false;
+    if (input.artifactType && artifact.type !== input.artifactType) return false;
+    if (input.edge?.artifact_selector?.artifact_type && artifact.type !== input.edge.artifact_selector.artifact_type) return false;
+    if (input.edge?.artifact_selector?.review_status && artifact.review_status !== input.edge.artifact_selector.review_status) return false;
     return true;
   });
 }
 
-function newestArtifact(artifacts: ArtifactManifest[]) {
-  return [...artifacts].sort((left, right) => {
-    if (left.version !== right.version) return right.version - left.version;
-    if (left.created_at !== right.created_at) return right.created_at.localeCompare(left.created_at);
-    return left.artifact_id.localeCompare(right.artifact_id);
-  })[0];
+function inputArtifactSpec(workflow: WorkflowSpec, input: NodeSpec["inputs"][number]) {
+  return input.artifact_spec_ref ? workflow.artifacts.find((item) => item.id === input.artifact_spec_ref) : undefined;
+}
+
+function inputMatchesEdge(workflow: WorkflowSpec, input: NodeSpec["inputs"][number], edge: EdgeSpec) {
+  if (input.kind !== "artifact") return false;
+  const artifactSpec = inputArtifactSpec(workflow, input);
+  return !artifactSpec || artifactSpec.produced_by === edge.from;
+}
+
+function qualifiedArtifactsForInput(workflow: WorkflowSpec, input: NodeSpec["inputs"][number], edge: EdgeSpec, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
+  const artifactSpec = inputArtifactSpec(workflow, input);
+  return artifactQualifies({
+    workflow,
+    sourceNodeId: edge.from,
+    nodeRuns,
+    artifacts,
+    artifactSpec,
+    artifactType: input.artifact_type ?? artifactSpec?.type,
+    edge
+  });
+}
+
+function qualifiedArtifactsForDestinationEdge(workflow: WorkflowSpec, node: NodeSpec, edge: EdgeSpec, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
+  const candidates = node.inputs
+    .filter((input) => inputMatchesEdge(workflow, input, edge))
+    .flatMap((input) => qualifiedArtifactsForInput(workflow, input, edge, nodeRuns, artifacts));
+  return candidates.filter((artifact, index) => candidates.findIndex((item) => item.artifact_id === artifact.artifact_id) === index);
+}
+
+function latestArtifactForSpec(workflow: WorkflowSpec, artifactSpecId: string, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
+  const artifactSpec = workflow.artifacts.find((item) => item.id === artifactSpecId);
+  if (!artifactSpec) return undefined;
+  return newestArtifact(artifactQualifies({ workflow, sourceNodeId: artifactSpec.produced_by, nodeRuns, artifacts, artifactSpec }));
+}
+
+function gateForSpec(workflow: WorkflowSpec, gates: GateInstance[], gateSpecId: string, runId: string, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
+  const gateSpec = workflow.gates.find((gate) => gate.id === gateSpecId);
+  const targetArtifact = gateSpec && latestArtifactForSpec(workflow, gateSpec.target_artifact_ref, nodeRuns, artifacts);
+  return [...gates]
+    .filter((gate) => gate.gate_spec_id === gateSpecId && gate.run_id === runId)
+    .filter((gate) => !targetArtifact || gate.target.id === targetArtifact.artifact_id)
+    .sort((left, right) => left.gate_instance_id.localeCompare(right.gate_instance_id))[0];
 }
 
 function durationMs(value: string | undefined) {
@@ -82,17 +136,6 @@ function joinTimedOut(edge: EdgeSpec, sourceRun: NodeRun, calculatedAt: string) 
   const maxWaitMs = durationMs(edge.join_policy.max_wait);
   const startedAt = sourceRun.started_at ?? sourceRun.updated_at;
   return maxWaitMs !== undefined && Date.parse(calculatedAt) - Date.parse(startedAt) >= maxWaitMs;
-}
-
-function inputMatchesEdge(workflow: WorkflowSpec, node: NodeSpec, input: NodeSpec["inputs"][number], edge: EdgeSpec) {
-  if (input.kind !== "artifact") return false;
-  if (!input.artifact_spec_ref) return true;
-  const artifactSpec = workflow.artifacts.find((item) => item.id === input.artifact_spec_ref);
-  return artifactSpec?.produced_by === edge.from && (!input.artifact_type || artifactSpec.type === input.artifact_type);
-}
-
-function requiredArtifactType(workflow: WorkflowSpec, input: NodeSpec["inputs"][number]) {
-  return input.artifact_type ?? (input.artifact_spec_ref ? workflow.artifacts.find((item) => item.id === input.artifact_spec_ref)?.type : undefined);
 }
 
 function resolvedArtifactInput(input: NodeSpec["inputs"][number], artifact: ArtifactManifest, calculatedAt: string): ResolvedNodeInput {
@@ -110,62 +153,42 @@ function resolvedArtifactInput(input: NodeSpec["inputs"][number], artifact: Arti
 }
 
 export function resolveNodeInputs(input: ResolveNodeInputsInput): ResolvedNodeInput[] {
-  const incomingEdges = input.workflow.edges.filter((edge) => edge.to === input.node.id);
+  const nodeRuns = input.nodeRuns.filter((nodeRun) => nodeRun.run_id === input.runId);
+  const artifacts = input.artifacts.filter((artifact) => artifact.run_id === input.runId);
+  const incomingEdges = sortedEdges(input.workflow.edges.filter((edge) => edge.to === input.node.id));
   return input.node.inputs.flatMap((nodeInput) => {
     if (nodeInput.kind === "parameter") {
-      return [{
-        input_id: nodeInput.id,
-        source_kind: "parameter" as const,
-        source_ref: nodeInput.id,
-        media_type: nodeInput.artifact_type ?? "application/json",
-        required: nodeInput.required,
-        resolved_at: input.calculatedAt
-      }];
+      return [{ input_id: nodeInput.id, source_kind: "parameter" as const, source_ref: nodeInput.id, media_type: nodeInput.artifact_type ?? "application/json", required: nodeInput.required, resolved_at: input.calculatedAt }];
     }
-
     const candidates = incomingEdges
-      .filter((edge) => inputMatchesEdge(input.workflow, input.node, nodeInput, edge))
-      .flatMap((edge) => artifactsForEdge(input.workflow, edge, input.nodeRuns, input.artifacts))
-      .filter((artifact) => !requiredArtifactType(input.workflow, nodeInput) || artifact.type === requiredArtifactType(input.workflow, nodeInput));
+      .filter((edge) => inputMatchesEdge(input.workflow, nodeInput, edge))
+      .flatMap((edge) => qualifiedArtifactsForInput(input.workflow, nodeInput, edge, nodeRuns, artifacts));
     const artifact = newestArtifact(candidates);
     return artifact ? [resolvedArtifactInput(nodeInput, artifact, input.calculatedAt)] : [];
   });
 }
 
 function gateDecision(node: NodeSpec, workflow: WorkflowSpec, nodeRuns: NodeRun[], artifacts: ArtifactManifest[], gates: GateInstance[], runId: string): { decision?: ExecutionDecision; reasonCode?: string } {
-  const requiredGates = workflow.gates.filter((gate) => gate.required_before.includes(node.id));
-  for (const requiredGate of requiredGates) {
+  for (const requiredGate of workflow.gates.filter((gate) => gate.required_before.includes(node.id))) {
     const gate = gateForSpec(workflow, gates, requiredGate.id, runId, nodeRuns, artifacts);
     const latestDecision = gate && latestGateDecision(gate)?.decision;
     if (gate?.status === "decided" && latestDecision === "approve") continue;
-    if (latestDecision === "reject" || latestDecision === "request_changes" || gate?.status === "invalidated") {
-      return { decision: "blocked", reasonCode: "required_gate_rejected" };
-    }
+    if (latestDecision === "reject" || latestDecision === "request_changes" || gate?.status === "invalidated") return { decision: "blocked", reasonCode: "required_gate_rejected" };
     return { decision: "pause_for_gate", reasonCode: "required_gate_pending" };
   }
   return {};
 }
 
-function nodeDecision(input: CalculateExecutionPlanInput, node: NodeSpec, runId: string): NodeExecutionDecision {
+function nodeDecision(input: CalculateExecutionPlanInput, node: NodeSpec): NodeExecutionDecision {
   const nodeRun = nodeRunForNodeId(input.nodeRuns, node.id);
-  const incomingEdges = input.workflow.edges.filter((edge) => edge.to === node.id);
+  const incomingEdges = sortedEdges(input.workflow.edges.filter((edge) => edge.to === node.id));
   const requiredEdges = incomingEdges.filter((edge) => edge.required);
-  const resolvedInputs = resolveNodeInputs({ workflow: input.workflow, node, nodeRuns: input.nodeRuns, artifacts: input.artifacts, calculatedAt: input.calculatedAt });
+  const resolvedInputs = resolveNodeInputs({ runId: input.runId, workflow: input.workflow, node, nodeRuns: input.nodeRuns, artifacts: input.artifacts, calculatedAt: input.calculatedAt });
   const requiredEdgeStatus = requiredEdges.map((edge) => {
     const sourceNodeRun = nodeRunForNodeId(input.nodeRuns, edge.from);
-    return {
-      edge_id: edgeId(edge),
-      source_node_run_id: sourceNodeRun?.node_run_id ?? "",
-      satisfied: artifactsForEdge(input.workflow, edge, input.nodeRuns, input.artifacts).length > 0
-    };
+    return { edge_id: edgeId(edge), source_node_run_id: sourceNodeRun?.node_run_id ?? "", satisfied: qualifiedArtifactsForDestinationEdge(input.workflow, node, edge, input.nodeRuns, input.artifacts).length > 0 };
   });
-  const base = {
-    node_run_id: nodeRun?.node_run_id ?? "",
-    node_id: node.id,
-    required_edge_status: requiredEdgeStatus,
-    resolved_inputs: resolvedInputs,
-    eligible_adapter_kinds: node.type === "end" || node.type === "terminate" ? [] : ["codex", "model-api"] as Array<"codex" | "model-api">
-  };
+  const base = { node_run_id: nodeRun?.node_run_id ?? "", node_id: node.id, required_edge_status: requiredEdgeStatus, resolved_inputs: resolvedInputs, eligible_adapter_kinds: node.type === "end" || node.type === "terminate" ? [] : ["codex", "model-api"] as Array<"codex" | "model-api"> };
 
   if (!nodeRun) return { ...base, decision: "skip", reason_code: "node_run_missing" };
   if (terminalStatuses.has(nodeRun.status)) return { ...base, decision: "skip", reason_code: "node_run_terminal" };
@@ -173,61 +196,44 @@ function nodeDecision(input: CalculateExecutionPlanInput, node: NodeSpec, runId:
   if (nodeRun.status === "blocked") return { ...base, decision: "blocked", reason_code: "node_run_blocked" };
   if (nodeRun.status === "waiting" || nodeRun.status === "reviewing") return { ...base, decision: "wait", reason_code: "node_run_waiting" };
 
-  const gate = gateDecision(node, input.workflow, input.nodeRuns, input.artifacts, input.gates, runId);
+  const gate = gateDecision(node, input.workflow, input.nodeRuns, input.artifacts, input.gates, input.runId);
   if (gate.decision) return { ...base, decision: gate.decision, reason_code: gate.reasonCode! };
 
-  const unsatisfiedRequired = requiredEdges.find((edge) => artifactsForEdge(input.workflow, edge, input.nodeRuns, input.artifacts).length === 0);
-  if (unsatisfiedRequired) {
-    const sourceRun = nodeRunForNodeId(input.nodeRuns, unsatisfiedRequired.from);
-    if (sourceRun && activeStatuses.has(sourceRun.status)) return { ...base, decision: "wait", reason_code: "required_edge_active" };
-    return { ...base, decision: "blocked", reason_code: "required_edge_unsatisfied" };
-  }
-
+  const requiredBlocked = requiredEdgeStatus.find((status) => !status.satisfied && !activeStatuses.has(nodeRunForNodeId(input.nodeRuns, status.edge_id.split("->")[0])?.status ?? "blocked"));
+  const requiredWaiting = requiredEdgeStatus.some((status) => !status.satisfied && activeStatuses.has(nodeRunForNodeId(input.nodeRuns, status.edge_id.split("->")[0])?.status ?? "blocked"));
   const missingRequiredInput = node.inputs.some((nodeInput) => nodeInput.kind === "artifact" && nodeInput.required && !resolvedInputs.some((resolved) => resolved.input_id === nodeInput.id));
+  if (requiredBlocked) return { ...base, decision: "blocked", reason_code: missingRequiredInput ? "required_input_missing" : "required_edge_unsatisfied" };
+  if (requiredWaiting) return { ...base, decision: "wait", reason_code: "required_edge_active" };
   if (missingRequiredInput) return { ...base, decision: "blocked", reason_code: "required_input_missing" };
 
-  const activeOptional = incomingEdges.find((edge) => {
-    if (edge.required || !edge.join_policy.wait_if_active || artifactsForEdge(input.workflow, edge, input.nodeRuns, input.artifacts).length > 0) return false;
+  const optionalStates = incomingEdges.filter((edge) => !edge.required).map((edge) => {
+    if (qualifiedArtifactsForDestinationEdge(input.workflow, node, edge, input.nodeRuns, input.artifacts).length > 0) return "continue" as const;
     const sourceRun = nodeRunForNodeId(input.nodeRuns, edge.from);
-    return sourceRun !== undefined && activeStatuses.has(sourceRun.status) && !joinTimedOut(edge, sourceRun, input.calculatedAt);
+    if (sourceRun && edge.join_policy.wait_if_active && activeStatuses.has(sourceRun.status)) {
+      if (!joinTimedOut(edge, sourceRun, input.calculatedAt)) return "wait" as const;
+      return edge.join_policy.on_timeout === "continue_if_required_inputs_ready" ? "continue" as const : "blocked" as const;
+    }
+    return edge.join_policy.on_no_qualified_artifact === "ignore_optional" ? "continue" as const : "blocked" as const;
   });
-  if (activeOptional) return { ...base, decision: "wait", reason_code: "optional_edge_active" };
-
-  const timedOutOptional = incomingEdges.find((edge) => {
-    if (edge.required || !edge.join_policy.wait_if_active || artifactsForEdge(input.workflow, edge, input.nodeRuns, input.artifacts).length > 0) return false;
-    const sourceRun = nodeRunForNodeId(input.nodeRuns, edge.from);
-    return sourceRun !== undefined && activeStatuses.has(sourceRun.status) && joinTimedOut(edge, sourceRun, input.calculatedAt);
-  });
-  if (timedOutOptional && timedOutOptional.join_policy.on_timeout !== "continue_if_required_inputs_ready") {
-    return { ...base, decision: "blocked", reason_code: `optional_edge_timeout_${timedOutOptional.join_policy.on_timeout}` };
+  const blockedOptionalIndex = optionalStates.findIndex((state) => state === "blocked");
+  if (blockedOptionalIndex >= 0) {
+    const blockedEdge = incomingEdges.filter((edge) => !edge.required)[blockedOptionalIndex]!;
+    const sourceRun = nodeRunForNodeId(input.nodeRuns, blockedEdge.from);
+    const timedOut = sourceRun && blockedEdge.join_policy.wait_if_active && activeStatuses.has(sourceRun.status) && joinTimedOut(blockedEdge, sourceRun, input.calculatedAt);
+    return { ...base, decision: "blocked", reason_code: timedOut ? `optional_edge_timeout_${blockedEdge.join_policy.on_timeout}` : `optional_edge_no_qualified_artifact_${blockedEdge.join_policy.on_no_qualified_artifact}` };
   }
-
-  const optionalWithoutArtifact = incomingEdges.find((edge) => {
-    if (edge.required || artifactsForEdge(input.workflow, edge, input.nodeRuns, input.artifacts).length > 0) return false;
-    const sourceRun = nodeRunForNodeId(input.nodeRuns, edge.from);
-    return !(sourceRun && edge.join_policy.wait_if_active && joinTimedOut(edge, sourceRun, input.calculatedAt) && edge.join_policy.on_timeout === "continue_if_required_inputs_ready");
-  });
-  if (optionalWithoutArtifact && optionalWithoutArtifact.join_policy.on_no_qualified_artifact !== "ignore_optional") {
-    return { ...base, decision: "blocked", reason_code: `optional_edge_no_qualified_artifact_${optionalWithoutArtifact.join_policy.on_no_qualified_artifact}` };
-  }
-
+  if (optionalStates.includes("wait")) return { ...base, decision: "wait", reason_code: "optional_edge_active" };
   return { ...base, decision: "execute", reason_code: "ready" };
 }
 
 export function calculateExecutionPlan(input: CalculateExecutionPlanInput): ExecutionPlan {
-  const runId = input.runId ?? [...new Set(input.nodeRuns.map((nodeRun) => nodeRun.run_id))].sort()[0] ?? "";
-  const scopedInput: CalculateExecutionPlanInput = {
-    ...input,
-    nodeRuns: input.nodeRuns.filter((nodeRun) => nodeRun.run_id === runId),
-    artifacts: input.artifacts.filter((artifact) => artifact.run_id === runId),
-    gates: input.gates.filter((gate) => gate.run_id === runId)
-  };
-  const decisions = scopedInput.workflow.nodes.map((node) => nodeDecision(scopedInput, node, runId));
+  const scopedInput: CalculateExecutionPlanInput = { ...input, nodeRuns: input.nodeRuns.filter((nodeRun) => nodeRun.run_id === input.runId), artifacts: input.artifacts.filter((artifact) => artifact.run_id === input.runId), gates: input.gates.filter((gate) => gate.run_id === input.runId) };
+  const decisions = scopedInput.workflow.nodes.map((node) => nodeDecision(scopedInput, node));
   return {
-    run_id: runId,
-    workflow_snapshot_id: input.workflowSnapshotId ?? `snap_${runId}`,
-    calculated_at: input.calculatedAt,
-    revision: input.revision ?? 0,
+    run_id: scopedInput.runId,
+    workflow_snapshot_id: scopedInput.workflowSnapshotId,
+    calculated_at: scopedInput.calculatedAt,
+    revision: scopedInput.revision ?? 0,
     decisions,
     ready_node_run_ids: decisions.filter((decision) => decision.decision === "execute").map((decision) => decision.node_run_id),
     paused_node_run_ids: decisions.filter((decision) => decision.decision === "pause_for_gate").map((decision) => decision.node_run_id),

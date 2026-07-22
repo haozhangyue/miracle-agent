@@ -297,6 +297,23 @@ export const adapterArtifactDescriptorSchema = z.object({
   content: z.string().optional()
 });
 
+export const artifactManifestSchema = z.object({
+  artifact_id: z.string().min(1),
+  artifact_spec_ref: z.string().min(1).optional(),
+  run_id: z.string().min(1),
+  node_run_id: z.string().min(1),
+  type: z.string().min(1),
+  version: z.number().int().positive(),
+  path: z.string().min(1),
+  hash: z.string().min(1),
+  status: z.enum(["created", "pending", "missing", "hidden"]),
+  review_status: z.enum(["none", "pending_review", "approved", "rejected"]),
+  producer: z.string().min(1),
+  created_at: z.string().min(1),
+  supersedes_artifact_id: z.string().min(1).optional(),
+  rework_of_gate_instance_id: z.string().min(1).optional()
+});
+
 export const adapterResultSchema = z.object({
   operation_id: z.string().min(1),
   attempt_id: z.string().min(1),

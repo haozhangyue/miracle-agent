@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  calculateExecutionPlan,
-  resolveNodeInputs,
+  calculateExecutionPlan as coreCalculateExecutionPlan,
+  resolveNodeInputs as coreResolveNodeInputs,
   type ArtifactManifest,
   type GateInstance,
   type NodeRun,
@@ -9,6 +9,16 @@ import {
 } from "../src";
 
 const now = "2026-07-22T08:00:00.000Z";
+const runId = "run_p7_02";
+const workflowSnapshotId = "snap_run_p7_02";
+
+function calculateExecutionPlan(input: Omit<Parameters<typeof coreCalculateExecutionPlan>[0], "runId" | "workflowSnapshotId">) {
+  return coreCalculateExecutionPlan({ ...input, runId, workflowSnapshotId });
+}
+
+function resolveNodeInputs(input: Omit<Parameters<typeof coreResolveNodeInputs>[0], "runId">) {
+  return coreResolveNodeInputs({ ...input, runId });
+}
 
 function workflowWithOptionalVideo(): WorkflowSpec {
   return {
@@ -285,7 +295,6 @@ describe("execution plan", () => {
 
     const plan = calculateExecutionPlan({
       workflow,
-      runId: "run_p7_02",
       nodeRuns: [...nodeRuns(), foreignNodeRun],
       artifacts: [...artifacts(), foreignArtifact],
       gates: [foreignGate, approvedCurrentGate],
@@ -309,6 +318,107 @@ describe("execution plan", () => {
     const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: [wrongArtifact], gates: [], calculatedAt: now });
 
     expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "blocked", reason_code: "required_input_missing", resolved_inputs: [] });
+  });
+
+  it("preserves explicit artifact spec identity across same-type sibling outputs", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    workflow.artifacts.push(artifactSpec("plan_sibling", "markdown", "B_content_plan"));
+    const sibling = { ...artifact("art_plan_sibling", "B_content_plan", "markdown", 2, "sha256:sibling", "approved"), artifact_spec_ref: "plan_sibling" };
+    const selected = { ...artifact("art_plan_selected", "B_content_plan", "markdown", 1, "sha256:selected", "approved"), artifact_spec_ref: "plan_artifact" };
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: [sibling, selected], gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "execute", resolved_inputs: [expect.objectContaining({ artifact_id: "art_plan_selected" })] });
+  });
+
+  it("blocks ambiguous legacy same-type sibling artifacts", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    workflow.artifacts.push(artifactSpec("plan_sibling", "markdown", "B_content_plan"));
+    const legacy = artifact("art_plan_legacy", "B_content_plan", "markdown", 1, "sha256:legacy", "approved");
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: [legacy], gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "blocked", required_edge_status: [expect.objectContaining({ satisfied: false })], resolved_inputs: [] });
+  });
+
+  it("selects the gate attached to the qualified same-type artifact", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.artifacts.push(artifactSpec("plan_sibling", "markdown", "B_content_plan"));
+    const selected = { ...artifact("art_plan_selected", "B_content_plan", "markdown", 2, "sha256:selected", "approved"), artifact_spec_ref: "plan_artifact", created_at: "2026-07-22T08:00:02.000Z" };
+    const sibling = { ...artifact("art_plan_sibling", "B_content_plan", "markdown", 3, "sha256:sibling", "approved"), artifact_spec_ref: "plan_sibling", created_at: "2026-07-22T08:00:03.000Z" };
+    const oldGate = { ...pendingPlanGate(), gate_instance_id: "gate_selected", target: { type: "ArtifactManifest" as const, id: selected.artifact_id }, status: "decided" as const, decisions: [gateDecision("approve", now)] };
+    const siblingGate = { ...pendingPlanGate(), gate_instance_id: "gate_sibling", target: { type: "ArtifactManifest" as const, id: sibling.artifact_id }, status: "decided" as const, decisions: [gateDecision("reject", "2026-07-22T08:00:04.000Z")] };
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: [selected, sibling], gates: [oldGate, siblingGate], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")?.decision).toBe("execute");
+  });
+
+  it("does not qualify persisted artifacts from failed producers", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    const failedRuns = nodeRuns().map((item) => (item.node_id === "B_content_plan" ? { ...item, status: "failed" as const } : item));
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: failedRuns, artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "blocked", required_edge_status: [expect.objectContaining({ satisfied: false })], resolved_inputs: [] });
+  });
+
+  it.each([
+    ["version", { version: 0 }],
+    ["hash", { hash: "" }],
+    ["path", { path: "" }]
+  ])("rejects malformed %s artifact metadata", (_field, patch) => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    const malformed = { ...artifacts()[1]!, ...patch };
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: [artifacts()[0]!, malformed], gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "blocked", required_edge_status: [expect.objectContaining({ satisfied: false })] });
+  });
+
+  it("scopes direct input resolution to its explicit run", () => {
+    const workflow = workflowWithOptionalVideo();
+    const node = workflow.nodes.find((item) => item.id === "C_md_master")!;
+    const foreignRun = "run_other";
+    const foreignNode = { ...nodeRun("B_content_plan", "done"), run_id: foreignRun, node_run_id: "nr_other_B_content_plan" };
+    const foreignArtifact = { ...artifact("art_plan_other", "B_content_plan", "markdown", 9, "sha256:other", "approved"), run_id: foreignRun, node_run_id: foreignNode.node_run_id };
+
+    const resolved = resolveNodeInputs({ workflow, node, nodeRuns: [...nodeRuns(), foreignNode], artifacts: [...artifacts(), foreignArtifact], calculatedAt: now });
+
+    expect(resolved).toEqual([expect.objectContaining({ artifact_id: "art_plan_v1" })]);
+  });
+
+  it("blocks required input when any required edge is incompatible regardless of edge order", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    workflow.edges.push(edge("A_fact_input", "C_md_master", true, { artifact_type: "markdown" }));
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: artifacts(), gates: [], calculatedAt: now });
+    const reversed = calculateExecutionPlan({ workflow: { ...workflow, edges: [...workflow.edges].reverse() }, nodeRuns: nodeRuns(), artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "C_md_master")).toMatchObject({ decision: "blocked", required_edge_status: expect.arrayContaining([expect.objectContaining({ edge_id: "A_fact_input->C_md_master", satisfied: false })]) });
+    expect(reversed.decisions.find((item) => item.node_id === "C_md_master")).toEqual(plan.decisions.find((item) => item.node_id === "C_md_master"));
+  });
+
+  it("blocks optional conditions before waiting optional conditions regardless of edge order", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    const optional = workflow.edges.find((item) => item.from === "F_optional_video" && item.to === "D_platform_summary")!;
+    optional.join_policy = { wait_if_active: true, on_timeout: "continue_if_required_inputs_ready", on_no_qualified_artifact: "ignore_optional" };
+    workflow.nodes.push(node("H_optional_block", "agent", [], []));
+    workflow.edges.push(edge("H_optional_block", "D_platform_summary", false, undefined, { wait_if_active: false, on_timeout: "continue_if_required_inputs_ready", on_no_qualified_artifact: "block_downstream" }));
+    const facts = nodeRuns().map((item) => (item.node_id === "F_optional_video" ? { ...item, status: "running" as const } : item));
+    facts.push(nodeRun("H_optional_block", "failed"));
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: facts, artifacts: artifacts(), gates: [], calculatedAt: now });
+    const reversed = calculateExecutionPlan({ workflow: { ...workflow, edges: [...workflow.edges].reverse() }, nodeRuns: facts, artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ decision: "blocked", reason_code: "optional_edge_no_qualified_artifact_block_downstream" });
+    expect(reversed.decisions.find((item) => item.node_id === "D_platform_summary")).toEqual(plan.decisions.find((item) => item.node_id === "D_platform_summary"));
   });
 
   it("projects terminal runs from terminal node facts without dispatching end nodes", () => {

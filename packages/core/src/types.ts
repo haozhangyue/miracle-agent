@@ -331,6 +331,7 @@ export interface TraceEvent {
 
 export interface ArtifactManifest {
   artifact_id: string;
+  artifact_spec_ref?: string;
   run_id: string;
   node_run_id: string;
   type: string;
@@ -408,6 +409,7 @@ export interface ExecutionPlan {
 }
 
 export interface ResolveNodeInputsInput {
+  runId: string;
   workflow: WorkflowSpec;
   node: NodeSpec;
   nodeRuns: NodeRun[];
@@ -416,13 +418,13 @@ export interface ResolveNodeInputsInput {
 }
 
 export interface CalculateExecutionPlanInput {
+  runId: string;
+  workflowSnapshotId: string;
   workflow: WorkflowSpec;
   nodeRuns: NodeRun[];
   artifacts: ArtifactManifest[];
   gates: GateInstance[];
   calculatedAt: string;
-  runId?: string;
-  workflowSnapshotId?: string;
   revision?: number;
 }
 

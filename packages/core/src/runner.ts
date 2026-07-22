@@ -178,6 +178,7 @@ export function createArtifactManifestsFromAdapterResult(input: {
   const createdAt = input.createdAt ?? input.result.received_at;
   return input.result.artifact_descriptors.map((descriptor) => ({
     artifact_id: descriptor.artifact_id,
+    artifact_spec_ref: descriptor.artifact_spec_ref,
     run_id: input.runId,
     node_run_id: input.nodeRun.node_run_id,
     type: descriptor.type,
