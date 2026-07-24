@@ -206,6 +206,67 @@ const duplicateSummaryWorkflow: WorkflowSpec = {
   ]
 };
 
+const twoNodeIdentityCollisionWorkflow: WorkflowSpec = {
+  ...workflow,
+  id: "codex-two-node-identity-collision-v0",
+  name: "Codex two-node Artifact identity collision workflow",
+  nodes: [
+    {
+      ...workflow.nodes[0]!,
+      id: "A/B",
+      review_gate_ref: undefined,
+      outputs: [
+        { id: "primary", kind: "artifact", artifact_type: "markdown", artifact_spec_ref: "slash_node_artifact", required: true }
+      ]
+    },
+    {
+      ...workflow.nodes[0]!,
+      id: "A?B",
+      review_gate_ref: undefined,
+      outputs: [
+        { id: "primary", kind: "artifact", artifact_type: "markdown", artifact_spec_ref: "question_node_artifact", required: true }
+      ]
+    }
+  ],
+  edges: [],
+  gates: [],
+  artifacts: [
+    { id: "slash_node_artifact", type: "markdown", produced_by: "A/B", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } },
+    { id: "question_node_artifact", type: "markdown", produced_by: "A?B", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } }
+  ],
+  layouts: { dag: { "A/B": { x: 80, y: 80 }, "A?B": { x: 320, y: 80 } } }
+};
+
+function schemaLimitWorkflow(id: string, outputs: WorkflowSpec["nodes"][number]["outputs"]): WorkflowSpec {
+  return {
+    ...workflow,
+    id,
+    name: `Codex Structured Outputs limit workflow ${id}`,
+    nodes: [{
+      ...workflow.nodes[0]!,
+      review_gate_ref: undefined,
+      outputs
+    }],
+    gates: [],
+    artifacts: []
+  };
+}
+
+const propertyLimitWorkflow = schemaLimitWorkflow(
+  "codex-schema-property-limit-v0",
+  Array.from({ length: 1_667 }, (_, index) => ({
+    id: `output_${index}`,
+    kind: "artifact" as const,
+    artifact_type: "report",
+    required: true
+  }))
+);
+
+const stringLimitWorkflow = schemaLimitWorkflow("codex-schema-string-limit-v0", [
+  { id: "x".repeat(120_000), kind: "artifact", artifact_type: "report", required: true },
+  { id: "tail", kind: "artifact", artifact_type: "script", required: true }
+]);
+
 let tempRoot = "";
 let tempWorkspace = "";
 let runtimeWorkspace = "";
@@ -271,6 +332,9 @@ describe("P6-07 Codex real single-node execution", () => {
     await writeFile(path.join(tempWorkspace, "workflows", `${caseCollisionOutputWorkflow.id}.json`), `${JSON.stringify(caseCollisionOutputWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${suffixCollisionOutputWorkflow.id}.json`), `${JSON.stringify(suffixCollisionOutputWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${duplicateSummaryWorkflow.id}.json`), `${JSON.stringify(duplicateSummaryWorkflow, null, 2)}\n`, "utf8");
+    await writeFile(path.join(tempWorkspace, "workflows", `${twoNodeIdentityCollisionWorkflow.id}.json`), `${JSON.stringify(twoNodeIdentityCollisionWorkflow, null, 2)}\n`, "utf8");
+    await writeFile(path.join(tempWorkspace, "workflows", `${propertyLimitWorkflow.id}.json`), `${JSON.stringify(propertyLimitWorkflow, null, 2)}\n`, "utf8");
+    await writeFile(path.join(tempWorkspace, "workflows", `${stringLimitWorkflow.id}.json`), `${JSON.stringify(stringLimitWorkflow, null, 2)}\n`, "utf8");
     const port = 5600 + Math.floor(Math.random() * 300);
     baseUrl = `http://127.0.0.1:${port}`;
     sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
@@ -529,6 +593,43 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(await readdir(path.join(runtimeWorkspace, "runtime", "attempts"))).toEqual(before);
   });
 
+  it.each([
+    ["property count", propertyLimitWorkflow.id, "5000"],
+    ["schema string characters", stringLimitWorkflow.id, "120000"]
+  ])("rejects Structured Outputs %s limits before Attempt workspace or process", async (_label, workflowId, messagePart) => {
+    const beforeAttempts = await readdir(path.join(runtimeWorkspace, "runtime", "attempts"));
+    const beforeMarker = await readFile(fakeCodexMarker, "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    });
+    const launched = await launchConfirmedRun(workflowId);
+    const scheduled = await fetchJson<{ summary: { failures: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const bundle = await fetchJson<{
+      attempts: Array<{ status: string; error?: { code: string; message: string; recoverable: boolean } }>;
+      artifacts: unknown[];
+    }>(`/api/v0/runs/${launched.run_id}`);
+    const afterMarker = await readFile(fakeCodexMarker, "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    });
+
+    expect(scheduled.summary.failures).toBe(1);
+    expect(bundle.attempts).toEqual([expect.objectContaining({
+      status: "failed",
+      error: expect.objectContaining({
+        code: "invalid_codex_artifact_output",
+        message: expect.stringContaining(messagePart),
+        recoverable: false
+      })
+    })]);
+    expect(bundle.artifacts).toEqual([]);
+    expect(await readdir(path.join(runtimeWorkspace, "runtime", "attempts"))).toEqual(beforeAttempts);
+    expect(afterMarker).toBe(beforeMarker);
+  });
+
   it("stages the input snapshot inside the verified Attempt without writing through run input-snapshots", async () => {
     const launched = await launchConfirmedRun(workflow.id);
     await writeFile(path.join(tempWorkspace, "runs", launched.run_id, "input-snapshots"), "blocked", "utf8");
@@ -640,6 +741,32 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(bundle.artifacts).toHaveLength(3);
     expect(new Set(artifactIds).size).toBe(3);
     expect(new Set(artifactPaths).size).toBe(3);
-    expect(artifactIds.filter((artifactId) => artifactId.endsWith("_a_b_c14cddc033f6_v1"))).toHaveLength(1);
+    expect(artifactIds.filter((artifactId) => /_a_b_c14cddc033f6_[a-f0-9]{64}_v1$/.test(artifactId))).toHaveLength(1);
+  });
+
+  it("keeps Artifact manifest IDs and paths distinct across lossy node ID collisions", async () => {
+    const launched = await launchConfirmedRun(twoNodeIdentityCollisionWorkflow.id);
+    await fetchJson(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    await fetchJson(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const bundle = await fetchJson<{
+      nodes: Array<{ status: string }>;
+      artifacts: Array<{ artifact_id: string; path: string }>;
+    }>(`/api/v0/runs/${launched.run_id}`);
+    const artifactIds = bundle.artifacts.map((artifact) => artifact.artifact_id.toLowerCase());
+    const artifactPaths = bundle.artifacts.map((artifact) => artifact.path.toLowerCase());
+
+    expect(bundle.nodes).toEqual([
+      expect.objectContaining({ status: "done" }),
+      expect.objectContaining({ status: "done" })
+    ]);
+    expect(bundle.artifacts).toHaveLength(2);
+    expect(new Set(artifactIds).size).toBe(2);
+    expect(new Set(artifactPaths).size).toBe(2);
   });
 });

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { NodeSpec } from "@miracle/core";
-import { NodeOutputContractError, buildNodeOutputContract } from "../src/node-output-contract";
+import {
+  assertStructuredOutputSchemaLimits,
+  NodeOutputContractError,
+  buildNodeOutputContract
+} from "../src/node-output-contract";
 
 function node(outputs: NodeSpec["outputs"]): NodeSpec {
   return {
@@ -158,6 +162,57 @@ describe("node output contract", () => {
     ]))).toThrowError(expect.objectContaining({
       code: "invalid_codex_artifact_output",
       message: expect.stringContaining("duplicate")
+    }));
+  });
+
+  it("rejects duplicate output IDs across Artifact and parameter ports before filtering", () => {
+    expect(() => buildNodeOutputContract(node([
+      { id: "summary", kind: "artifact", artifact_type: "report", required: true },
+      { id: "summary", kind: "parameter", required: false }
+    ]))).toThrowError(expect.objectContaining({
+      code: "invalid_codex_artifact_output",
+      message: expect.stringContaining("duplicate")
+    }));
+  });
+
+  it("rejects a generated schema with more than 5000 object properties", () => {
+    const outputs: NodeSpec["outputs"] = Array.from({ length: 1_667 }, (_, index) => ({
+      id: `output_${index}`,
+      kind: "artifact",
+      artifact_type: "report",
+      required: true
+    }));
+
+    expect(() => buildNodeOutputContract(node(outputs))).toThrowError(expect.objectContaining({
+      code: "invalid_codex_artifact_output",
+      message: expect.stringContaining("5000")
+    }));
+  });
+
+  it("rejects generated schema names and const values exceeding 120000 total characters", () => {
+    expect(() => buildNodeOutputContract(node([
+      { id: "x".repeat(120_000), kind: "artifact", artifact_type: "report", required: true },
+      { id: "tail", kind: "artifact", artifact_type: "script", required: true }
+    ]))).toThrowError(expect.objectContaining({
+      code: "invalid_codex_artifact_output",
+      message: expect.stringContaining("120000")
+    }));
+  });
+
+  it("calculates schema nesting recursively and rejects depth greater than 10", () => {
+    let schema: Record<string, unknown> = { type: "string" };
+    for (let depth = 0; depth < 10; depth += 1) {
+      schema = {
+        type: "object",
+        additionalProperties: false,
+        required: ["value"],
+        properties: { value: schema }
+      };
+    }
+
+    expect(() => assertStructuredOutputSchemaLimits(schema)).toThrowError(expect.objectContaining({
+      code: "invalid_codex_artifact_output",
+      message: expect.stringContaining("depth 10")
     }));
   });
 });

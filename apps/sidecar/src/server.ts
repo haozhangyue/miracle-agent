@@ -53,7 +53,7 @@ import {
 } from "./historical-importer";
 import { RunDraftStore, RunDraftStoreError } from "./run-draft-store";
 import { CodexCliAdapter, CodexCliAdapterError } from "./codex-cli-adapter";
-import { resolveArtifactInputFiles } from "./artifact-input-resolver";
+import { assertUniqueArtifactTargetPaths, resolveArtifactInputFiles } from "./artifact-input-resolver";
 import { NodeOutputContractError, buildNodeOutputContract } from "./node-output-contract";
 import { codexPreflightFailure, startCodexOperation } from "./codex-real-adapter";
 
@@ -824,6 +824,10 @@ function outputExtension(type: string) {
   return ["markdown", "document", "report", "script", "outline"].includes(type) ? "md" : "txt";
 }
 
+function outputArtifactIdentitySuffix(runId: string, nodeId: string, outputId: string) {
+  return createHash("sha256").update(JSON.stringify([runId, nodeId, outputId])).digest("hex");
+}
+
 function allocateOutputIdentitySegments(expectedOutputs: ReturnType<typeof createAdapterInvocation>["expected_outputs"]) {
   const normalized = expectedOutputs.map((output) => ({
     output_id: output.output_id,
@@ -880,6 +884,7 @@ async function executeRealCodexAdapter(input: {
       runId: invocation.run_id,
       resolvedInputs: invocation.resolved_inputs
     });
+    assertUniqueArtifactTargetPaths(artifactFiles);
   } catch (error) {
     return { invocation, result: codexPreflightFailure(invocation, error) };
   }
@@ -892,12 +897,11 @@ async function executeRealCodexAdapter(input: {
       artifact_files: artifactFiles.map(({ source_path: _sourcePath, ...file }) => file)
     }, null, 2)}\n`;
     const inputSnapshotHash = `sha256:${createHash("sha256").update(inputSnapshot).digest("hex")}`;
-    const stagedArtifactFiles = artifactFiles.filter((file, index) => artifactFiles.findIndex((candidate) => candidate.target_path === file.target_path) === index);
     attempt = await codexCliAdapter.createAttemptWorkspace({
       attempt_id: input.invocation.attempt_id,
       input_files: [
         { source_path: launchContextPath, target_path: "launch_context.json", expected_hash: launchContextHash },
-        ...stagedArtifactFiles.map((file) => ({ source_path: file.source_path, target_path: file.target_path, expected_hash: file.hash }))
+        ...artifactFiles.map((file) => ({ source_path: file.source_path, target_path: file.target_path, expected_hash: file.hash }))
       ],
       inline_input_files: [
         { target_path: "resolved-inputs.json", content: inputSnapshot, expected_hash: inputSnapshotHash }
@@ -939,7 +943,12 @@ async function executeRealCodexAdapter(input: {
       if (!expectedOutput || expectedOutput.artifact_type !== output.artifact_type) throw new Error(`NodeSpec output ${output.output_id} does not match the Codex output contract.`);
       const outputSegment = outputSegments.get(expectedOutput.output_id);
       if (!outputSegment) throw new Error(`NodeSpec output ${output.output_id} has no allocated filesystem identity.`);
-      const artifactId = `art_${safeId(launchedInvocation.run_id)}_${safeId(launchedInvocation.node_id)}_${outputSegment}_v1`;
+      const identitySuffix = outputArtifactIdentitySuffix(
+        launchedInvocation.run_id,
+        launchedInvocation.node_id,
+        expectedOutput.output_id
+      );
+      const artifactId = `art_${safeId(launchedInvocation.run_id)}_${safeId(launchedInvocation.node_id)}_${outputSegment}_${identitySuffix}_v1`;
       const artifactFileName = `${outputSegment}.${outputExtension(output.artifact_type)}`;
       return {
         output,

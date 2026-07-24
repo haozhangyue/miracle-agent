@@ -2,11 +2,86 @@ import type { NodeSpec } from "@miracle/core";
 
 const supportedArtifactTypes = new Set(["markdown", "document", "report", "script", "outline"]);
 const maxTotalContentCharacters = 2_000_000;
+const maxStructuredOutputProperties = 5_000;
+const maxStructuredOutputStringCharacters = 120_000;
+const maxStructuredOutputDepth = 10;
 
 export class NodeOutputContractError extends Error {
   constructor(public readonly code: "unsupported_codex_output_type" | "invalid_codex_artifact_output", message: string) {
     super(message);
   }
+}
+
+function schemaValueCharacters(value: unknown) {
+  if (typeof value === "string") return value.length;
+  const encoded = JSON.stringify(value);
+  return encoded?.length ?? 0;
+}
+
+export function assertStructuredOutputSchemaLimits(schema: Record<string, unknown>) {
+  let propertyCount = 0;
+  let stringCharacters = 0;
+
+  const addStringCharacters = (value: unknown) => {
+    stringCharacters += schemaValueCharacters(value);
+    if (stringCharacters > maxStructuredOutputStringCharacters) {
+      throw new NodeOutputContractError(
+        "invalid_codex_artifact_output",
+        `Codex Structured Outputs schema exceeds 120000 total characters across property names, definition names, enum values, and const values.`
+      );
+    }
+  };
+
+  const visit = (value: unknown, depth: number): void => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    if (depth > maxStructuredOutputDepth) {
+      throw new NodeOutputContractError(
+        "invalid_codex_artifact_output",
+        "Codex Structured Outputs schema exceeds maximum nesting depth 10."
+      );
+    }
+    const record = value as Record<string, unknown>;
+    if (record.properties && typeof record.properties === "object" && !Array.isArray(record.properties)) {
+      for (const [name, child] of Object.entries(record.properties as Record<string, unknown>)) {
+        propertyCount += 1;
+        if (propertyCount > maxStructuredOutputProperties) {
+          throw new NodeOutputContractError(
+            "invalid_codex_artifact_output",
+            "Codex Structured Outputs schema exceeds 5000 total object properties."
+          );
+        }
+        addStringCharacters(name);
+        visit(child, depth + 1);
+      }
+    }
+    for (const definitionKeyword of ["$defs", "definitions"]) {
+      const definitions = record[definitionKeyword];
+      if (!definitions || typeof definitions !== "object" || Array.isArray(definitions)) continue;
+      for (const [name, child] of Object.entries(definitions as Record<string, unknown>)) {
+        addStringCharacters(name);
+        visit(child, depth + 1);
+      }
+    }
+    if (record.items) {
+      if (Array.isArray(record.items)) {
+        for (const child of record.items) visit(child, depth + 1);
+      } else {
+        visit(record.items, depth + 1);
+      }
+    }
+    for (const unionKeyword of ["anyOf", "allOf", "oneOf"]) {
+      const options = record[unionKeyword];
+      if (Array.isArray(options)) {
+        for (const child of options) visit(child, depth + 1);
+      }
+    }
+    if (Array.isArray(record.enum)) {
+      for (const item of record.enum) addStringCharacters(item);
+    }
+    if (Object.hasOwn(record, "const")) addStringCharacters(record.const);
+  };
+
+  visit(schema, 1);
 }
 
 export interface NodeOutputContract {
@@ -54,16 +129,17 @@ function maxEncodedBytes(outputs: ArtifactOutput[], maxContentLength: number, le
 }
 
 export function buildNodeOutputContract(nodeSpec: NodeSpec): NodeOutputContract {
-  const outputs: ArtifactOutput[] = nodeSpec.outputs
-    .filter((output) => output.kind === "artifact")
-    .map((output) => ({ id: output.id, artifact_type: output.artifact_type ?? "document", required: output.required }));
   const outputIds = new Set<string>();
-  const duplicate = outputs.find((output) => {
+  const duplicate = nodeSpec.outputs.find((output) => {
     if (outputIds.has(output.id)) return true;
     outputIds.add(output.id);
     return false;
   });
-  if (duplicate) throw new NodeOutputContractError("invalid_codex_artifact_output", `NodeSpec ${nodeSpec.id} declares duplicate artifact output ID ${duplicate.id}.`);
+  if (duplicate) throw new NodeOutputContractError("invalid_codex_artifact_output", `NodeSpec ${nodeSpec.id} declares duplicate output ID ${duplicate.id}.`);
+
+  const outputs: ArtifactOutput[] = nodeSpec.outputs
+    .filter((output) => output.kind === "artifact")
+    .map((output) => ({ id: output.id, artifact_type: output.artifact_type ?? "document", required: output.required }));
   const unsupported = outputs.find((output) => !supportedArtifactTypes.has(output.artifact_type));
   if (unsupported) throw new NodeOutputContractError("unsupported_codex_output_type", `Codex output type ${unsupported.artifact_type} is not supported for ${unsupported.id}.`);
   if (outputs.length === 0) throw new NodeOutputContractError("unsupported_codex_output_type", `NodeSpec ${nodeSpec.id} does not declare an artifact output supported by Codex.`);
@@ -74,16 +150,18 @@ export function buildNodeOutputContract(nodeSpec: NodeSpec): NodeOutputContract 
 
   if (legacySingleOutput) {
     const output = outputs[0]!;
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      required: ["artifact_type", "content"],
+      properties: {
+        artifact_type: { type: "string", enum: [output.artifact_type] },
+        content: { type: "string" }
+      }
+    };
+    assertStructuredOutputSchemaLimits(schema);
     return {
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["artifact_type", "content"],
-        properties: {
-          artifact_type: { type: "string", enum: [output.artifact_type] },
-          content: { type: "string" }
-        }
-      },
+      schema,
       max_encoded_bytes,
       parse(value) {
         if (!value || typeof value !== "object" || Array.isArray(value)) throw new NodeOutputContractError("invalid_codex_artifact_output", "Codex output must be a JSON object.");
@@ -94,18 +172,20 @@ export function buildNodeOutputContract(nodeSpec: NodeSpec): NodeOutputContract 
     };
   }
 
-  return {
-    schema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["outputs"],
-      properties: {
-        outputs: {
-          type: "array",
-          items: { anyOf: outputs.map((output) => outputSchema(output, maxContentLength)) }
-        }
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["outputs"],
+    properties: {
+      outputs: {
+        type: "array",
+        items: { anyOf: outputs.map((output) => outputSchema(output, maxContentLength)) }
       }
-    },
+    }
+  };
+  assertStructuredOutputSchemaLimits(schema);
+  return {
+    schema,
     max_encoded_bytes,
     parse(value) {
       if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).sort().join(",") !== "outputs") {

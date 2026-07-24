@@ -48,6 +48,19 @@ function wait(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function fakeCodexLimitSchemas(): Array<[string, Record<string, unknown>]> {
+  const properties = Object.fromEntries(Array.from({ length: 5_001 }, (_, index) => [`property_${index}`, { type: "string" }]));
+  let deeplyNested: Record<string, unknown> = { type: "string" };
+  for (let depth = 0; depth < 10; depth += 1) {
+    deeplyNested = { type: "object", properties: { value: deeplyNested } };
+  }
+  return [
+    ["more than 5000 object properties", { type: "object", properties }],
+    ["more than 120000 schema characters", { type: "string", const: "x".repeat(120_001) }],
+    ["nesting deeper than 10 levels", deeplyNested]
+  ];
+}
+
 function invocation(attempt: AttemptWorkspace, operationId = "op_001"): AdapterInvocation {
   return {
     operation_id: operationId,
@@ -447,6 +460,25 @@ describe("CodexCliAdapter process lifecycle", () => {
 
     await expect(handle.result).resolves.toMatchObject({ status: "succeeded", operation_id: "op_001", attempt_id: attempt.attempt_id, artifact_descriptors: [] });
     await expect(readFile(path.join(workspaceDir, "runs", "run_001", "attempts.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(fakeCodexLimitSchemas())("fake Codex rejects Structured Outputs schemas with %s", async (_label, outputSchema) => {
+    const adapter = createAdapter();
+    const attempt = await adapter.createAttemptWorkspace({
+      attempt_id: `attempt_fake_schema_limit_${createHash("sha256").update(JSON.stringify(outputSchema)).digest("hex").slice(0, 8)}`,
+      input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "launch_context.json", expected_hash: sha256("approved input\n") }],
+      allowed_input_roots: [sourceDir],
+      output_schema: outputSchema
+    });
+    const handle = await adapter.startOperation({
+      invocation: invocation(attempt, `op_fake_schema_limit_${attempt.attempt_id.slice(-8)}`),
+      attempt_workspace: attempt
+    });
+
+    await expect(handle.result).resolves.toMatchObject({
+      status: "failed",
+      error: { code: "process_exit_nonzero" }
+    });
   });
 
   it("maps non-zero exits, invalid JSONL, and bounded stdout/stderr violations to terminal results", async () => {

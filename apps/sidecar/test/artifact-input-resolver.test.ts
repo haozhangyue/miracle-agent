@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ArtifactManifest, ResolvedNodeInput } from "@miracle/core";
-import { resolveArtifactInputFiles } from "../src/artifact-input-resolver";
+import { assertUniqueArtifactTargetPaths, resolveArtifactInputFiles } from "../src/artifact-input-resolver";
 
 const runId = "run_p7_03";
 const resolvedAt = "2026-07-24T08:00:00.000Z";
@@ -103,5 +103,58 @@ describe("artifact input resolver", () => {
     await symlink("source.md", source);
 
     await expect(resolveArtifactInputFiles({ workspaceDir, runId, resolvedInputs })).rejects.toMatchObject({ code: "workspace_escape" });
+  });
+
+  it("allocates every target in one deterministic case-insensitive global pass", async () => {
+    const workspaceDir = await mkdtemp(path.join(tmpdir(), "miracle-p7-03-resolver-collisions-"));
+    workspaces.push(workspaceDir);
+    await mkdir(path.join(workspaceDir, "runs", runId), { recursive: true });
+    await mkdir(path.join(workspaceDir, "artifacts"), { recursive: true });
+
+    const slashHash = sha256("content-0");
+    const slashSuffix = createHash("sha256").update(`A/B:1:${slashHash}`).digest("hex").slice(0, 12);
+    const artifactIds = ["A/B", "A?B", `A_B-${slashSuffix}`, "Summary", "summary"];
+    const manifests: ArtifactManifest[] = [];
+    const resolvedInputs: ResolvedNodeInput[] = [];
+    for (const [index, artifactId] of artifactIds.entries()) {
+      const content = `content-${index}`;
+      const sourceRef = `artifacts/source-${index}.md`;
+      const hash = sha256(content);
+      await writeFile(path.join(workspaceDir, sourceRef), content, "utf8");
+      manifests.push(artifact({
+        artifact_id: artifactId,
+        version: 1,
+        path: sourceRef,
+        hash
+      }));
+      resolvedInputs.push(resolvedInput({
+        input_id: `input-${index}`,
+        source_ref: sourceRef,
+        artifact_id: artifactId,
+        artifact_version: 1,
+        artifact_hash: hash
+      }));
+    }
+    await writeFile(path.join(workspaceDir, "runs", runId, "artifacts.json"), `${JSON.stringify(manifests, null, 2)}\n`, "utf8");
+
+    const forward = await resolveArtifactInputFiles({ workspaceDir, runId, resolvedInputs });
+    const reversed = await resolveArtifactInputFiles({ workspaceDir, runId, resolvedInputs: [...resolvedInputs].reverse() });
+    const forwardTargets = new Map(forward.map((file) => [file.artifact_id, file.target_path]));
+    const reversedTargets = new Map(reversed.map((file) => [file.artifact_id, file.target_path]));
+    const caseFoldedTargets = forward.map((file) => file.target_path.toLowerCase());
+
+    expect(reversedTargets).toEqual(forwardTargets);
+    expect(new Set(caseFoldedTargets).size).toBe(forward.length);
+    expect(caseFoldedTargets).toContain(`artifacts/a_b-${slashSuffix}.md`.toLowerCase());
+  });
+
+  it("fails preflight explicitly when resolved target paths are not case-insensitively unique", () => {
+    expect(() => assertUniqueArtifactTargetPaths([
+      { target_path: "artifacts/Summary.md" },
+      { target_path: "artifacts/summary.MD" }
+    ])).toThrowError(expect.objectContaining({
+      code: "artifact_target_collision",
+      message: expect.stringContaining("case-insensitively unique")
+    }));
   });
 });

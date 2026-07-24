@@ -55,6 +55,64 @@ if (args[0] === "exec") {
     process.stderr.write(`unsupported output schema keyword: ${forbiddenKeyword}\n`);
     process.exit(11);
   }
+  const inspectSchemaLimits = (schema) => {
+    let propertyCount = 0;
+    let stringCharacters = 0;
+    let violation;
+    const addCharacters = (value) => {
+      if (violation) return;
+      const encoded = typeof value === "string" ? value : JSON.stringify(value);
+      stringCharacters += encoded?.length ?? 0;
+      if (stringCharacters > 120_000) violation = "schema string characters exceed 120000";
+    };
+    const visit = (value, depth) => {
+      if (violation || !value || typeof value !== "object" || Array.isArray(value)) return;
+      if (depth > 10) {
+        violation = "schema nesting depth exceeds 10";
+        return;
+      }
+      if (value.properties && typeof value.properties === "object" && !Array.isArray(value.properties)) {
+        for (const [name, child] of Object.entries(value.properties)) {
+          propertyCount += 1;
+          if (propertyCount > 5_000) {
+            violation = "schema object properties exceed 5000";
+            return;
+          }
+          addCharacters(name);
+          visit(child, depth + 1);
+        }
+      }
+      for (const definitionKeyword of ["$defs", "definitions"]) {
+        const definitions = value[definitionKeyword];
+        if (!definitions || typeof definitions !== "object" || Array.isArray(definitions)) continue;
+        for (const [name, child] of Object.entries(definitions)) {
+          addCharacters(name);
+          visit(child, depth + 1);
+        }
+      }
+      if (Array.isArray(value.items)) {
+        for (const child of value.items) visit(child, depth + 1);
+      } else if (value.items) {
+        visit(value.items, depth + 1);
+      }
+      for (const unionKeyword of ["anyOf", "allOf", "oneOf"]) {
+        if (Array.isArray(value[unionKeyword])) {
+          for (const child of value[unionKeyword]) visit(child, depth + 1);
+        }
+      }
+      if (Array.isArray(value.enum)) {
+        for (const item of value.enum) addCharacters(item);
+      }
+      if (Object.hasOwn(value, "const")) addCharacters(value.const);
+    };
+    visit(schema, 1);
+    return violation;
+  };
+  const schemaLimitViolation = inspectSchemaLimits(outputSchema);
+  if (schemaLimitViolation) {
+    process.stderr.write(`invalid output schema: ${schemaLimitViolation}\n`);
+    process.exit(12);
+  }
   const mode = process.env.FAKE_CODEX_MODE ?? "success";
   if (mode === "nonzero") {
     process.stdout.write('{"type":"thread.started","thread_id":"thread_fake"}\n');
