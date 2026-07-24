@@ -147,6 +147,65 @@ const collisionOutputWorkflow: WorkflowSpec = {
   ]
 };
 
+const caseCollisionOutputWorkflow: WorkflowSpec = {
+  ...workflow,
+  id: "codex-output-id-case-collision-v0",
+  name: "Codex case-insensitive output identity collision workflow",
+  nodes: [{
+    ...workflow.nodes[0]!,
+    review_gate_ref: undefined,
+    outputs: [
+      { id: "Summary", kind: "artifact", artifact_type: "report", artifact_spec_ref: "upper_summary_artifact", required: true },
+      { id: "summary", kind: "artifact", artifact_type: "script", artifact_spec_ref: "lower_summary_artifact", required: true }
+    ]
+  }],
+  gates: [],
+  artifacts: [
+    { id: "upper_summary_artifact", type: "report", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } },
+    { id: "lower_summary_artifact", type: "script", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } }
+  ]
+};
+
+const suffixCollisionOutputWorkflow: WorkflowSpec = {
+  ...workflow,
+  id: "codex-output-id-suffix-collision-v0",
+  name: "Codex output hash suffix collision workflow",
+  nodes: [{
+    ...workflow.nodes[0]!,
+    review_gate_ref: undefined,
+    outputs: [
+      { id: "a/b", kind: "artifact", artifact_type: "report", artifact_spec_ref: "slash_artifact", required: true },
+      { id: "a?b", kind: "artifact", artifact_type: "script", artifact_spec_ref: "question_artifact", required: true },
+      { id: "a_b_c14cddc033f6", kind: "artifact", artifact_type: "outline", artifact_spec_ref: "raw_suffix_artifact", required: true }
+    ]
+  }],
+  gates: [],
+  artifacts: [
+    { id: "slash_artifact", type: "report", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } },
+    { id: "question_artifact", type: "script", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } },
+    { id: "raw_suffix_artifact", type: "outline", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } }
+  ]
+};
+
+const duplicateSummaryWorkflow: WorkflowSpec = {
+  ...workflow,
+  id: "codex-duplicate-summary-v0",
+  name: "Codex duplicate summary output workflow",
+  nodes: [{
+    ...workflow.nodes[0]!,
+    review_gate_ref: undefined,
+    outputs: [
+      { id: "summary", kind: "artifact", artifact_type: "report", artifact_spec_ref: "summary_artifact", required: true },
+      { id: "summary", kind: "artifact", artifact_type: "report", artifact_spec_ref: "optional_summary_artifact", required: false }
+    ]
+  }],
+  gates: [],
+  artifacts: [
+    { id: "summary_artifact", type: "report", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } },
+    { id: "optional_summary_artifact", type: "report", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } }
+  ]
+};
+
 let tempRoot = "";
 let tempWorkspace = "";
 let runtimeWorkspace = "";
@@ -209,6 +268,9 @@ describe("P6-07 Codex real single-node execution", () => {
     await writeFile(path.join(tempWorkspace, "workflows", `${unsupportedOutputWorkflow.id}.json`), `${JSON.stringify(unsupportedOutputWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${handoffWorkflow.id}.json`), `${JSON.stringify(handoffWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${collisionOutputWorkflow.id}.json`), `${JSON.stringify(collisionOutputWorkflow, null, 2)}\n`, "utf8");
+    await writeFile(path.join(tempWorkspace, "workflows", `${caseCollisionOutputWorkflow.id}.json`), `${JSON.stringify(caseCollisionOutputWorkflow, null, 2)}\n`, "utf8");
+    await writeFile(path.join(tempWorkspace, "workflows", `${suffixCollisionOutputWorkflow.id}.json`), `${JSON.stringify(suffixCollisionOutputWorkflow, null, 2)}\n`, "utf8");
+    await writeFile(path.join(tempWorkspace, "workflows", `${duplicateSummaryWorkflow.id}.json`), `${JSON.stringify(duplicateSummaryWorkflow, null, 2)}\n`, "utf8");
     const port = 5600 + Math.floor(Math.random() * 300);
     baseUrl = `http://127.0.0.1:${port}`;
     sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
@@ -467,23 +529,33 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(await readdir(path.join(runtimeWorkspace, "runtime", "attempts"))).toEqual(before);
   });
 
-  it("returns an identity-preserving non-recoverable result without launching Codex when snapshot writing fails", async () => {
+  it("stages the input snapshot inside the verified Attempt without writing through run input-snapshots", async () => {
     const launched = await launchConfirmedRun(workflow.id);
     await writeFile(path.join(tempWorkspace, "runs", launched.run_id, "input-snapshots"), "blocked", "utf8");
     await rm(fakeCodexMarker, { force: true });
 
-    const scheduled = await fetchJson<{ stop_reason: string; summary: { failures: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+    const scheduled = await fetchJson<{ summary: { failures: number; nodes_executed: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
       method: "POST",
       body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
     });
     const bundle = await fetchJson<{
-      nodes: Array<{ node_run_id: string; status: string }>;
-      attempts: Array<{ node_run_id: string; status: string; operation_id: string; error?: { code: string; recoverable: boolean } }>;
+      nodes: Array<{ status: string }>;
+      attempts: Array<{ attempt_id: string; status: string }>;
+      artifacts: unknown[];
     }>(`/api/v0/runs/${launched.run_id}`);
 
-    expect(scheduled).toMatchObject({ stop_reason: "execution_failed", summary: { failures: 1 } });
-    expect(bundle.attempts).toEqual([expect.objectContaining({ node_run_id: bundle.nodes[0]?.node_run_id, status: "failed", operation_id: expect.stringMatching(/^op_/), error: expect.objectContaining({ code: "codex_preflight_failed", recoverable: false }) })]);
-    await expect(readFile(fakeCodexMarker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(scheduled.summary).toEqual(expect.objectContaining({ failures: 0, nodes_executed: 1 }));
+    expect(bundle.nodes).toEqual([expect.objectContaining({ status: "reviewing" })]);
+    expect(bundle.attempts).toEqual([expect.objectContaining({ status: "succeeded" })]);
+    expect(bundle.artifacts).toHaveLength(1);
+    await expect(readFile(path.join(
+      runtimeWorkspace,
+      "runtime",
+      "attempts",
+      bundle.attempts[0]!.attempt_id,
+      "input",
+      "resolved-inputs.json"
+    ), "utf8")).resolves.toContain('"resolved_inputs"');
   });
 
   it("limits real Codex scheduler runs to one tick and hands artifacts downstream only after an explicit later call", async () => {
@@ -526,5 +598,48 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(bundle.artifacts).toHaveLength(2);
     expect(new Set(bundle.artifacts.map((artifact) => artifact.artifact_id)).size).toBe(2);
     expect(new Set(bundle.artifacts.map((artifact) => artifact.path)).size).toBe(2);
+  });
+
+  it("rejects duplicate summary output IDs before creating an Attempt", async () => {
+    const before = await readdir(path.join(runtimeWorkspace, "runtime", "attempts"));
+    const launched = await launchConfirmedRun(duplicateSummaryWorkflow.id);
+    const scheduled = await fetchJson<{ summary: { failures: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const bundle = await fetchJson<{ attempts: Array<{ status: string; error?: { code: string } }>; artifacts: unknown[] }>(`/api/v0/runs/${launched.run_id}`);
+
+    expect(scheduled.summary.failures).toBe(1);
+    expect(bundle.attempts).toEqual([expect.objectContaining({
+      status: "failed",
+      error: expect.objectContaining({ code: "invalid_codex_artifact_output" })
+    })]);
+    expect(bundle.artifacts).toEqual([]);
+    expect(await readdir(path.join(runtimeWorkspace, "runtime", "attempts"))).toEqual(before);
+  });
+
+  it("allocates Summary and summary with case-insensitively unique Artifact IDs and paths", async () => {
+    const launched = await launchConfirmedRun(caseCollisionOutputWorkflow.id, { force_case_collision_output: true });
+    await fetchJson(`/api/v0/runs/${launched.run_id}/scheduler/run`, { method: "POST", body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 }) });
+    const bundle = await fetchJson<{ artifacts: Array<{ artifact_id: string; path: string }> }>(`/api/v0/runs/${launched.run_id}`);
+    const artifactIds = bundle.artifacts.map((artifact) => artifact.artifact_id.toLowerCase());
+    const artifactPaths = bundle.artifacts.map((artifact) => artifact.path.toLowerCase());
+
+    expect(bundle.artifacts).toHaveLength(2);
+    expect(new Set(artifactIds).size).toBe(2);
+    expect(new Set(artifactPaths).size).toBe(2);
+  });
+
+  it("preserves a unique raw normalized ID when another output hash suffix would collide with it", async () => {
+    const launched = await launchConfirmedRun(suffixCollisionOutputWorkflow.id, { force_suffix_collision_output: true });
+    await fetchJson(`/api/v0/runs/${launched.run_id}/scheduler/run`, { method: "POST", body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 }) });
+    const bundle = await fetchJson<{ artifacts: Array<{ artifact_id: string; path: string }> }>(`/api/v0/runs/${launched.run_id}`);
+    const artifactIds = bundle.artifacts.map((artifact) => artifact.artifact_id.toLowerCase());
+    const artifactPaths = bundle.artifacts.map((artifact) => artifact.path.toLowerCase());
+
+    expect(bundle.artifacts).toHaveLength(3);
+    expect(new Set(artifactIds).size).toBe(3);
+    expect(new Set(artifactPaths).size).toBe(3);
+    expect(artifactIds.filter((artifactId) => artifactId.endsWith("_a_b_c14cddc033f6_v1"))).toHaveLength(1);
   });
 });

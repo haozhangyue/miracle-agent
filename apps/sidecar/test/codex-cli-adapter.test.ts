@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,7 +38,7 @@ function sha256(content: string) {
 async function createWorkspace(adapter = createAdapter(), attemptId = "attempt_001"): Promise<AttemptWorkspace> {
   return adapter.createAttemptWorkspace({
     attempt_id: attemptId,
-    input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "brief.md" }],
+    input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "brief.md", expected_hash: sha256("approved input\n") }],
     allowed_input_roots: [sourceDir],
     output_schema: { type: "object", properties: {} }
   });
@@ -159,7 +159,7 @@ describe("CodexCliAdapter attempt workspace", () => {
 
     await expect(adapter.createAttemptWorkspace({
       attempt_id: "attempt_escape",
-      input_files: [{ source_path: outside, target_path: "outside.md" }],
+      input_files: [{ source_path: outside, target_path: "outside.md", expected_hash: sha256("outside") }],
       allowed_input_roots: [sourceDir]
     })).rejects.toMatchObject({ code: "input_path_not_allowed" });
   });
@@ -174,6 +174,43 @@ describe("CodexCliAdapter attempt workspace", () => {
       input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "artifacts/brief.md", expected_hash: sha256("approved input\n") }],
       allowed_input_roots: [sourceDir]
     })).rejects.toMatchObject({ code: "input_hash_mismatch" });
+  });
+
+  it("requires a frozen expected hash for every staged source input", async () => {
+    const adapter = createAdapter();
+
+    await expect(adapter.createAttemptWorkspace({
+      attempt_id: "attempt_unfrozen_control",
+      input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "launch_context.json" } as never],
+      allowed_input_roots: [sourceDir]
+    })).rejects.toMatchObject({ code: "input_hash_mismatch" });
+  });
+
+  it("writes an inline resolved-inputs control file inside the verified Attempt and freezes its hash", async () => {
+    const adapter = createAdapter();
+    const snapshot = `${JSON.stringify({ resolved_inputs: [], artifact_files: [] }, null, 2)}\n`;
+
+    const attempt = await adapter.createAttemptWorkspace({
+      attempt_id: "attempt_inline_snapshot",
+      input_files: [{
+        source_path: path.join(sourceDir, "brief.md"),
+        target_path: "launch_context.json",
+        expected_hash: sha256("approved input\n")
+      }],
+      inline_input_files: [{
+        target_path: "resolved-inputs.json",
+        content: snapshot,
+        expected_hash: sha256(snapshot)
+      }],
+      allowed_input_roots: [sourceDir],
+      output_schema: { type: "object", additionalProperties: false, required: [], properties: {} }
+    });
+
+    expect(await readFile(path.join(attempt.input_dir, "resolved-inputs.json"), "utf8")).toBe(snapshot);
+    expect(attempt.frozen_input_hashes).toEqual(expect.arrayContaining([
+      { target_path: "launch_context.json", expected_hash: sha256("approved input\n") },
+      { target_path: "resolved-inputs.json", expected_hash: sha256(snapshot) }
+    ]));
   });
 
   it("rejects a source swapped to a symbolic link before staging", async () => {
@@ -341,6 +378,36 @@ describe("CodexCliAdapter process lifecycle", () => {
     await symlink(external, path.join(attempt.input_dir, "artifacts"));
 
     await expect(adapter.startOperation({ invocation: invocation(attempt, "op_artifacts_symlink"), attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["launch_context.json", "resolved-inputs.json"])("revalidates frozen control file %s immediately before spawn", async (targetName) => {
+    const marker = path.join(tempRoot, `spawned-after-${targetName}`);
+    const adapter = createAdapter({ FAKE_CODEX_EXEC_MARKER: marker });
+    const snapshot = `${JSON.stringify({ resolved_inputs: [], artifact_files: [] }, null, 2)}\n`;
+    const attempt = await adapter.createAttemptWorkspace({
+      attempt_id: `attempt_control_${targetName.replaceAll(/[^A-Za-z0-9]/g, "_")}`,
+      input_files: [{
+        source_path: path.join(sourceDir, "brief.md"),
+        target_path: "launch_context.json",
+        expected_hash: sha256("approved input\n")
+      }],
+      inline_input_files: [{
+        target_path: "resolved-inputs.json",
+        content: snapshot,
+        expected_hash: sha256(snapshot)
+      }],
+      allowed_input_roots: [sourceDir],
+      output_schema: { type: "object", additionalProperties: false, required: [], properties: {} }
+    });
+    const target = path.join(attempt.input_dir, targetName);
+    await chmod(target, 0o600);
+    await writeFile(target, "changed after staging\n", "utf8");
+
+    await expect(adapter.startOperation({
+      invocation: invocation(attempt, `op_control_${targetName.replaceAll(/[^A-Za-z0-9]/g, "_")}`),
+      attempt_workspace: attempt
+    })).rejects.toMatchObject({ code: "input_hash_mismatch" });
     await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 

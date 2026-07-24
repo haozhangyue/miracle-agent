@@ -25,7 +25,7 @@ function outputSchema(output: ArtifactOutput, maxContentLength: number) {
     properties: {
       output_id: { const: output.id },
       artifact_type: { const: output.artifact_type },
-      content: { type: "string", minLength: 1, maxLength: maxContentLength, pattern: "\\S" }
+      content: { type: "string" }
     }
   };
 }
@@ -57,6 +57,13 @@ export function buildNodeOutputContract(nodeSpec: NodeSpec): NodeOutputContract 
   const outputs: ArtifactOutput[] = nodeSpec.outputs
     .filter((output) => output.kind === "artifact")
     .map((output) => ({ id: output.id, artifact_type: output.artifact_type ?? "document", required: output.required }));
+  const outputIds = new Set<string>();
+  const duplicate = outputs.find((output) => {
+    if (outputIds.has(output.id)) return true;
+    outputIds.add(output.id);
+    return false;
+  });
+  if (duplicate) throw new NodeOutputContractError("invalid_codex_artifact_output", `NodeSpec ${nodeSpec.id} declares duplicate artifact output ID ${duplicate.id}.`);
   const unsupported = outputs.find((output) => !supportedArtifactTypes.has(output.artifact_type));
   if (unsupported) throw new NodeOutputContractError("unsupported_codex_output_type", `Codex output type ${unsupported.artifact_type} is not supported for ${unsupported.id}.`);
   if (outputs.length === 0) throw new NodeOutputContractError("unsupported_codex_output_type", `NodeSpec ${nodeSpec.id} does not declare an artifact output supported by Codex.`);
@@ -74,7 +81,7 @@ export function buildNodeOutputContract(nodeSpec: NodeSpec): NodeOutputContract 
         required: ["artifact_type", "content"],
         properties: {
           artifact_type: { type: "string", enum: [output.artifact_type] },
-          content: { type: "string", minLength: 1, maxLength: maxContentLength, pattern: "\\S" }
+          content: { type: "string" }
         }
       },
       max_encoded_bytes,
@@ -95,14 +102,7 @@ export function buildNodeOutputContract(nodeSpec: NodeSpec): NodeOutputContract 
       properties: {
         outputs: {
           type: "array",
-          minItems: 0,
-          maxItems: outputs.length,
-          items: { oneOf: outputs.map((output) => outputSchema(output, maxContentLength)) },
-          allOf: outputs.map((output) => ({
-            contains: outputSchema(output, maxContentLength),
-            minContains: output.required ? 1 : 0,
-            maxContains: 1
-          }))
+          items: { anyOf: outputs.map((output) => outputSchema(output, maxContentLength)) }
         }
       }
     },

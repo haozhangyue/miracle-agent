@@ -824,10 +824,37 @@ function outputExtension(type: string) {
   return ["markdown", "document", "report", "script", "outline"].includes(type) ? "md" : "txt";
 }
 
-function outputIdentitySegment(outputId: string, expectedOutputs: ReturnType<typeof createAdapterInvocation>["expected_outputs"]) {
-  const normalized = safeId(outputId);
-  if (expectedOutputs.filter((output) => safeId(output.output_id) === normalized).length === 1) return normalized;
-  return `${normalized}_${createHash("sha256").update(outputId).digest("hex").slice(0, 12)}`;
+function allocateOutputIdentitySegments(expectedOutputs: ReturnType<typeof createAdapterInvocation>["expected_outputs"]) {
+  const normalized = expectedOutputs.map((output) => ({
+    output_id: output.output_id,
+    segment: safeId(output.output_id)
+  }));
+  const normalizedCounts = new Map<string, number>();
+  for (const output of normalized) {
+    const key = output.segment.toLowerCase();
+    normalizedCounts.set(key, (normalizedCounts.get(key) ?? 0) + 1);
+  }
+
+  const usedNames = new Set<string>();
+  const allocated = new Map<string, string>();
+  for (const output of normalized) {
+    if (normalizedCounts.get(output.segment.toLowerCase()) !== 1) continue;
+    allocated.set(output.output_id, output.segment);
+    usedNames.add(output.segment.toLowerCase());
+  }
+  for (const output of normalized) {
+    if (allocated.has(output.output_id)) continue;
+    const base = `${output.segment}_${createHash("sha256").update(output.output_id).digest("hex").slice(0, 12)}`;
+    let candidate = base;
+    let disambiguator = 2;
+    while (usedNames.has(candidate.toLowerCase())) {
+      candidate = `${base}_${disambiguator}`;
+      disambiguator += 1;
+    }
+    allocated.set(output.output_id, candidate);
+    usedNames.add(candidate.toLowerCase());
+  }
+  return allocated;
 }
 
 async function executeRealCodexAdapter(input: {
@@ -859,18 +886,21 @@ async function executeRealCodexAdapter(input: {
 
   let attempt: Awaited<ReturnType<typeof codexCliAdapter.createAttemptWorkspace>> | undefined;
   try {
-    const inputSnapshotPath = path.join(workspaceDir, "runs", invocation.run_id, "input-snapshots", `${invocation.attempt_id}.json`);
-    await writeAbsoluteJson(inputSnapshotPath, {
+    const launchContextHash = `sha256:${createHash("sha256").update(await readFile(launchContextPath)).digest("hex")}`;
+    const inputSnapshot = `${JSON.stringify({
       resolved_inputs: invocation.resolved_inputs,
       artifact_files: artifactFiles.map(({ source_path: _sourcePath, ...file }) => file)
-    });
+    }, null, 2)}\n`;
+    const inputSnapshotHash = `sha256:${createHash("sha256").update(inputSnapshot).digest("hex")}`;
     const stagedArtifactFiles = artifactFiles.filter((file, index) => artifactFiles.findIndex((candidate) => candidate.target_path === file.target_path) === index);
     attempt = await codexCliAdapter.createAttemptWorkspace({
       attempt_id: input.invocation.attempt_id,
       input_files: [
-        { source_path: launchContextPath, target_path: "launch_context.json" },
-        { source_path: inputSnapshotPath, target_path: "resolved-inputs.json" },
+        { source_path: launchContextPath, target_path: "launch_context.json", expected_hash: launchContextHash },
         ...stagedArtifactFiles.map((file) => ({ source_path: file.source_path, target_path: file.target_path, expected_hash: file.hash }))
+      ],
+      inline_input_files: [
+        { target_path: "resolved-inputs.json", content: inputSnapshot, expected_hash: inputSnapshotHash }
       ],
       allowed_input_roots: [workspaceDir],
       output_schema: contract.schema
@@ -903,13 +933,31 @@ async function executeRealCodexAdapter(input: {
     const finalText = new TextDecoder("utf-8", { fatal: true }).decode(finalBuffer);
     const finalValue = JSON.parse(finalText) as unknown;
     const outputs = contract.parse(finalValue);
-    const artifactDescriptors: AdapterArtifactDescriptor[] = [];
-    for (const output of outputs) {
+    const outputSegments = allocateOutputIdentitySegments(launchedInvocation.expected_outputs);
+    const plannedOutputs = outputs.map((output) => {
       const expectedOutput = launchedInvocation.expected_outputs.find((item) => item.output_id === output.output_id);
       if (!expectedOutput || expectedOutput.artifact_type !== output.artifact_type) throw new Error(`NodeSpec output ${output.output_id} does not match the Codex output contract.`);
-      const outputSegment = outputIdentitySegment(expectedOutput.output_id, launchedInvocation.expected_outputs);
+      const outputSegment = outputSegments.get(expectedOutput.output_id);
+      if (!outputSegment) throw new Error(`NodeSpec output ${output.output_id} has no allocated filesystem identity.`);
       const artifactId = `art_${safeId(launchedInvocation.run_id)}_${safeId(launchedInvocation.node_id)}_${outputSegment}_v1`;
       const artifactFileName = `${outputSegment}.${outputExtension(output.artifact_type)}`;
+      return {
+        output,
+        expectedOutput,
+        artifactId,
+        artifactFileName,
+        artifactPath: `artifacts/${artifactId}.${outputExtension(output.artifact_type)}`
+      };
+    });
+    const artifactIds = plannedOutputs.map((output) => output.artifactId.toLowerCase());
+    const artifactPaths = plannedOutputs.map((output) => output.artifactPath.toLowerCase());
+    if (new Set(artifactIds).size !== artifactIds.length || new Set(artifactPaths).size !== artifactPaths.length) {
+      throw new Error("Codex output allocation produced duplicate Artifact IDs or paths.");
+    }
+
+    const artifactDescriptors: AdapterArtifactDescriptor[] = [];
+    for (const planned of plannedOutputs) {
+      const { output, expectedOutput, artifactId, artifactFileName, artifactPath } = planned;
       const outputPath = await codexCliAdapter.resolveOutputPath(attempt, artifactFileName);
       await writeFile(outputPath, output.content, "utf8");
       const validatedOutputPath = await codexCliAdapter.validateOutputFile(attempt, artifactFileName);
@@ -919,7 +967,7 @@ async function executeRealCodexAdapter(input: {
         output_id: expectedOutput.output_id,
         artifact_spec_ref: expectedOutput.artifact_spec_ref,
         type: output.artifact_type,
-        path: `artifacts/${artifactId}.${outputExtension(output.artifact_type)}`,
+        path: artifactPath,
         hash: `sha256:${createHash("sha256").update(content).digest("hex")}`,
         status: "created",
         review_status: outputReviewStatus(input.workflow, expectedOutput.artifact_spec_ref),

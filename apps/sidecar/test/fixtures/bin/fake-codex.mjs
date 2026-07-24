@@ -22,6 +22,39 @@ if (args[0] === "login" && args[1] === "status") {
 
 if (args[0] === "exec") {
   if (process.env.FAKE_CODEX_EXEC_MARKER) await appendFile(process.env.FAKE_CODEX_EXEC_MARKER, "exec\n", "utf8");
+  const schemaFlag = args.indexOf("--output-schema");
+  if (schemaFlag < 0 || !args[schemaFlag + 1]) {
+    process.stderr.write("missing --output-schema\n");
+    process.exit(10);
+  }
+  const outputSchema = JSON.parse(await readFile(path.resolve(args[schemaFlag + 1]), "utf8"));
+  const forbiddenSchemaKeywords = new Set([
+    "allOf",
+    "oneOf",
+    "contains",
+    "minContains",
+    "maxContains",
+    "pattern",
+    "minLength",
+    "maxLength",
+    "minItems",
+    "maxItems"
+  ]);
+  const inspectSchema = (value) => {
+    if (Array.isArray(value)) return value.find(inspectSchema);
+    if (!value || typeof value !== "object") return undefined;
+    for (const [key, child] of Object.entries(value)) {
+      if (forbiddenSchemaKeywords.has(key)) return key;
+      const nested = inspectSchema(child);
+      if (nested) return nested;
+    }
+    return undefined;
+  };
+  const forbiddenKeyword = inspectSchema(outputSchema);
+  if (forbiddenKeyword) {
+    process.stderr.write(`unsupported output schema keyword: ${forbiddenKeyword}\n`);
+    process.exit(11);
+  }
   const mode = process.env.FAKE_CODEX_MODE ?? "success";
   if (mode === "nonzero") {
     process.stdout.write('{"type":"thread.started","thread_id":"thread_fake"}\n');
@@ -78,7 +111,22 @@ if (args[0] === "exec") {
                   { output_id: "a?b", artifact_type: "script", content: "collision-safe script" }
                 ]
               })
-            : JSON.stringify({ artifact_type: "markdown", content: "# Miracle P6-07\n\n这是 fake-codex 生成并经过校验的 Markdown 母稿。\n" }),
+              : launchContext.inputs?.force_case_collision_output
+                ? JSON.stringify({
+                  outputs: [
+                    { output_id: "Summary", artifact_type: "report", content: "# upper-case summary\n" },
+                    { output_id: "summary", artifact_type: "script", content: "lower-case summary" }
+                  ]
+                })
+                : launchContext.inputs?.force_suffix_collision_output
+                  ? JSON.stringify({
+                    outputs: [
+                      { output_id: "a/b", artifact_type: "report", content: "# slash output\n" },
+                      { output_id: "a?b", artifact_type: "script", content: "question output" },
+                      { output_id: "a_b_c14cddc033f6", artifact_type: "outline", content: "# raw normalized suffix\n" }
+                    ]
+                  })
+              : JSON.stringify({ artifact_type: "markdown", content: "# Miracle P6-07\n\n这是 fake-codex 生成并经过校验的 Markdown 母稿。\n" }),
         "utf8"
       );
     }
