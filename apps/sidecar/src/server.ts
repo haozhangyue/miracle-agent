@@ -53,8 +53,9 @@ import {
 } from "./historical-importer";
 import { RunDraftStore, RunDraftStoreError } from "./run-draft-store";
 import { CodexCliAdapter, CodexCliAdapterError } from "./codex-cli-adapter";
-import { ArtifactInputResolverError, resolveArtifactInputFiles } from "./artifact-input-resolver";
+import { resolveArtifactInputFiles } from "./artifact-input-resolver";
 import { NodeOutputContractError, buildNodeOutputContract } from "./node-output-contract";
+import { codexPreflightFailure, startCodexOperation } from "./codex-real-adapter";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
@@ -829,30 +830,6 @@ function outputIdentitySegment(outputId: string, expectedOutputs: ReturnType<typ
   return `${normalized}_${createHash("sha256").update(outputId).digest("hex").slice(0, 12)}`;
 }
 
-function codexPreflightFailure(invocation: ReturnType<typeof createAdapterInvocation>, error: unknown): AdapterResult {
-  const code = error instanceof ArtifactInputResolverError || error instanceof NodeOutputContractError ? error.code : "codex_preflight_failed";
-  return {
-    operation_id: invocation.operation_id,
-    attempt_id: invocation.attempt_id,
-    node_run_id: invocation.node_run_id,
-    status: "failed",
-    provider_receipt: {
-      provider: invocation.provider,
-      adapter_kind: invocation.adapter_kind,
-      adapter_id: invocation.adapter_id,
-      operation_id: invocation.operation_id,
-      raw_receipt_id: `receipt_${invocation.operation_id}`
-    },
-    artifact_descriptors: [],
-    error: {
-      code,
-      message: error instanceof Error ? error.message : "Codex input or output preflight validation failed.",
-      recoverable: false
-    },
-    received_at: new Date().toISOString()
-  };
-}
-
 async function executeRealCodexAdapter(input: {
   invocation: ReturnType<typeof createAdapterInvocation>;
   workflow: WorkflowSpec;
@@ -915,14 +892,13 @@ async function executeRealCodexAdapter(input: {
     "最终只返回符合 output schema 的 JSON。",
     "不要输出隐藏推理、凭证、环境变量或工作区外的内容。"
   ].join("\n");
-  const handle = await codexCliAdapter.startOperation({ invocation: launchedInvocation, attempt_workspace: attempt, prompt });
-  const processResult = await handle.result;
+  const processResult = await startCodexOperation({ adapter: codexCliAdapter, invocation: launchedInvocation, attempt, prompt });
   if (processResult.status !== "succeeded") return { invocation: launchedInvocation, result: processResult };
 
   try {
     const finalPath = await codexCliAdapter.validateOutputFile(attempt, "final.json");
     const finalStat = await stat(finalPath);
-    if (finalStat.size < 1 || finalStat.size > 2_000_000) throw new Error("Codex final output size is outside the allowed range.");
+    if (finalStat.size < 1 || finalStat.size > contract.max_encoded_bytes) throw new Error("Codex final output size is outside the output contract range.");
     const finalBuffer = await readFile(finalPath);
     const finalText = new TextDecoder("utf-8", { fatal: true }).decode(finalBuffer);
     const finalValue = JSON.parse(finalText) as unknown;

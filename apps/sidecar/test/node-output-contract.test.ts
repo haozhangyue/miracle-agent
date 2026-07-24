@@ -74,6 +74,39 @@ describe("node output contract", () => {
     }
   });
 
+  it("uses an omission-capable envelope for a single optional Artifact output", () => {
+    const contract = buildNodeOutputContract(node([
+      { id: "optional_summary", kind: "artifact", artifact_type: "report", required: false }
+    ]));
+
+    expect(contract.schema).toMatchObject({
+      required: ["outputs"],
+      properties: { outputs: { type: "array", minItems: 0, maxItems: 1 } }
+    });
+    expect(contract.parse({ outputs: [] })).toEqual([]);
+    expect(contract.parse({ outputs: [{ output_id: "optional_summary", artifact_type: "report", content: "available" }] })).toEqual([
+      { output_id: "optional_summary", artifact_type: "report", content: "available" }
+    ]);
+  });
+
+  it("publishes a bounded encoded-byte ceiling that admits a schema-valid multi-output near its content limit", () => {
+    const contract = buildNodeOutputContract(node([
+      { id: "summary", kind: "artifact", artifact_type: "report", required: true },
+      { id: "voiceover", kind: "artifact", artifact_type: "script", required: true }
+    ]));
+    const perOutputLimit = (contract.schema.properties as { outputs: { items: { oneOf: Array<{ properties: { content: { maxLength: number } } }> } } }).outputs.items.oneOf[0]!.properties.content.maxLength;
+    const value = {
+      outputs: [
+        { output_id: "summary", artifact_type: "report", content: "x".repeat(perOutputLimit) },
+        { output_id: "voiceover", artifact_type: "script", content: "y".repeat(perOutputLimit) }
+      ]
+    };
+
+    expect(contract.parse(value)).toHaveLength(2);
+    expect(Buffer.byteLength(JSON.stringify(value))).toBeGreaterThan(2_000_000);
+    expect(Buffer.byteLength(JSON.stringify(value))).toBeLessThanOrEqual(contract.max_encoded_bytes);
+  });
+
   it("blocks unsupported artifact types before a Codex process can start", () => {
     expect(() => buildNodeOutputContract(node([{ id: "data", kind: "artifact", artifact_type: "json", required: true }]))).toThrowError(
       expect.objectContaining({ code: "unsupported_codex_output_type" })

@@ -427,6 +427,19 @@ describe("P6-07 Codex real single-node execution", () => {
     await expect(readFile(path.join(tempWorkspace, bundle.artifacts.find((artifact) => artifact.type === "report")!.path), "utf8")).resolves.toContain("Miracle P7-03");
   });
 
+  it("accepts a schema-valid multi-output JSON file near the output contract byte limit", async () => {
+    const launched = await launchConfirmedRun(multiOutputWorkflow.id, { force_near_limit_multi_output: true });
+    const scheduled = await fetchJson<{ summary: { failures: number; nodes_executed: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const bundle = await fetchJson<{ nodes: Array<{ status: string }>; artifacts: Array<{ type: string }> }>(`/api/v0/runs/${launched.run_id}`);
+
+    expect(scheduled.summary).toEqual(expect.objectContaining({ failures: 0, nodes_executed: 1 }));
+    expect(bundle.nodes).toEqual([expect.objectContaining({ status: "done" })]);
+    expect(bundle.artifacts.map((artifact) => artifact.type).sort()).toEqual(["report", "script"]);
+  });
+
   it("blocks unsupported output types before creating an attempt workspace", async () => {
     const created = await fetchJson<{ draft: { draft_id: string; revision: number } }>("/api/v0/run-drafts", {
       method: "POST",

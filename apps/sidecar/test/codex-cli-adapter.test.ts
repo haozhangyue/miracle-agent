@@ -298,6 +298,19 @@ describe("CodexCliAdapter process lifecycle", () => {
     await expect(adapter.startOperation({ invocation: invocation(attempt, "op_attempt_replaced"), attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
   });
 
+  it.each(["input", "meta", "output"] as const)("rejects a symlink swap of attempt %s immediately before spawn without launching Codex", async (segment) => {
+    const marker = path.join(tempRoot, `spawned-after-${segment}-swap`);
+    const adapter = createAdapter({ FAKE_CODEX_EXEC_MARKER: marker });
+    const attempt = await createWorkspace(adapter, `attempt_${segment}_swap`);
+    const external = path.join(tempRoot, `external_${segment}`);
+    await mkdir(external, { recursive: true });
+    await rm(attempt[`${segment}_dir`], { recursive: true, force: true });
+    await symlink(external, attempt[`${segment}_dir`]);
+
+    await expect(adapter.startOperation({ invocation: invocation(attempt, `op_${segment}_swap`), attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects a symlinked operations root for receipt writes and orphan recovery", async () => {
     const adapter = createAdapter();
     const attempt = await createWorkspace(adapter, "attempt_operations_root");

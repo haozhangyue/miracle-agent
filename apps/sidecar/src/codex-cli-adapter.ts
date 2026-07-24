@@ -282,7 +282,9 @@ export class CodexCliAdapter {
     if (this.operations.has(invocation.operation_id) || this.operationReservations.has(invocation.operation_id)) throw new CodexCliAdapterError("operation_conflict", `Operation already exists: ${invocation.operation_id}`);
     this.operationReservations.add(invocation.operation_id);
     try {
-      const canonicalAttempt = await this.verifyCanonicalAttemptWorkspace(invocation, attempt);
+      let canonicalAttempt = await this.verifyCanonicalAttemptWorkspace(invocation, attempt);
+      await this.verifyFrozenInputHashes(canonicalAttempt);
+      canonicalAttempt = await this.verifyCanonicalAttemptWorkspace(invocation, canonicalAttempt);
       await this.verifyFrozenInputHashes(canonicalAttempt);
 
       const child = spawn(this.executablePath, [
@@ -708,17 +710,12 @@ export class CodexCliAdapter {
   }
 
   private async verifyCanonicalAttemptWorkspace(invocation: AdapterInvocation, attempt: AttemptWorkspace): Promise<AttemptWorkspace> {
-    const attemptsRoot = await this.ensureRuntimeRoot();
+    const attemptsRootPath = await this.ensureRuntimeRoot();
+    const [attemptsEntry, attemptsRoot] = await Promise.all([lstat(attemptsRootPath), realpath(attemptsRootPath)]);
+    if (attemptsEntry.isSymbolicLink() || !attemptsEntry.isDirectory()) {
+      throw new CodexCliAdapterError("workspace_escape_detected", "Verified attempts root is no longer a real directory");
+    }
     const rootDir = path.resolve(attemptsRoot, invocation.attempt_id);
-    const canonicalAttempt: AttemptWorkspace = {
-      attempt_id: invocation.attempt_id,
-      root_dir: rootDir,
-      input_dir: path.join(rootDir, "input"),
-      work_dir: path.join(rootDir, "work"),
-      output_dir: path.join(rootDir, "output"),
-      meta_dir: path.join(rootDir, "meta"),
-      frozen_input_hashes: attempt.frozen_input_hashes
-    };
     if (
       attempt.attempt_id !== invocation.attempt_id ||
       path.resolve(attempt.root_dir) !== rootDir ||
@@ -727,27 +724,43 @@ export class CodexCliAdapter {
       throw new CodexCliAdapterError("workspace_escape_detected", "Invocation does not declare the canonical attempt workspace");
     }
     try {
-      const [attemptEntry, attemptRoot, workEntry, workRoot] = await Promise.all([
+      const [attemptEntry, attemptRoot] = await Promise.all([
         lstat(rootDir),
-        realpath(rootDir),
-        lstat(canonicalAttempt.work_dir),
-        realpath(canonicalAttempt.work_dir)
+        realpath(rootDir)
       ]);
       if (
         attemptEntry.isSymbolicLink() ||
         !attemptEntry.isDirectory() ||
-        !isWithin(attemptsRoot, attemptRoot) ||
-        workEntry.isSymbolicLink() ||
-        !workEntry.isDirectory() ||
-        !isWithin(attemptRoot, workRoot)
+        !isWithin(attemptsRoot, attemptRoot)
       ) {
         throw new CodexCliAdapterError("workspace_escape_detected", "Canonical attempt workspace is no longer anchored to the verified attempts root");
       }
+      const children = await Promise.all(([
+        ["input_dir", "input"],
+        ["work_dir", "work"],
+        ["meta_dir", "meta"],
+        ["output_dir", "output"]
+      ] as const).map(async ([key, name]) => {
+        const candidate = path.join(rootDir, name);
+        const [entry, resolved] = await Promise.all([lstat(candidate), realpath(candidate)]);
+        if (entry.isSymbolicLink() || !entry.isDirectory() || !isWithin(attemptRoot, resolved)) {
+          throw new CodexCliAdapterError("workspace_escape_detected", `Canonical attempt ${name} directory is invalid`);
+        }
+        return [key, resolved] as const;
+      }));
+      return {
+        attempt_id: invocation.attempt_id,
+        root_dir: attemptRoot,
+        input_dir: children.find(([key]) => key === "input_dir")![1],
+        work_dir: children.find(([key]) => key === "work_dir")![1],
+        meta_dir: children.find(([key]) => key === "meta_dir")![1],
+        output_dir: children.find(([key]) => key === "output_dir")![1],
+        frozen_input_hashes: attempt.frozen_input_hashes
+      };
     } catch (error) {
       if (error instanceof CodexCliAdapterError) throw error;
       throw new CodexCliAdapterError("workspace_escape_detected", "Canonical attempt workspace is unavailable or invalid");
     }
-    return canonicalAttempt;
   }
 
   private async verifyFrozenInputHashes(attempt: AttemptWorkspace) {

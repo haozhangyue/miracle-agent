@@ -64,6 +64,13 @@ if (args[0] === "exec") {
                 { output_id: "summary", artifact_type: "report", content: "# Miracle P7-03\n\n这是经校验的报告。\n" }
               ]
             })
+            : launchContext.inputs?.force_near_limit_multi_output
+              ? JSON.stringify({
+                outputs: [
+                  { output_id: "voiceover", artifact_type: "script", content: "v".repeat(1_000_000) },
+                  { output_id: "summary", artifact_type: "report", content: "s".repeat(1_000_000) }
+                ]
+              })
             : launchContext.inputs?.force_collision_output
               ? JSON.stringify({
                 outputs: [
