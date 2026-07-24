@@ -311,6 +311,39 @@ describe("CodexCliAdapter process lifecycle", () => {
     await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("skips cleanup metadata after a rejected workspace swaps meta to an external symlink", async () => {
+    const adapter = createAdapter();
+    const attempt = await createWorkspace(adapter, "attempt_cleanup_meta_swap");
+    const external = path.join(tempRoot, "external-cleanup-meta");
+    await mkdir(external, { recursive: true });
+    await rm(attempt.meta_dir, { recursive: true, force: true });
+    await symlink(external, attempt.meta_dir);
+
+    await expect(adapter.startOperation({ invocation: invocation(attempt, "op_cleanup_meta_swap"), attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
+    await adapter.cleanupAttemptWorkspace(attempt);
+
+    await expect(readFile(path.join(external, "attempt.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a frozen input whose artifacts directory becomes an external matching-hash symlink before spawn", async () => {
+    const marker = path.join(tempRoot, "spawned-after-artifacts-symlink");
+    const adapter = createAdapter({ FAKE_CODEX_EXEC_MARKER: marker });
+    const attempt = await adapter.createAttemptWorkspace({
+      attempt_id: "attempt_artifacts_symlink",
+      input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "artifacts/brief.md", expected_hash: sha256("approved input\n") }],
+      allowed_input_roots: [sourceDir],
+      output_schema: { type: "object", properties: {} }
+    });
+    const external = path.join(tempRoot, "external-artifacts");
+    await mkdir(external, { recursive: true });
+    await writeFile(path.join(external, "brief.md"), "approved input\n", "utf8");
+    await rm(path.join(attempt.input_dir, "artifacts"), { recursive: true, force: true });
+    await symlink(external, path.join(attempt.input_dir, "artifacts"));
+
+    await expect(adapter.startOperation({ invocation: invocation(attempt, "op_artifacts_symlink"), attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects a symlinked operations root for receipt writes and orphan recovery", async () => {
     const adapter = createAdapter();
     const attempt = await createWorkspace(adapter, "attempt_operations_root");
