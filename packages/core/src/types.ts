@@ -219,6 +219,7 @@ export interface AdapterInvocation {
   provider: string;
   capability_requirements: string[];
   input_artifacts: string[];
+  resolved_inputs: ResolvedNodeInput[];
   expected_outputs: Array<{
     output_id: string;
     artifact_type: string;

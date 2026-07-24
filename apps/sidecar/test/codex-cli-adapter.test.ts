@@ -55,6 +55,7 @@ function invocation(attempt: AttemptWorkspace, operationId = "op_001"): AdapterI
     provider: "codex-local",
     capability_requirements: ["content.longform_draft"],
     input_artifacts: [],
+    resolved_inputs: [],
     expected_outputs: [],
     runtime_control: {
       timeout_ms: 100,

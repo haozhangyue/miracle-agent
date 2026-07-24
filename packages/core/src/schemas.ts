@@ -261,6 +261,7 @@ export const adapterInvocationSchema = z.object({
   provider: z.string().min(1),
   capability_requirements: z.array(z.string()),
   input_artifacts: z.array(z.string()),
+  resolved_inputs: z.array(resolvedNodeInputSchema),
   expected_outputs: z.array(z.object({
     output_id: z.string().min(1),
     artifact_type: z.string().min(1),

@@ -68,6 +68,38 @@ const workflow: WorkflowSpec = {
   registry_meta: { source: "p6-integration-test", status: "experimental" }
 };
 
+const multiOutputWorkflow: WorkflowSpec = {
+  ...workflow,
+  id: "codex-multi-output-v0",
+  name: "Codex multi-output smoke workflow",
+  nodes: [{
+    ...workflow.nodes[0]!,
+    outputs: [
+      { id: "summary", kind: "artifact", artifact_type: "report", artifact_spec_ref: "summary_artifact", required: true },
+      { id: "voiceover", kind: "artifact", artifact_type: "script", artifact_spec_ref: "voiceover_artifact", required: true }
+    ]
+  }],
+  gates: [],
+  artifacts: [
+    { id: "summary_artifact", type: "report", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } },
+    { id: "voiceover_artifact", type: "script", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } }
+  ]
+};
+
+const unsupportedOutputWorkflow: WorkflowSpec = {
+  ...workflow,
+  id: "codex-unsupported-output-v0",
+  name: "Codex unsupported output smoke workflow",
+  nodes: [{
+    ...workflow.nodes[0]!,
+    outputs: [{ id: "data", kind: "artifact", artifact_type: "json", artifact_spec_ref: "data_artifact", required: true }]
+  }],
+  gates: [],
+  artifacts: [
+    { id: "data_artifact", type: "json", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } }
+  ]
+};
+
 let tempRoot = "";
 let tempWorkspace = "";
 let runtimeWorkspace = "";
@@ -105,6 +137,8 @@ describe("P6-07 Codex real single-node execution", () => {
     runtimeWorkspace = path.join(tempRoot, "runtime");
     await cp(fixtureWorkspace, tempWorkspace, { recursive: true });
     await writeFile(path.join(tempWorkspace, "workflows", `${workflow.id}.json`), `${JSON.stringify(workflow, null, 2)}\n`, "utf8");
+    await writeFile(path.join(tempWorkspace, "workflows", `${multiOutputWorkflow.id}.json`), `${JSON.stringify(multiOutputWorkflow, null, 2)}\n`, "utf8");
+    await writeFile(path.join(tempWorkspace, "workflows", `${unsupportedOutputWorkflow.id}.json`), `${JSON.stringify(unsupportedOutputWorkflow, null, 2)}\n`, "utf8");
     const port = 5600 + Math.floor(Math.random() * 300);
     baseUrl = `http://127.0.0.1:${port}`;
     sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
@@ -124,7 +158,7 @@ describe("P6-07 Codex real single-node execution", () => {
     sidecar.stdout.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
     sidecar.stderr.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
     await waitForHealth();
-  });
+  }, 20_000);
 
   afterAll(async () => {
     sidecar?.kill("SIGTERM");
@@ -295,5 +329,57 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(bundle.attempts).toEqual([expect.objectContaining({ status: "aborted", error: expect.objectContaining({ code: "invalid_codex_artifact_output" }) })]);
     expect(bundle.artifacts).toEqual([]);
     expect(bundle.gates).toEqual([]);
+  });
+
+  it("commits every NodeSpec output returned by the Codex output contract", async () => {
+    const created = await fetchJson<{ draft: { draft_id: string; revision: number } }>("/api/v0/run-drafts", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: multiOutputWorkflow.id, inputs: { force_multi_output: true }, execution_policy: "manual" })
+    });
+    const dryRun = await fetchJson<{ draft: { revision: number }; plan: { draft_plan_id: string; plan_hash: string; required_acknowledgements: string[] } }>(`/api/v0/run-drafts/${created.draft.draft_id}/dry-run`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: created.draft.revision })
+    });
+    const confirmed = await fetchJson<{ confirmation: { confirmation_id: string } }>(`/api/v0/run-drafts/${created.draft.draft_id}/confirmation`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "confirm", expected_revision: dryRun.draft.revision, plan_hash: dryRun.plan.plan_hash, acknowledgements: dryRun.plan.required_acknowledgements, actor: "p7-test" })
+    });
+    const launched = await fetchJson<{ run_id: string }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ draft_id: created.draft.draft_id, draft_plan_id: dryRun.plan.draft_plan_id, plan_hash: dryRun.plan.plan_hash, confirmation_id: confirmed.confirmation.confirmation_id })
+    });
+    await fetchJson(`/api/v0/runs/${launched.run_id}/scheduler/run`, { method: "POST", body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 }) });
+
+    const bundle = await fetchJson<{ nodes: Array<{ status: string }>; artifacts: Array<{ type: string; path: string }> }>(`/api/v0/runs/${launched.run_id}`);
+    expect(bundle.nodes).toEqual([expect.objectContaining({ status: "done" })]);
+    expect(bundle.artifacts.map((artifact) => artifact.type).sort()).toEqual(["report", "script"]);
+    await expect(readFile(path.join(tempWorkspace, bundle.artifacts.find((artifact) => artifact.type === "report")!.path), "utf8")).resolves.toContain("Miracle P7-03");
+  });
+
+  it("blocks unsupported output types before creating an attempt workspace", async () => {
+    const created = await fetchJson<{ draft: { draft_id: string; revision: number } }>("/api/v0/run-drafts", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: unsupportedOutputWorkflow.id, inputs: {}, execution_policy: "manual" })
+    });
+    const dryRun = await fetchJson<{ draft: { revision: number }; plan: { draft_plan_id: string; plan_hash: string; required_acknowledgements: string[] } }>(`/api/v0/run-drafts/${created.draft.draft_id}/dry-run`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: created.draft.revision })
+    });
+    const confirmed = await fetchJson<{ confirmation: { confirmation_id: string } }>(`/api/v0/run-drafts/${created.draft.draft_id}/confirmation`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "confirm", expected_revision: dryRun.draft.revision, plan_hash: dryRun.plan.plan_hash, acknowledgements: dryRun.plan.required_acknowledgements, actor: "p7-test" })
+    });
+    const before = await readdir(path.join(runtimeWorkspace, "runtime", "attempts"));
+    const launched = await fetchJson<{ run_id: string }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ draft_id: created.draft.draft_id, draft_plan_id: dryRun.plan.draft_plan_id, plan_hash: dryRun.plan.plan_hash, confirmation_id: confirmed.confirmation.confirmation_id })
+    });
+    const scheduled = await fetchJson<{ summary: { failures: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, { method: "POST", body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 }) });
+    const bundle = await fetchJson<{ attempts: Array<{ status: string; error?: { code: string; recoverable: boolean } }>; artifacts: unknown[] }>(`/api/v0/runs/${launched.run_id}`);
+
+    expect(scheduled.summary.failures).toBe(1);
+    expect(bundle.attempts).toEqual([expect.objectContaining({ status: "failed", error: expect.objectContaining({ code: "unsupported_codex_output_type", recoverable: false }) })]);
+    expect(bundle.artifacts).toEqual([]);
+    expect(await readdir(path.join(runtimeWorkspace, "runtime", "attempts"))).toEqual(before);
   });
 });

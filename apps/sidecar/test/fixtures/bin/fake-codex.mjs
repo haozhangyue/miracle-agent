@@ -56,7 +56,14 @@ if (args[0] === "exec") {
         outputPath,
         launchContext.inputs?.force_invalid_output
           ? JSON.stringify({ artifact_type: "text", content: "invalid" })
-          : JSON.stringify({ artifact_type: "markdown", content: "# Miracle P6-07\n\n这是 fake-codex 生成并经过校验的 Markdown 母稿。\n" }),
+          : launchContext.inputs?.force_multi_output
+            ? JSON.stringify({
+              outputs: [
+                { output_id: "voiceover", artifact_type: "script", content: "这是经校验的口播稿。" },
+                { output_id: "summary", artifact_type: "report", content: "# Miracle P7-03\n\n这是经校验的报告。\n" }
+              ]
+            })
+            : JSON.stringify({ artifact_type: "markdown", content: "# Miracle P6-07\n\n这是 fake-codex 生成并经过校验的 Markdown 母稿。\n" }),
         "utf8"
       );
     }

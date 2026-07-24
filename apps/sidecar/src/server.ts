@@ -2,6 +2,7 @@ import {
   buildCanvasDraftFromWorkflow,
   buildDagProjection,
   buildGateDecisionProjection,
+  calculateExecutionPlan,
   buildAdapterRegistry,
   codexCliRealAdapterManifest,
   canvasNodeSpecDraftSchema,
@@ -52,6 +53,8 @@ import {
 } from "./historical-importer";
 import { RunDraftStore, RunDraftStoreError } from "./run-draft-store";
 import { CodexCliAdapter, CodexCliAdapterError } from "./codex-cli-adapter";
+import { ArtifactInputResolverError, resolveArtifactInputFiles } from "./artifact-input-resolver";
+import { NodeOutputContractError, buildNodeOutputContract } from "./node-output-contract";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
@@ -797,16 +800,6 @@ function executeSidecarAdapter(input: {
   return executeMockAdapter({ invocation: input.invocation, workflow: input.workflow, receivedAt });
 }
 
-const codexMarkdownOutputSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["artifact_type", "content"],
-  properties: {
-    artifact_type: { type: "string", enum: ["markdown"] },
-    content: { type: "string", minLength: 1, maxLength: 2_000_000 }
-  }
-};
-
 function codexRealAdapterEntry(): AdapterRegistryEntry {
   return {
     ...codexCliRealAdapterManifest,
@@ -821,9 +814,37 @@ function realCodexEnabled(runSpec: RunSpec) {
   return process.env.MIRACLE_ENABLE_REAL_CODEX === "1" && runSpec.resolved_components.includes("codex-cli-real");
 }
 
-function markdownReviewStatus(workflow: WorkflowSpec, artifactSpecRef?: string) {
+function outputReviewStatus(workflow: WorkflowSpec, artifactSpecRef?: string) {
   const spec = workflow.artifacts.find((artifact) => artifact.id === artifactSpecRef);
   return spec?.review_policy.mode === "manual" ? "pending_review" as const : "none" as const;
+}
+
+function outputExtension(type: string) {
+  return ["markdown", "document", "report", "script", "outline"].includes(type) ? "md" : "txt";
+}
+
+function codexPreflightFailure(invocation: ReturnType<typeof createAdapterInvocation>, error: unknown): AdapterResult {
+  const code = error instanceof ArtifactInputResolverError || error instanceof NodeOutputContractError ? error.code : "codex_preflight_failed";
+  return {
+    operation_id: invocation.operation_id,
+    attempt_id: invocation.attempt_id,
+    node_run_id: invocation.node_run_id,
+    status: "failed",
+    provider_receipt: {
+      provider: invocation.provider,
+      adapter_kind: invocation.adapter_kind,
+      adapter_id: invocation.adapter_id,
+      operation_id: invocation.operation_id,
+      raw_receipt_id: `receipt_${invocation.operation_id}`
+    },
+    artifact_descriptors: [],
+    error: {
+      code,
+      message: error instanceof Error ? error.message : "Codex input or output preflight validation failed.",
+      recoverable: false
+    },
+    received_at: new Date().toISOString()
+  };
 }
 
 async function executeRealCodexAdapter(input: {
@@ -832,30 +853,59 @@ async function executeRealCodexAdapter(input: {
   nodeRun: NodeRun;
 }) {
   const launchContextPath = path.join(workspaceDir, "runs", input.invocation.run_id, "launch_context.json");
-  const attempt = await codexCliAdapter.createAttemptWorkspace({
-    attempt_id: input.invocation.attempt_id,
-    input_files: [{ source_path: launchContextPath, target_path: "launch_context.json" }],
-    allowed_input_roots: [workspaceDir],
-    output_schema: codexMarkdownOutputSchema
-  });
+  const nodeSpec = input.workflow.nodes.find((node) => node.id === input.nodeRun.node_id);
   const invocation = {
     ...input.invocation,
     adapter_kind: "codex" as const,
-    adapter_id: "codex-cli-real",
+    adapter_id: "codex-cli-real"
+  };
+  if (!nodeSpec) return { invocation, result: codexPreflightFailure(invocation, new NodeOutputContractError("unsupported_codex_output_type", `NodeSpec not found: ${input.nodeRun.node_id}`)) };
+
+  let contract: ReturnType<typeof buildNodeOutputContract>;
+  let artifactFiles: Awaited<ReturnType<typeof resolveArtifactInputFiles>>;
+  try {
+    contract = buildNodeOutputContract(nodeSpec);
+    artifactFiles = await resolveArtifactInputFiles({
+      workspaceDir,
+      runId: invocation.run_id,
+      resolvedInputs: invocation.resolved_inputs
+    });
+  } catch (error) {
+    return { invocation, result: codexPreflightFailure(invocation, error) };
+  }
+
+  const inputSnapshotPath = path.join(workspaceDir, "runs", invocation.run_id, "input-snapshots", `${invocation.attempt_id}.json`);
+  await writeAbsoluteJson(inputSnapshotPath, {
+    resolved_inputs: invocation.resolved_inputs,
+    artifact_files: artifactFiles.map(({ source_path: _sourcePath, ...file }) => file)
+  });
+  const stagedArtifactFiles = artifactFiles.filter((file, index) => artifactFiles.findIndex((candidate) => candidate.target_path === file.target_path) === index);
+  const attempt = await codexCliAdapter.createAttemptWorkspace({
+    attempt_id: input.invocation.attempt_id,
+    input_files: [
+      { source_path: launchContextPath, target_path: "launch_context.json" },
+      { source_path: inputSnapshotPath, target_path: "resolved-inputs.json" },
+      ...stagedArtifactFiles.map((file) => ({ source_path: file.source_path, target_path: file.target_path }))
+    ],
+    allowed_input_roots: [workspaceDir],
+    output_schema: contract.schema
+  });
+  const launchedInvocation = {
+    ...invocation,
     runtime_control: { ...input.invocation.runtime_control, attempt_workspace: attempt.root_dir },
     prompt_path: path.join(attempt.input_dir, "launch_context.json"),
     output_schema_path: path.join(attempt.meta_dir, "output.schema.json")
   };
-  const nodeSpec = input.workflow.nodes.find((node) => node.id === input.nodeRun.node_id);
   const prompt = [
     `你正在执行 Miracle 工作流节点 ${input.nodeRun.node_id}（${nodeSpec?.name ?? input.nodeRun.node_id}）。`,
-    "读取 ../input/launch_context.json 中的公开任务输入，生成一份简洁、事实安全的中文 Markdown 母稿。",
-    "最终只返回符合 output schema 的 JSON：artifact_type 必须为 markdown，content 必须是完整 Markdown。",
+    "读取 ../input/launch_context.json 中的公开任务输入和 ../input/resolved-inputs.json 中的输入快照。",
+    "上游 Artifact 仅可从 ../input/artifacts/ 读取，并且只能使用 resolved-inputs.json 中列出的文件。",
+    "最终只返回符合 output schema 的 JSON。",
     "不要输出隐藏推理、凭证、环境变量或工作区外的内容。"
   ].join("\n");
-  const handle = await codexCliAdapter.startOperation({ invocation, attempt_workspace: attempt, prompt });
+  const handle = await codexCliAdapter.startOperation({ invocation: launchedInvocation, attempt_workspace: attempt, prompt });
   const processResult = await handle.result;
-  if (processResult.status !== "succeeded") return { invocation, result: processResult };
+  if (processResult.status !== "succeeded") return { invocation: launchedInvocation, result: processResult };
 
   try {
     const finalPath = await codexCliAdapter.validateOutputFile(attempt, "final.json");
@@ -863,38 +913,40 @@ async function executeRealCodexAdapter(input: {
     if (finalStat.size < 1 || finalStat.size > 2_000_000) throw new Error("Codex final output size is outside the allowed range.");
     const finalBuffer = await readFile(finalPath);
     const finalText = new TextDecoder("utf-8", { fatal: true }).decode(finalBuffer);
-    const finalValue = JSON.parse(finalText) as { artifact_type?: unknown; content?: unknown };
-    const finalKeys = finalValue && typeof finalValue === "object" && !Array.isArray(finalValue) ? Object.keys(finalValue).sort() : [];
-    if (finalKeys.join(",") !== "artifact_type,content" || finalValue.artifact_type !== "markdown" || typeof finalValue.content !== "string" || finalValue.content.trim().length === 0) {
-      throw new Error("Codex final output does not match the Markdown descriptor schema.");
+    const finalValue = JSON.parse(finalText) as unknown;
+    const outputs = contract.parse(finalValue);
+    const artifactDescriptors: AdapterArtifactDescriptor[] = [];
+    for (const output of outputs) {
+      const expectedOutput = launchedInvocation.expected_outputs.find((item) => item.output_id === output.output_id);
+      if (!expectedOutput || expectedOutput.artifact_type !== output.artifact_type) throw new Error(`NodeSpec output ${output.output_id} does not match the Codex output contract.`);
+      const artifactId = `art_${safeId(launchedInvocation.run_id)}_${safeId(launchedInvocation.node_id)}_${safeId(expectedOutput.output_id)}_v1`;
+      const artifactFileName = `${safeId(expectedOutput.output_id)}.${outputExtension(output.artifact_type)}`;
+      const outputPath = await codexCliAdapter.resolveOutputPath(attempt, artifactFileName);
+      await writeFile(outputPath, output.content, "utf8");
+      const validatedOutputPath = await codexCliAdapter.validateOutputFile(attempt, artifactFileName);
+      const content = new TextDecoder("utf-8", { fatal: true }).decode(await readFile(validatedOutputPath));
+      artifactDescriptors.push({
+        artifact_id: artifactId,
+        output_id: expectedOutput.output_id,
+        artifact_spec_ref: expectedOutput.artifact_spec_ref,
+        type: output.artifact_type,
+        path: `artifacts/${artifactId}.${outputExtension(output.artifact_type)}`,
+        hash: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+        status: "created",
+        review_status: outputReviewStatus(input.workflow, expectedOutput.artifact_spec_ref),
+        content
+      });
     }
-    const markdownPath = await codexCliAdapter.resolveOutputPath(attempt, "md_master.md");
-    await writeFile(markdownPath, finalValue.content, "utf8");
-    const validatedMarkdownPath = await codexCliAdapter.validateOutputFile(attempt, "md_master.md");
-    const markdown = new TextDecoder("utf-8", { fatal: true }).decode(await readFile(validatedMarkdownPath));
-    const expectedOutput = invocation.expected_outputs.find((output) => output.required) ?? invocation.expected_outputs[0];
-    if (!expectedOutput || expectedOutput.artifact_type !== "markdown") throw new Error("NodeSpec does not declare a required Markdown output.");
-    const artifactId = `art_${safeId(invocation.run_id)}_${safeId(invocation.node_id)}_${safeId(expectedOutput.output_id)}_v1`;
     return {
-      invocation,
+      invocation: launchedInvocation,
       result: {
         ...processResult,
-        artifact_descriptors: [{
-          artifact_id: artifactId,
-          output_id: expectedOutput.output_id,
-          artifact_spec_ref: expectedOutput.artifact_spec_ref,
-          type: "markdown",
-          path: `artifacts/${artifactId}.md`,
-          hash: `sha256:${createHash("sha256").update(markdown).digest("hex")}`,
-          status: "created" as const,
-          review_status: markdownReviewStatus(input.workflow, expectedOutput.artifact_spec_ref),
-          content: markdown
-        }]
+        artifact_descriptors: artifactDescriptors
       }
     };
   } catch (error) {
     return {
-      invocation,
+      invocation: launchedInvocation,
       result: {
         ...processResult,
         status: "aborted" as const,
@@ -998,6 +1050,8 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
 
     const nodeSpec = lockedBundle.workflow.nodes.find((node) => node.id === targetNodeRun.node_id);
+    const artifacts = lockedBundle.artifacts as ArtifactManifest[];
+    const gates = lockedBundle.gates as GateInstance[];
     const provider = targetNodeRun.provider ?? runSpec.resolved_provider_policy.default_provider;
     const manifests = await readAdapterManifests();
     const availableCredentials = availableCredentialKeys();
@@ -1010,13 +1064,24 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     const adapter = realCodexEnabled(runSpec)
       ? (useRealCodex ? codexRealAdapterEntry() : undefined)
       : nodeSpec && selectAdapterForNode({ manifests, node: nodeSpec, provider, availableCredentials });
+    const executionPlan = calculateExecutionPlan({
+      runId,
+      workflowSnapshotId: runSpec.workflow_snapshot_id,
+      workflow: lockedBundle.workflow,
+      nodeRuns,
+      artifacts,
+      gates,
+      calculatedAt: dispatchedAt
+    });
+    const resolvedInputs = executionPlan.decisions.find((decision) => decision.node_run_id === targetNodeRun.node_run_id)?.resolved_inputs ?? [];
     let invocation = createAdapterInvocation({
       runSpec,
       workflow: lockedBundle.workflow,
       nodeRun: targetNodeRun,
       createdAt: dispatchedAt,
       adapterKind: adapter?.kind,
-      adapterId: adapter?.id
+      adapterId: adapter?.id,
+      resolvedInputs
     });
     let rawResult: AdapterResult;
     if (adapter?.id === "codex-cli-real") {
@@ -1053,8 +1118,6 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     for (const descriptor of result.artifact_descriptors) await writeArtifactDescriptorFile(descriptor);
 
     const attempts = (await readJsonOptional<NodeAttempt[]>(`runs/${runId}/attempts.json`)) ?? [];
-    const artifacts = lockedBundle.artifacts as ArtifactManifest[];
-    const gates = lockedBundle.gates as GateInstance[];
     const createdGates = buildGateInstancesForArtifacts({ workflow: lockedBundle.workflow, runId, artifacts: createdArtifacts, descriptors: result.artifact_descriptors });
     const committedStatus: NodeRun["status"] = result.status === "succeeded" ? (createdGates.length > 0 ? "reviewing" : "done") : "failed";
     targetNodeRun.status = committedStatus;
@@ -1880,14 +1943,11 @@ async function route(req: IncomingMessage, res: ServerResponse) {
         adapter_ready: process.env.MIRACLE_ENABLE_REAL_CODEX === "1" && health.status === "healthy",
         launch: async (bundle) => {
           const nodes = bundle.snapshot.workflow.nodes;
-          const requiredOutputs = nodes[0]?.outputs.filter((output) => output.required) ?? [];
           if (
-            nodes.length !== 1 ||
-            requiredOutputs.length !== 1 ||
-            requiredOutputs[0]?.artifact_type !== "markdown" ||
+            nodes.length === 0 ||
             !nodes.every((node) => node.capability_requirements.every((capability) => codexCliRealAdapterManifest.capabilities.includes(capability)))
           ) {
-            throw new RunDraftStoreError("launch_handoff_required", "P6-07 only launches a single-node workflow supported by the Codex CLI adapter.");
+            throw new RunDraftStoreError("launch_handoff_required", "Workflow nodes must be supported by the Codex CLI adapter before launch.");
           }
           return stageRunFromDraft({
             workflow: bundle.snapshot.workflow,

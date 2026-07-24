@@ -6,6 +6,7 @@ import type {
   ArtifactReviewStatus,
   NodeAttempt,
   NodeRun,
+  ResolvedNodeInput,
   RunSpec,
   TraceEvent,
   WorkflowSpec
@@ -55,6 +56,7 @@ export function createAdapterInvocation(input: {
   createdAt?: string;
   adapterKind?: AdapterInvocation["adapter_kind"];
   adapterId?: string;
+  resolvedInputs?: ResolvedNodeInput[];
 }): AdapterInvocation {
   const nodeSpec = input.workflow.nodes.find((node) => node.id === input.nodeRun.node_id);
   if (!nodeSpec) throw new Error(`NodeSpec not found: ${input.nodeRun.node_id}`);
@@ -74,6 +76,7 @@ export function createAdapterInvocation(input: {
     provider: input.nodeRun.provider ?? input.runSpec.resolved_provider_policy.default_provider,
     capability_requirements: nodeSpec.capability_requirements,
     input_artifacts: input.nodeRun.upstream_artifacts,
+    resolved_inputs: input.resolvedInputs ?? [],
     expected_outputs: nodeSpec.outputs.map((output) => ({
       output_id: output.id,
       artifact_type: output.artifact_type ?? "document",
