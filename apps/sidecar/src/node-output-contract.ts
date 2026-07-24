@@ -24,7 +24,7 @@ function outputSchema(output: ArtifactOutput) {
     properties: {
       output_id: { const: output.id },
       artifact_type: { const: output.artifact_type },
-      content: { type: "string", minLength: 1, maxLength: maxContentLength }
+      content: { type: "string", minLength: 1, maxLength: maxContentLength, pattern: "\\S" }
     }
   };
 }
@@ -62,7 +62,7 @@ export function buildNodeOutputContract(nodeSpec: NodeSpec): NodeOutputContract 
         required: ["artifact_type", "content"],
         properties: {
           artifact_type: { type: "string", enum: [output.artifact_type] },
-          content: { type: "string", minLength: 1, maxLength: maxContentLength }
+          content: { type: "string", minLength: 1, maxLength: maxContentLength, pattern: "\\S" }
         }
       },
       parse(value) {
@@ -84,7 +84,12 @@ export function buildNodeOutputContract(nodeSpec: NodeSpec): NodeOutputContract 
           type: "array",
           minItems: outputs.filter((output) => output.required).length,
           maxItems: outputs.length,
-          items: { oneOf: outputs.map(outputSchema) }
+          items: { oneOf: outputs.map(outputSchema) },
+          allOf: outputs.map((output) => ({
+            contains: outputSchema(output),
+            minContains: output.required ? 1 : 0,
+            maxContains: 1
+          }))
         }
       }
     },

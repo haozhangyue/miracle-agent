@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const args = process.argv.slice(2);
@@ -21,6 +21,7 @@ if (args[0] === "login" && args[1] === "status") {
 }
 
 if (args[0] === "exec") {
+  if (process.env.FAKE_CODEX_EXEC_MARKER) await appendFile(process.env.FAKE_CODEX_EXEC_MARKER, "exec\n", "utf8");
   const mode = process.env.FAKE_CODEX_MODE ?? "success";
   if (mode === "nonzero") {
     process.stdout.write('{"type":"thread.started","thread_id":"thread_fake"}\n');
@@ -63,6 +64,13 @@ if (args[0] === "exec") {
                 { output_id: "summary", artifact_type: "report", content: "# Miracle P7-03\n\n这是经校验的报告。\n" }
               ]
             })
+            : launchContext.inputs?.force_collision_output
+              ? JSON.stringify({
+                outputs: [
+                  { output_id: "a/b", artifact_type: "report", content: "# slash output\n" },
+                  { output_id: "a?b", artifact_type: "script", content: "collision-safe script" }
+                ]
+              })
             : JSON.stringify({ artifact_type: "markdown", content: "# Miracle P6-07\n\n这是 fake-codex 生成并经过校验的 Markdown 母稿。\n" }),
         "utf8"
       );

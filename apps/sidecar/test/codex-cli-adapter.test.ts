@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -28,6 +29,10 @@ function createAdapter(environment: Record<string, string> = {}) {
     terminate_grace_ms: 25,
     max_output_bytes: 512
   });
+}
+
+function sha256(content: string) {
+  return `sha256:${createHash("sha256").update(content).digest("hex")}`;
 }
 
 async function createWorkspace(adapter = createAdapter(), attemptId = "attempt_001"): Promise<AttemptWorkspace> {
@@ -155,6 +160,32 @@ describe("CodexCliAdapter attempt workspace", () => {
     await expect(adapter.createAttemptWorkspace({
       attempt_id: "attempt_escape",
       input_files: [{ source_path: outside, target_path: "outside.md" }],
+      allowed_input_roots: [sourceDir]
+    })).rejects.toMatchObject({ code: "input_path_not_allowed" });
+  });
+
+  it("rejects a staged copy when its bytes do not match the frozen artifact hash", async () => {
+    const adapter = createAdapter();
+
+    await writeFile(path.join(sourceDir, "brief.md"), "replacement bytes\n", "utf8");
+
+    await expect(adapter.createAttemptWorkspace({
+      attempt_id: "attempt_hash_mismatch",
+      input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "artifacts/brief.md", expected_hash: sha256("approved input\n") }],
+      allowed_input_roots: [sourceDir]
+    })).rejects.toMatchObject({ code: "input_hash_mismatch" });
+  });
+
+  it("rejects a source swapped to a symbolic link before staging", async () => {
+    const adapter = createAdapter();
+    const replacement = path.join(sourceDir, "replacement.md");
+    await writeFile(replacement, "approved input\n", "utf8");
+    await rm(path.join(sourceDir, "brief.md"));
+    await symlink("replacement.md", path.join(sourceDir, "brief.md"));
+
+    await expect(adapter.createAttemptWorkspace({
+      attempt_id: "attempt_symlink_swap",
+      input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "artifacts/brief.md", expected_hash: sha256("approved input\n") }],
       allowed_input_roots: [sourceDir]
     })).rejects.toMatchObject({ code: "input_path_not_allowed" });
   });

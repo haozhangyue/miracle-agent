@@ -823,6 +823,12 @@ function outputExtension(type: string) {
   return ["markdown", "document", "report", "script", "outline"].includes(type) ? "md" : "txt";
 }
 
+function outputIdentitySegment(outputId: string, expectedOutputs: ReturnType<typeof createAdapterInvocation>["expected_outputs"]) {
+  const normalized = safeId(outputId);
+  if (expectedOutputs.filter((output) => safeId(output.output_id) === normalized).length === 1) return normalized;
+  return `${normalized}_${createHash("sha256").update(outputId).digest("hex").slice(0, 12)}`;
+}
+
 function codexPreflightFailure(invocation: ReturnType<typeof createAdapterInvocation>, error: unknown): AdapterResult {
   const code = error instanceof ArtifactInputResolverError || error instanceof NodeOutputContractError ? error.code : "codex_preflight_failed";
   return {
@@ -874,22 +880,28 @@ async function executeRealCodexAdapter(input: {
     return { invocation, result: codexPreflightFailure(invocation, error) };
   }
 
-  const inputSnapshotPath = path.join(workspaceDir, "runs", invocation.run_id, "input-snapshots", `${invocation.attempt_id}.json`);
-  await writeAbsoluteJson(inputSnapshotPath, {
-    resolved_inputs: invocation.resolved_inputs,
-    artifact_files: artifactFiles.map(({ source_path: _sourcePath, ...file }) => file)
-  });
-  const stagedArtifactFiles = artifactFiles.filter((file, index) => artifactFiles.findIndex((candidate) => candidate.target_path === file.target_path) === index);
-  const attempt = await codexCliAdapter.createAttemptWorkspace({
-    attempt_id: input.invocation.attempt_id,
-    input_files: [
-      { source_path: launchContextPath, target_path: "launch_context.json" },
-      { source_path: inputSnapshotPath, target_path: "resolved-inputs.json" },
-      ...stagedArtifactFiles.map((file) => ({ source_path: file.source_path, target_path: file.target_path }))
-    ],
-    allowed_input_roots: [workspaceDir],
-    output_schema: contract.schema
-  });
+  let attempt: Awaited<ReturnType<typeof codexCliAdapter.createAttemptWorkspace>> | undefined;
+  try {
+    const inputSnapshotPath = path.join(workspaceDir, "runs", invocation.run_id, "input-snapshots", `${invocation.attempt_id}.json`);
+    await writeAbsoluteJson(inputSnapshotPath, {
+      resolved_inputs: invocation.resolved_inputs,
+      artifact_files: artifactFiles.map(({ source_path: _sourcePath, ...file }) => file)
+    });
+    const stagedArtifactFiles = artifactFiles.filter((file, index) => artifactFiles.findIndex((candidate) => candidate.target_path === file.target_path) === index);
+    attempt = await codexCliAdapter.createAttemptWorkspace({
+      attempt_id: input.invocation.attempt_id,
+      input_files: [
+        { source_path: launchContextPath, target_path: "launch_context.json" },
+        { source_path: inputSnapshotPath, target_path: "resolved-inputs.json" },
+        ...stagedArtifactFiles.map((file) => ({ source_path: file.source_path, target_path: file.target_path, expected_hash: file.hash }))
+      ],
+      allowed_input_roots: [workspaceDir],
+      output_schema: contract.schema
+    });
+  } catch (error) {
+    if (attempt) await codexCliAdapter.cleanupAttemptWorkspace(attempt).catch(() => undefined);
+    return { invocation, result: codexPreflightFailure(invocation, error) };
+  }
   const launchedInvocation = {
     ...invocation,
     runtime_control: { ...input.invocation.runtime_control, attempt_workspace: attempt.root_dir },
@@ -919,8 +931,9 @@ async function executeRealCodexAdapter(input: {
     for (const output of outputs) {
       const expectedOutput = launchedInvocation.expected_outputs.find((item) => item.output_id === output.output_id);
       if (!expectedOutput || expectedOutput.artifact_type !== output.artifact_type) throw new Error(`NodeSpec output ${output.output_id} does not match the Codex output contract.`);
-      const artifactId = `art_${safeId(launchedInvocation.run_id)}_${safeId(launchedInvocation.node_id)}_${safeId(expectedOutput.output_id)}_v1`;
-      const artifactFileName = `${safeId(expectedOutput.output_id)}.${outputExtension(output.artifact_type)}`;
+      const outputSegment = outputIdentitySegment(expectedOutput.output_id, launchedInvocation.expected_outputs);
+      const artifactId = `art_${safeId(launchedInvocation.run_id)}_${safeId(launchedInvocation.node_id)}_${outputSegment}_v1`;
+      const artifactFileName = `${outputSegment}.${outputExtension(output.artifact_type)}`;
       const outputPath = await codexCliAdapter.resolveOutputPath(attempt, artifactFileName);
       await writeFile(outputPath, output.content, "utf8");
       const validatedOutputPath = await codexCliAdapter.validateOutputFile(attempt, artifactFileName);
@@ -1316,6 +1329,8 @@ async function commitSchedulerTick(runId: string, maxNodes: number) {
 }
 
 async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPerTick: number) {
+  const runBundle = await readRunBundle(runId);
+  const effectiveMaxTicks = realCodexEnabled(runBundle.run as unknown as RunSpec) && runBundle.workflow.nodes.length > 1 ? 1 : maxTicks;
   const runIdSafe = safeId(runId);
   const schedulerRunId = `sched_run_${runIdSafe}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const startedAt = new Date().toISOString();
@@ -1324,14 +1339,14 @@ async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPe
     run_id: runId,
     type: "scheduler_run_started",
     subject: { type: "RunSpec", id: runId },
-    message: `Scheduler run started with max ${maxTicks} tick(s)`,
+    message: `Scheduler run started with max ${effectiveMaxTicks} tick(s)`,
     created_at: startedAt
   };
   await appendEvent(runId, startedEvent);
 
   const ticks = [];
   let stopReason: "no_executable_nodes" | "paused_for_gate" | "execution_failed" | "max_ticks_reached" = "max_ticks_reached";
-  for (let index = 0; index < maxTicks; index += 1) {
+  for (let index = 0; index < effectiveMaxTicks; index += 1) {
     const plan = await buildSchedulerPlan(runId, maxNodesPerTick);
     if (plan.executable.length === 0) {
       stopReason = plan.paused.length > 0 ? "paused_for_gate" : "no_executable_nodes";
@@ -1390,7 +1405,7 @@ async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPe
     mode: "run",
     scheduler_run_id: schedulerRunId,
     run_id: runId,
-    max_ticks: maxTicks,
+    max_ticks: effectiveMaxTicks,
     max_nodes_per_tick: maxNodesPerTick,
     stop_reason: stopReason,
     ticks,
