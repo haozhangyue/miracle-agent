@@ -1,0 +1,20 @@
+{
+  "id": "codex-same-tick-gate-v0",
+  "name": "Codex same tick gate workflow",
+  "version": "0.1.0",
+  "domain": "content-production",
+  "category": "content",
+  "nodes": [
+    { "id": "B_review_source", "name": "Review source", "type": "agent", "capability_requirements": ["content.longform_draft"], "recommended_libraries": ["content-packaging-library"], "agent_candidates": ["content-agent"], "inputs": [], "outputs": [{ "id": "review_source", "kind": "artifact", "artifact_type": "markdown", "artifact_spec_ref": "review_source_artifact", "required": true }], "review_gate_ref": "review_source_gate", "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" } },
+    { "id": "D_guarded_summary", "name": "Guarded summary", "type": "agent", "capability_requirements": ["content.longform_draft"], "recommended_libraries": ["content-packaging-library"], "agent_candidates": ["content-agent"], "inputs": [], "outputs": [{ "id": "guarded_summary", "kind": "artifact", "artifact_type": "markdown", "artifact_spec_ref": "guarded_summary_artifact", "required": true }], "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" } }
+  ],
+  "edges": [],
+  "gates": [{ "id": "review_source_gate", "name": "Review source gate", "target_artifact_ref": "review_source_artifact", "required_before": ["D_guarded_summary"], "actions": ["approve", "reject"] }],
+  "artifacts": [
+    { "id": "review_source_artifact", "type": "markdown", "produced_by": "B_review_source", "review_policy": { "mode": "manual", "gate_spec_id": "review_source_gate" }, "required_for": [], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "guarded_summary_artifact", "type": "markdown", "produced_by": "D_guarded_summary", "review_policy": { "mode": "none" }, "required_for": [], "versioning": { "immutable": true, "compare_by": "hash" } }
+  ],
+  "provider_policy": { "default_provider": "codex-local", "allowed_providers": ["codex-local"], "required_credentials": [], "fallback_providers": [] },
+  "layouts": { "dag": { "B_review_source": { "x": 80, "y": 80 }, "D_guarded_summary": { "x": 320, "y": 80 } } },
+  "registry_meta": { "source": "p7-04-review-fixture", "status": "experimental" }
+}

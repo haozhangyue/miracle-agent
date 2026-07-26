@@ -387,6 +387,7 @@ export interface NodeExecutionDecision {
   node_id: string;
   decision: ExecutionDecision;
   reason_code: string;
+  gate_instance_id?: string;
   required_edge_status: Array<{
     edge_id: string;
     source_node_run_id: string;

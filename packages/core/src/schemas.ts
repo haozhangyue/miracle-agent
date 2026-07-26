@@ -126,6 +126,7 @@ export const nodeExecutionDecisionSchema: z.ZodType<NodeExecutionDecision> = z.o
   node_id: z.string().min(1),
   decision: z.enum(["execute", "wait", "pause_for_gate", "blocked", "skip"]),
   reason_code: z.string().min(1),
+  gate_instance_id: z.string().min(1).optional(),
   required_edge_status: z.array(z.object({
     edge_id: z.string().min(1),
     source_node_run_id: z.string(),

@@ -31,8 +31,9 @@ export function createRunFromWorkflow(workflow: WorkflowSpec, options: { runId: 
   };
   const incoming = new Map<string, number>();
   for (const node of workflow.nodes) incoming.set(node.id, 0);
-  for (const edge of workflow.edges) incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
-
+  for (const edge of workflow.edges) {
+    if (edge.required) incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
+  }
   const nodeRuns = workflow.nodes.map((node): NodeRun => ({
     node_run_id: `nr_${options.runId}_${node.id}`,
     run_id: options.runId,

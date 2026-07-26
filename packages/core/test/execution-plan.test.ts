@@ -123,6 +123,19 @@ describe("execution plan", () => {
     expect(plan.paused_node_run_ids).toEqual(["nr_D_platform_summary"]);
   });
 
+  it("waits for an unfinished upstream before a gate target artifact exists", () => {
+    const queuedUpstream = nodeRuns().map((item) => item.node_id === "B_content_plan" ? { ...item, status: "queued" as const } : item);
+    const plan = calculateExecutionPlan({
+      workflow: workflowWithOptionalVideo(),
+      nodeRuns: queuedUpstream,
+      artifacts: artifacts().filter((item) => item.node_run_id !== "nr_B_content_plan"),
+      gates: [],
+      calculatedAt: now
+    });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ decision: "wait", reason_code: "required_edge_active" });
+  });
+
   it("does not let an optional failed branch block the required path", () => {
     const workflow = workflowWithOptionalVideo();
     workflow.gates = [];
@@ -284,6 +297,16 @@ describe("execution plan", () => {
     const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: artifactsAfterRework, gates: [rejectedV1, approvedV2], calculatedAt: now });
 
     expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")?.decision).toBe("execute");
+  });
+
+  it("includes the exact pending gate instance selected for the latest target artifact", () => {
+    const workflow = workflowWithOptionalVideo();
+    const pending = pendingPlanGate();
+    const sibling = { ...pending, gate_instance_id: "gate_sibling", gate_spec_id: "sibling_gate", target: { type: "ArtifactManifest" as const, id: "art_plan_sibling" } };
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: nodeRuns(), artifacts: artifacts(), gates: [pending, sibling], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ gate_instance_id: pending.gate_instance_id });
   });
 
   it("filters foreign run facts before selecting artifacts and gates", () => {

@@ -101,6 +101,31 @@ describe("workflow validation", () => {
     expect(created.runSpec.workflow_snapshot_id).toBe("snap_run_test_001");
     expect(created.workflowSnapshot.workflow.id).toBe(workflow.id);
     expect(created.events[0].type).toBe("run_created");
+    expect(created.nodeRuns.find((node) => node.node_id === "B_md_master")?.status).toBe("queued");
+    expect(created.nodeRuns.find((node) => node.node_id === "G_distribution")?.status).toBe("waiting");
+  });
+
+  it("queues nodes with only optional incoming edges so the planner owns optional join policy", () => {
+    const optionalWorkflow = structuredClone(workflow);
+    optionalWorkflow.edges[0] = {
+      ...optionalWorkflow.edges[0]!,
+      required: false,
+      join_policy: {
+        wait_if_active: true,
+        on_timeout: "continue_if_required_inputs_ready",
+        on_no_qualified_artifact: "ignore_optional"
+      }
+    };
+
+    const created = createRunFromWorkflow(optionalWorkflow, {
+      runId: "run_optional_edge_001",
+      executionPolicy: "hybrid",
+      roleProfile: "operator",
+      createdAt: "2026-06-29T10:00:00.000Z"
+    });
+
+    expect(created.nodeRuns.find((node) => node.node_id === "B_md_master")?.status).toBe("queued");
+    expect(created.nodeRuns.find((node) => node.node_id === "G_distribution")?.status).toBe("queued");
   });
 
   it("builds DAG, Gate and Canvas projections without mutating runtime facts", () => {

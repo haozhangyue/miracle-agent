@@ -699,7 +699,8 @@ describe("P6-07 Codex real single-node execution", () => {
 
   it("recovers a partial fact commit from the node journal without rerunning Codex", async () => {
     const launched = await launchConfirmedRun(workflow.id, { force_slow_output: true });
-    const gatesPath = path.join(tempWorkspace, "runs", launched.run_id, "gates.json");
+    const dispatchesDir = path.join(tempWorkspace, "runs", launched.run_id, "dispatches");
+    const transactionsDir = path.join(tempWorkspace, "runs", launched.run_id, "transactions");
     const firstRequest = fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/scheduler/run`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -715,26 +716,38 @@ describe("P6-07 Codex real single-node execution", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     expect(runningObserved).toBe(true);
+    const dispatchVisibleEvents = await fetchJson<{ events: Array<{ type: string; event_id: string }> }>(`/api/v0/runs/${launched.run_id}/events`);
+    expect(dispatchVisibleEvents.events.filter((event) => event.type === "node_inputs_resolved")).toHaveLength(1);
     await new Promise((resolve) => setTimeout(resolve, 50));
-    await rm(gatesPath, { force: true });
-    await mkdir(gatesPath);
+    const [intentName] = await readdir(dispatchesDir);
+    if (!intentName) throw new Error("Expected persisted dispatch intent");
+    const intentPath = path.join(dispatchesDir, intentName);
+    await rm(intentPath, { force: true });
+    await mkdir(intentPath);
+    await writeFile(path.join(intentPath, "hold"), "intent delete must fail", "utf8");
     const firstResponse = await firstRequest;
+    const beforeRecoveryEvents = await fetchJson<{ events: Array<{ type: string }> }>(`/api/v0/runs/${launched.run_id}/events`);
     const attemptsAfterFailure = await readdir(path.join(runtimeWorkspace, "runtime", "attempts"));
-    await rm(gatesPath, { recursive: true, force: true });
-    await writeFile(gatesPath, "[]\n", "utf8");
+    expect((await readdir(transactionsDir)).filter((name) => name.endsWith(".json"))).toHaveLength(1);
+    await rm(intentPath, { recursive: true, force: true });
 
     const second = await fetchJson<{ summary: { failures: number; nodes_executed: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
       method: "POST",
       body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
     });
     const bundle = await fetchJson<{ nodes: Array<{ status: string }>; artifacts: unknown[]; gates: unknown[] }>(`/api/v0/runs/${launched.run_id}`);
+    const events = await fetchJson<{ events: Array<{ type: string; event_id: string }> }>(`/api/v0/runs/${launched.run_id}/events`);
 
-    expect([200, 500]).toContain(firstResponse.status);
+    expect(firstResponse.status).toBe(500);
+    expect(beforeRecoveryEvents.events.filter((event) => event.type === "node_inputs_resolved")).toHaveLength(1);
     expect(second.summary).toEqual(expect.objectContaining({ failures: 0, nodes_executed: 0 }));
     expect(await readdir(path.join(runtimeWorkspace, "runtime", "attempts"))).toEqual(attemptsAfterFailure);
     expect(bundle.nodes).toEqual([expect.objectContaining({ status: "reviewing" })]);
     expect(bundle.artifacts).toHaveLength(1);
     expect(bundle.gates).toHaveLength(1);
+    expect(events.events.filter((event) => event.type === "node_inputs_resolved")).toHaveLength(1);
+    expect(new Set(events.events.filter((event) => event.type === "node_inputs_resolved").map((event) => event.event_id)).size).toBe(1);
+    expect((await readdir(transactionsDir)).filter((name) => name.endsWith(".json"))).toEqual([]);
   });
 
   it("does not steal another Sidecar instance mutation lock while requests are active", async () => {
@@ -766,6 +779,53 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(bundle.nodes[0]?.status).toBe("queued");
     await expect(readFile(path.join(lockDir, "owner.json"), "utf8")).resolves.toContain("\"other-sidecar\"");
     await rm(lockDir, { recursive: true, force: true });
+  });
+
+  it("stops a max_nodes=5 tick after a locked NodeRun and emits one deduplicated Attention event", async () => {
+    const launched = await launchConfirmedRun(workflow.id);
+    const lockDir = path.join(tempWorkspace, "runs", launched.run_id, "locks", `${launched.run_id}.mutation.lock`);
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(
+      path.join(lockDir, "owner.json"),
+      `${JSON.stringify({ instance_id: "other-sidecar", owner_token: "active", pid: process.pid, created_at: new Date().toISOString() })}\n`,
+      "utf8"
+    );
+    try {
+      const tick = await fetchJson<{
+        failed: Array<{ node_run_id: string; error: { code: string } }>;
+        attention_items: Array<{ root_cause_key: string }>;
+        created_events: string[];
+      }>(`/api/v0/runs/${launched.run_id}/scheduler/tick`, {
+        method: "POST",
+        body: JSON.stringify({ max_nodes: 5 })
+      });
+      const eventsPath = path.join(tempWorkspace, "runs", launched.run_id, "events.jsonl");
+      const events = await fetchJson<{ events: Array<{ type: string; event_id: string }> }>(`/api/v0/runs/${launched.run_id}/events`);
+      const attentionEvents = events.events.filter((event) => event.type === "attention_item_created");
+
+      expect(tick.failed).toEqual([expect.objectContaining({ error: expect.objectContaining({ code: "operation_in_progress" }) })]);
+      expect(tick.attention_items).toHaveLength(1);
+      expect(tick.created_events.filter((eventId) => eventId.includes("execution_failed"))).toHaveLength(1);
+      expect(attentionEvents).toHaveLength(1);
+      expect(new Set(attentionEvents.map((event) => event.event_id)).size).toBe(1);
+
+      await writeFile(
+        eventsPath,
+        `${events.events.filter((event) => event.type !== "attention_item_created").map((event) => JSON.stringify(event)).join("\n")}\n`,
+        "utf8"
+      );
+      const repaired = await Promise.all(Array.from({ length: 20 }, () => fetchJson<{ attention_items: unknown[]; created_events: string[] }>(`/api/v0/runs/${launched.run_id}/scheduler/tick`, {
+        method: "POST",
+        body: JSON.stringify({ max_nodes: 5 })
+      })));
+      const repairedEvents = await fetchJson<{ events: Array<{ type: string; event_id: string }> }>(`/api/v0/runs/${launched.run_id}/events`);
+
+      expect(repaired.every((item) => item.attention_items.length === 0)).toBe(true);
+      expect(repaired.filter((item) => item.created_events.some((eventId) => eventId.includes("execution_failed")))).toHaveLength(1);
+      expect(repairedEvents.events.filter((event) => event.type === "attention_item_created")).toHaveLength(1);
+    } finally {
+      await rm(lockDir, { recursive: true, force: true });
+    }
   });
 
   it("aborts an invalid Codex output without creating artifact or gate facts", async () => {
@@ -948,7 +1008,7 @@ describe("P6-07 Codex real single-node execution", () => {
     ), "utf8")).resolves.toContain('"resolved_inputs"');
   });
 
-  it("limits real Codex scheduler runs to one tick and hands artifacts downstream only after an explicit later call", async () => {
+  it("runs real Codex nodes continuously and hands artifacts downstream in one scheduler call", async () => {
     const launched = await launchConfirmedRun(handoffWorkflow.id);
 
     const first = await fetchJson<{ summary: { nodes_executed: number; ticks_committed: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
@@ -961,8 +1021,8 @@ describe("P6-07 Codex real single-node execution", () => {
       artifacts: Array<{ artifact_id: string; artifact_spec_ref?: string; hash: string; path: string }>;
     }>(`/api/v0/runs/${launched.run_id}`);
 
-    expect(first.summary).toEqual(expect.objectContaining({ nodes_executed: 1, ticks_committed: 1 }));
-    expect(bundle.nodes).toEqual([expect.objectContaining({ node_id: "A_generate", status: "done" }), expect.objectContaining({ node_id: "B_consume", status: "queued" })]);
+    expect(first.summary).toEqual(expect.objectContaining({ nodes_executed: 2, ticks_committed: 2 }));
+    expect(bundle.nodes).toEqual([expect.objectContaining({ node_id: "A_generate", status: "done" }), expect.objectContaining({ node_id: "B_consume", status: "done" })]);
 
     const second = await fetchJson<{ summary: { nodes_executed: number; ticks_committed: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
       method: "POST",
@@ -974,7 +1034,7 @@ describe("P6-07 Codex real single-node execution", () => {
     const downstreamAttempt = bundle.attempts.find((attempt) => attempt.node_run_id === (downstreamNode as { node_run_id?: string }).node_run_id)!;
     const snapshot = JSON.parse(await readFile(path.join(runtimeWorkspace, "runtime", "attempts", downstreamAttempt.attempt_id, "input", "resolved-inputs.json"), "utf8")) as { artifact_files: Array<{ hash: string; target_path: string }> };
 
-    expect(second.summary).toEqual(expect.objectContaining({ nodes_executed: 1, ticks_committed: 1 }));
+    expect(second.summary).toEqual(expect.objectContaining({ nodes_executed: 0, ticks_committed: 0 }));
     expect(bundle.nodes).toEqual([expect.objectContaining({ node_id: "A_generate", status: "done" }), expect.objectContaining({ node_id: "B_consume", status: "done" })]);
     expect(snapshot.artifact_files).toEqual([expect.objectContaining({ hash: upstream.hash })]);
     await expect(readFile(path.join(runtimeWorkspace, "runtime", "attempts", downstreamAttempt.attempt_id, "input", snapshot.artifact_files[0]!.target_path), "utf8")).resolves.toContain("Miracle P6-07");

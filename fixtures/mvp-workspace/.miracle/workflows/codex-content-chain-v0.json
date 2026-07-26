@@ -1,0 +1,56 @@
+{
+  "id": "codex-content-chain-v0",
+  "name": "Codex content chain",
+  "version": "0.1.0",
+  "domain": "content-production",
+  "category": "content",
+  "nodes": [
+    {
+      "id": "B_content_plan",
+      "name": "Content plan",
+      "type": "agent",
+      "capability_requirements": ["content.longform_draft"],
+      "recommended_libraries": ["content-packaging-library"],
+      "agent_candidates": ["content-agent"],
+      "inputs": [],
+      "outputs": [{ "id": "content_plan", "kind": "artifact", "artifact_type": "markdown", "artifact_spec_ref": "content_plan_artifact", "required": true }],
+      "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "C_md_master",
+      "name": "Markdown master",
+      "type": "agent",
+      "capability_requirements": ["content.longform_draft"],
+      "recommended_libraries": ["content-packaging-library"],
+      "agent_candidates": ["content-agent"],
+      "inputs": [{ "id": "content_plan", "kind": "artifact", "artifact_type": "markdown", "artifact_spec_ref": "content_plan_artifact", "required": true }],
+      "outputs": [{ "id": "md_master", "kind": "artifact", "artifact_type": "markdown", "artifact_spec_ref": "md_master_artifact", "required": true }],
+      "review_gate_ref": "md_master_gate",
+      "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    },
+    {
+      "id": "D_platform_summary",
+      "name": "Platform summary",
+      "type": "agent",
+      "capability_requirements": ["content.longform_draft"],
+      "recommended_libraries": ["content-packaging-library"],
+      "agent_candidates": ["content-agent"],
+      "inputs": [{ "id": "md_master", "kind": "artifact", "artifact_type": "markdown", "artifact_spec_ref": "md_master_artifact", "required": true }],
+      "outputs": [{ "id": "platform_summary", "kind": "artifact", "artifact_type": "markdown", "artifact_spec_ref": "platform_summary_artifact", "required": true }],
+      "failure_policy": { "retry": 0, "on_missing_input": "blocked", "on_provider_failure": "failed" }
+    }
+  ],
+  "edges": [
+    { "from": "B_content_plan", "to": "C_md_master", "required": true, "artifact_selector": { "artifact_type": "markdown" }, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } },
+    { "from": "C_md_master", "to": "D_platform_summary", "required": true, "artifact_selector": { "artifact_type": "markdown", "review_status": "approved" }, "join_policy": { "wait_if_active": false, "on_timeout": "continue_if_required_inputs_ready", "on_no_qualified_artifact": "block_downstream" } }
+  ],
+  "gates": [{ "id": "md_master_gate", "name": "MD master review", "target_artifact_ref": "md_master_artifact", "required_before": ["D_platform_summary"], "actions": ["approve", "reject"] }],
+  "artifacts": [
+    { "id": "content_plan_artifact", "type": "markdown", "produced_by": "B_content_plan", "review_policy": { "mode": "none" }, "required_for": ["C_md_master"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "md_master_artifact", "type": "markdown", "produced_by": "C_md_master", "review_policy": { "mode": "manual", "gate_spec_id": "md_master_gate" }, "required_for": ["D_platform_summary"], "versioning": { "immutable": true, "compare_by": "hash" } },
+    { "id": "platform_summary_artifact", "type": "markdown", "produced_by": "D_platform_summary", "review_policy": { "mode": "none" }, "required_for": [], "versioning": { "immutable": true, "compare_by": "hash" } }
+  ],
+  "provider_policy": { "default_provider": "codex-local", "allowed_providers": ["codex-local"], "required_credentials": [], "fallback_providers": [] },
+  "layouts": { "dag": { "B_content_plan": { "x": 80, "y": 80 }, "C_md_master": { "x": 320, "y": 80 }, "D_platform_summary": { "x": 560, "y": 80 } } },
+  "registry_meta": { "source": "p7-04-fixture", "status": "experimental" }
+}

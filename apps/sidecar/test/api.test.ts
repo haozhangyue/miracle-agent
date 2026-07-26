@@ -1,14 +1,69 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  calculateExecutionPlan,
+  createAdapterInvocation,
+  type ArtifactManifest,
+  type GateInstance,
+  type NodeRun,
+  type ResolvedNodeInput,
+  type RunSpec,
+  type WorkflowSpec
+} from "@miracle/core";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const fixtureWorkspace = path.join(repoRoot, "fixtures/mvp-workspace/.miracle");
 const historicalFixtures = path.join(repoRoot, "apps/sidecar/test/fixtures/historical");
 const fakeCodex = path.join(repoRoot, "apps/sidecar/test/fixtures/bin/fake-codex.mjs");
+
+function dispatchIntentPath(runId: string, nodeRunId: string) {
+  const prefix = nodeRunId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48) || "node";
+  const suffix = createHash("sha256").update(nodeRunId).digest("hex").slice(0, 16);
+  return path.join(tempWorkspace, "runs", runId, "dispatches", `${prefix}_${suffix}.json`);
+}
+
+function matchingPreparedIntent(runId: string, nodeRunId: string) {
+  const dispatchedAt = "2026-07-26T00:00:00.000Z";
+  const operationId = `op_${nodeRunId}_${Date.parse(dispatchedAt)}`;
+  const attemptId = `attempt_${operationId}`;
+  return {
+    node_run_id: nodeRunId,
+    invocation: {
+      operation_id: operationId,
+      attempt_id: attemptId,
+      run_id: runId,
+      node_run_id: nodeRunId,
+      node_id: "A_collect",
+      adapter_kind: "codex",
+      adapter_id: "codex-mock-compatible-adapter",
+      provider: "codex-local",
+      capability_requirements: ["source.collect", "fact.verify"],
+      input_artifacts: [] as string[],
+      resolved_inputs: [] as ResolvedNodeInput[],
+      expected_outputs: [{ output_id: "clean_events", artifact_type: "json", artifact_spec_ref: "clean_events_artifact", required: true }],
+      runtime_control: { timeout_ms: 1_800_000, cancellation_token_id: `cancel_${operationId}`, attempt_workspace: `runtime/${runId}/${nodeRunId}/${attemptId}`, sandbox: "workspace-write" },
+      prompt_path: `runtime/${runId}/${nodeRunId}/${attemptId}/prompt.md`,
+      output_schema_path: "runtime/schemas/adapter-result-v0.json",
+      dispatched_at: dispatchedAt
+    },
+    decision: { reason_code: "ready", resolved_input_count: 0, resolved_input_ids: [] as string[] },
+    event: {
+      event_id: `evt_${attemptId}_inputs_resolved`,
+      run_id: runId,
+      type: "node_inputs_resolved",
+      subject: { type: "NodeRun", id: nodeRunId },
+      message: `NodeRun ${nodeRunId} resolved 0 input(s); reason_code=ready`,
+      created_at: dispatchedAt
+    },
+    state: "prepared",
+    prepared_at: dispatchedAt
+  };
+}
 
 let tempRoot = "";
 let tempWorkspace = "";
@@ -351,6 +406,49 @@ describe("sidecar api", () => {
     expect(afterApprove.nodes.find((node) => node.node_id === "C_script")?.upstream_artifacts).toContain(rework.artifact.artifact_id);
   });
 
+  it("releases the GateDecision mutation lock before immediate rework responses", async () => {
+    for (let index = 0; index < 4; index += 1) {
+      const created = await fetchJson<{ run_id: string; initial_node_runs: string[] }>("/api/v0/runs", {
+        method: "POST",
+        body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+      });
+      await fetchJson(`/api/v0/runs/${created.run_id}/nodes/${created.initial_node_runs[0]}/execute`, { method: "POST", body: JSON.stringify({}) });
+      const run = await fetchJson<{ nodes: Array<{ node_run_id: string; node_id: string }> }>(`/api/v0/runs/${created.run_id}`);
+      const mdNode = run.nodes.find((node) => node.node_id === "B_md_master");
+      if (!mdNode) throw new Error("Expected B_md_master node");
+      const execution = await fetchJson<{ committed: { gates: Array<{ gate_instance_id: string }> } }>(`/api/v0/runs/${created.run_id}/nodes/${mdNode.node_run_id}/execute`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      const gateId = execution.committed.gates[0]?.gate_instance_id;
+      if (!gateId) throw new Error("Expected generated gate");
+
+      const prematureRework = await fetch(`${baseUrl}/api/v0/gates/${gateId}/rework?run_id=${created.run_id}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ actor: "api-test", comment: "before decision" })
+      });
+      expect(prematureRework.status).toBe(409);
+
+      await fetchJson(`/api/v0/gates/${gateId}/decision?run_id=${created.run_id}`, {
+        method: "POST",
+        body: JSON.stringify({ decision: "reject", actor: "api-test", comment: `immediate rework ${index}` })
+      });
+      const duplicateDecision = await fetch(`${baseUrl}/api/v0/gates/${gateId}/decision?run_id=${created.run_id}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "reject", actor: "api-test", comment: "duplicate decision" })
+      });
+      expect(duplicateDecision.status).toBe(409);
+      const rework = await fetch(`${baseUrl}/api/v0/gates/${gateId}/rework?run_id=${created.run_id}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ actor: "api-test", comment: "immediately after decision" })
+      });
+      expect(rework.status).toBe(201);
+    }
+  });
+
   it("rejects gate decisions while a gate operation lock exists", async () => {
     const created = await fetchJson<{
       run_id: string;
@@ -505,7 +603,6 @@ describe("sidecar api", () => {
 
     const beforeAttempts = JSON.parse(await readFile(path.join(runDir, "attempts.json"), "utf8"));
     const beforeArtifacts = JSON.parse(await readFile(path.join(runDir, "artifacts.json"), "utf8"));
-    const beforeEvents = await readFile(path.join(runDir, "events.jsonl"), "utf8");
     const response = await fetch(`${baseUrl}/api/v0/runs/${created.run_id}/nodes/${target.node_run_id}/execute`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -518,7 +615,243 @@ describe("sidecar api", () => {
     expect(after.nodes.find((node) => node.node_run_id === target.node_run_id)?.status).toBe("queued");
     expect(JSON.parse(await readFile(path.join(runDir, "attempts.json"), "utf8"))).toEqual(beforeAttempts);
     expect(JSON.parse(await readFile(path.join(runDir, "artifacts.json"), "utf8"))).toEqual(beforeArtifacts);
-    expect(await readFile(path.join(runDir, "events.jsonl"), "utf8")).toBe(beforeEvents);
+    const events = (await readFile(path.join(runDir, "events.jsonl"), "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; event_id: string });
+    expect(events.filter((event) => event.type === "node_inputs_resolved")).toHaveLength(1);
+    expect(new Set(events.filter((event) => event.type === "node_inputs_resolved").map((event) => event.event_id)).size).toBe(1);
+
+    const replay = await fetch(`${baseUrl}/api/v0/runs/${created.run_id}/nodes/${target.node_run_id}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(replay.status).toBe(409);
+    const replayEvents = (await readFile(path.join(runDir, "events.jsonl"), "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; event_id: string });
+    expect(replayEvents.filter((event) => event.type === "node_inputs_resolved")).toHaveLength(1);
+  });
+
+  it("fails closed for malformed dispatch intents without dispatching a duplicate Adapter invocation", async () => {
+    const created = await fetchJson<{ run_id: string; initial_node_runs: string[] }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+    const nodeRunId = created.initial_node_runs[0]!;
+    const runDir = path.join(tempWorkspace, "runs", created.run_id);
+    const intentPath = dispatchIntentPath(created.run_id, nodeRunId);
+    await mkdir(path.dirname(intentPath), { recursive: true });
+
+    await writeFile(intentPath, "{malformed", "utf8");
+    const malformedJson = await fetch(`${baseUrl}/api/v0/runs/${created.run_id}/nodes/${nodeRunId}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(malformedJson.status).toBe(500);
+
+    await writeFile(intentPath, "{}\n", "utf8");
+    const malformedIntent = await fetch(`${baseUrl}/api/v0/runs/${created.run_id}/nodes/${nodeRunId}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(malformedIntent.status).toBe(500);
+
+    const operationId = `op_${nodeRunId}_0`;
+    await writeFile(intentPath, `${JSON.stringify({
+      node_run_id: nodeRunId,
+      invocation: {
+        operation_id: operationId,
+        attempt_id: `attempt_${operationId}`,
+        run_id: "foreign-run",
+        node_run_id: nodeRunId,
+        node_id: "A_collect",
+        adapter_kind: "codex",
+        adapter_id: "codex-mock-compatible-adapter",
+        provider: "codex-local",
+        capability_requirements: [],
+        input_artifacts: [],
+        resolved_inputs: [],
+        expected_outputs: [],
+        runtime_control: { timeout_ms: 1, cancellation_token_id: "cancel_foreign", attempt_workspace: "runtime/foreign", sandbox: "workspace-write" },
+        prompt_path: "runtime/foreign/prompt.md",
+        output_schema_path: "runtime/foreign/schema.json",
+        dispatched_at: "2026-07-26T00:00:00.000Z"
+      },
+      decision: { reason_code: "ready", resolved_input_count: 0, resolved_input_ids: [] },
+      event: {
+        event_id: `evt_attempt_${operationId}_inputs_resolved`,
+        run_id: "foreign-run",
+        type: "node_inputs_resolved",
+        subject: { type: "NodeRun", id: nodeRunId },
+        message: "foreign shaped intent",
+        created_at: "2026-07-26T00:00:00.000Z"
+      },
+      state: "prepared",
+      prepared_at: "2026-07-26T00:00:00.000Z"
+    }, null, 2)}\n`, "utf8");
+    const foreignIntent = await fetch(`${baseUrl}/api/v0/runs/${created.run_id}/nodes/${nodeRunId}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(foreignIntent.status).toBe(500);
+
+    expect(JSON.parse(await readFile(path.join(runDir, "attempts.json"), "utf8"))).toEqual([]);
+    const events = (await readFile(path.join(runDir, "events.jsonl"), "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string });
+    expect(events.filter((event) => event.type === "node_inputs_resolved")).toEqual([]);
+  });
+
+  it("rejects semantically stale prepared intents and still resumes a complete prepared intent", async () => {
+    const assertRejected = async (mutate: (intent: ReturnType<typeof matchingPreparedIntent>) => void) => {
+      const created = await fetchJson<{ run_id: string; initial_node_runs: string[] }>("/api/v0/runs", {
+        method: "POST",
+        body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+      });
+      const nodeRunId = created.initial_node_runs[0]!;
+      const intent = matchingPreparedIntent(created.run_id, nodeRunId);
+      mutate(intent);
+      const intentPath = dispatchIntentPath(created.run_id, nodeRunId);
+      await mkdir(path.dirname(intentPath), { recursive: true });
+      await writeFile(intentPath, `${JSON.stringify(intent, null, 2)}\n`, "utf8");
+
+      const response = await fetch(`${baseUrl}/api/v0/runs/${created.run_id}/nodes/${nodeRunId}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      });
+      expect(response.status).toBe(500);
+      const run = await fetchJson<{ attempts: unknown[]; artifacts: unknown[] }>(`/api/v0/runs/${created.run_id}`);
+      expect(run.attempts).toEqual([]);
+      expect(run.artifacts).toEqual([]);
+      const events = (await readFile(path.join(tempWorkspace, "runs", created.run_id, "events.jsonl"), "utf8"))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { type: string });
+      expect(events.filter((event) => event.type === "node_inputs_resolved")).toEqual([]);
+    };
+
+    await assertRejected((intent) => { intent.invocation.expected_outputs = []; });
+    await assertRejected((intent) => { delete (intent.event as Partial<typeof intent.event>).message; });
+    await assertRejected((intent) => { delete (intent as Partial<typeof intent>).prepared_at; });
+    await assertRejected((intent) => {
+      intent.invocation.resolved_inputs = [{
+        input_id: "stale_input",
+        source_kind: "run_input",
+        source_ref: "stale",
+        media_type: "text/plain",
+        required: false,
+        resolved_at: "2026-07-26T00:00:00.000Z"
+      }];
+      intent.decision = { reason_code: "ready", resolved_input_count: 1, resolved_input_ids: ["stale_input"] };
+    });
+    await assertRejected((intent) => { intent.invocation.provider = "tampered-provider"; });
+    await assertRejected((intent) => { intent.invocation.adapter_kind = "mock-local"; intent.invocation.adapter_id = "mock-local-adapter"; });
+    await assertRejected((intent) => { intent.invocation.input_artifacts = ["tampered-artifact"]; });
+    await assertRejected((intent) => { intent.invocation.runtime_control.timeout_ms = 1; });
+    await assertRejected((intent) => { intent.invocation.runtime_control.sandbox = "read-only"; });
+    await assertRejected((intent) => { intent.invocation.prompt_path = "runtime/tampered/prompt.md"; });
+    await assertRejected((intent) => { intent.invocation.output_schema_path = "runtime/tampered/schema.json"; });
+
+    const resumed = await fetchJson<{ run_id: string; initial_node_runs: string[] }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+    const resumedNodeRunId = resumed.initial_node_runs[0]!;
+    const intentPath = dispatchIntentPath(resumed.run_id, resumedNodeRunId);
+    await mkdir(path.dirname(intentPath), { recursive: true });
+    await writeFile(intentPath, `${JSON.stringify(matchingPreparedIntent(resumed.run_id, resumedNodeRunId), null, 2)}\n`, "utf8");
+    const response = await fetchJson<{ accepted: boolean; invocation: { attempt_id: string } }>(`/api/v0/runs/${resumed.run_id}/nodes/${resumedNodeRunId}/execute`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    expect(response).toMatchObject({ accepted: true, invocation: { attempt_id: matchingPreparedIntent(resumed.run_id, resumedNodeRunId).invocation.attempt_id } });
+  });
+
+  it("fails closed for source_kind-only Artifact input tampering and rebuilds trusted input events", async () => {
+    const created = await fetchJson<{ run_id: string; initial_node_runs: string[] }>("/api/v0/runs", {
+      method: "POST",
+      body: JSON.stringify({ workflow_id: "content-production-v0", execution_policy: "hybrid", role_profile: "operator" })
+    });
+    await fetchJson(`/api/v0/runs/${created.run_id}/nodes/${created.initial_node_runs[0]}/execute`, { method: "POST", body: JSON.stringify({}) });
+    const bundle = await fetchJson<{
+      run: RunSpec;
+      workflow: WorkflowSpec;
+      nodes: NodeRun[];
+      artifacts: ArtifactManifest[];
+      gates: GateInstance[];
+    }>(`/api/v0/runs/${created.run_id}`);
+    const nodeRun = bundle.nodes.find((node) => node.node_id === "B_md_master");
+    const nodeSpec = bundle.workflow.nodes.find((node) => node.id === "B_md_master");
+    if (!nodeRun || !nodeSpec) throw new Error("Expected B_md_master downstream facts");
+    const plan = calculateExecutionPlan({
+      runId: created.run_id,
+      workflowSnapshotId: bundle.run.workflow_snapshot_id,
+      workflow: bundle.workflow,
+      nodeRuns: bundle.nodes,
+      artifacts: bundle.artifacts,
+      gates: bundle.gates,
+      calculatedAt: "2026-07-26T00:00:00.000Z"
+    });
+    const decision = plan.decisions.find((item) => item.node_run_id === nodeRun.node_run_id);
+    if (!decision || decision.decision !== "execute") throw new Error("Expected executable B_md_master decision");
+    const dispatchedAt = "2026-07-26T00:00:00.000Z";
+    const invocation = createAdapterInvocation({
+      runSpec: bundle.run,
+      workflow: bundle.workflow,
+      nodeRun,
+      createdAt: dispatchedAt,
+      adapterKind: "codex",
+      adapterId: "codex-mock-compatible-adapter",
+      resolvedInputs: decision.resolved_inputs.map((input) => ({ ...input, resolved_at: dispatchedAt }))
+    });
+    const trustedInvocation = structuredClone(invocation);
+    const prepared = {
+      node_run_id: nodeRun.node_run_id,
+      invocation: structuredClone(invocation),
+      decision: { reason_code: decision.reason_code, resolved_input_count: invocation.resolved_inputs.length, resolved_input_ids: invocation.resolved_inputs.map((input) => input.input_id) },
+      event: {
+        event_id: `evt_${invocation.attempt_id}_inputs_resolved`,
+        run_id: created.run_id,
+        type: "node_inputs_resolved",
+        subject: { type: "NodeRun", id: nodeRun.node_run_id },
+        message: "SECRET_ARTIFACT_CONTENT must never be persisted",
+        created_at: "2020-01-01T00:00:00.000Z",
+        secret: "do-not-trust"
+      },
+      state: "prepared",
+      prepared_at: dispatchedAt
+    };
+    const intentPath = dispatchIntentPath(created.run_id, nodeRun.node_run_id);
+    await mkdir(path.dirname(intentPath), { recursive: true });
+    prepared.invocation.resolved_inputs[0]!.source_kind = "parameter";
+    await writeFile(intentPath, `${JSON.stringify(prepared, null, 2)}\n`, "utf8");
+    const tampered = await fetch(`${baseUrl}/api/v0/runs/${created.run_id}/nodes/${nodeRun.node_run_id}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(tampered.status).toBe(500);
+    const afterTamper = await fetchJson<{ attempts: unknown[]; artifacts: ArtifactManifest[] }>(`/api/v0/runs/${created.run_id}`);
+    expect(afterTamper.attempts).toHaveLength(1);
+    expect(afterTamper.artifacts).toHaveLength(1);
+
+    prepared.invocation = trustedInvocation;
+    await writeFile(intentPath, `${JSON.stringify(prepared, null, 2)}\n`, "utf8");
+    const resumed = await fetchJson<{ accepted: boolean }>(`/api/v0/runs/${created.run_id}/nodes/${nodeRun.node_run_id}/execute`, { method: "POST", body: JSON.stringify({}) });
+    expect(resumed.accepted).toBe(true);
+    const events = await fetchJson<{ events: Array<{ type: string; message: string; created_at: string }>}>(`/api/v0/runs/${created.run_id}/events`);
+    const inputEvent = events.events.find((event) => event.type === "node_inputs_resolved" && event.message.includes(nodeRun.node_run_id));
+    expect(inputEvent).toMatchObject({ created_at: dispatchedAt });
+    expect(JSON.stringify(inputEvent)).not.toContain("SECRET_ARTIFACT_CONTENT");
+    expect(JSON.stringify(inputEvent)).not.toContain("do-not-trust");
   });
 
   it("surfaces invalid adapter manifests instead of falling back silently", async () => {
@@ -598,7 +931,7 @@ describe("sidecar api", () => {
 
     const executed = await fetchJson<{
       accepted: boolean;
-      invocation: { adapter_id?: string; adapter_kind: string };
+      invocation: { adapter_id?: string; adapter_kind: string; attempt_id: string };
       adapter_result: { status: string; operation_id: string; provider_receipt: { adapter_kind: string }; artifact_descriptors: Array<{ artifact_id: string }> };
       committed: { node_run: { status: string; output_artifacts: string[] }; attempt: { status: string }; created_events: string[] };
     }>(`/api/v0/runs/${created.run_id}/nodes/${nodeRunId}/execute`, { method: "POST", body: JSON.stringify({}) });
@@ -610,7 +943,10 @@ describe("sidecar api", () => {
     expect(executed.committed.attempt.status).toBe("succeeded");
     expect(executed.committed.node_run.status).toBe("done");
     expect(executed.committed.node_run.output_artifacts.length).toBeGreaterThan(0);
-    expect(executed.committed.created_events).toEqual(expect.arrayContaining([`evt_${executed.adapter_result.operation_id}_committed`]));
+    expect(executed.committed.created_events).toEqual(expect.arrayContaining([
+      `evt_${executed.invocation.attempt_id}_inputs_resolved`,
+      `evt_${executed.adapter_result.operation_id}_committed`
+    ]));
 
     const nodeDetail = await fetchJson<{ attempts: Array<{ operation_id: string }> }>(`/api/v0/runs/${created.run_id}/nodes/${nodeRunId}`);
     expect(nodeDetail.attempts.some((attempt) => attempt.operation_id === executed.adapter_result.operation_id)).toBe(true);
@@ -645,7 +981,7 @@ describe("sidecar api", () => {
     });
 
     expect(planned.mode).toBe("dry_run");
-    expect(planned.executable).toEqual([{ node_run_id: created.initial_node_runs[0], node_id: "A_collect", decision: "execute", reason: "queued NodeRun is executable", status: "queued" }]);
+    expect(planned.executable).toEqual([{ node_run_id: created.initial_node_runs[0], node_id: "A_collect", decision: "execute", reason_code: "ready", status: "queued" }]);
     expect(planned.paused).toEqual([]);
 
     const events = await fetchJson<{ events: Array<{ type: string }> }>(`/api/v0/runs/${created.run_id}/events`);
@@ -677,13 +1013,13 @@ describe("sidecar api", () => {
     expect(tick.executed[0]?.result.accepted).toBe(true);
     expect(tick.executed[0]?.result.committed.node_run.status).toBe("done");
     expect(tick.paused).toEqual([]);
-    expect(tick.created_events.length).toBe(2);
+    expect(tick.created_events.length).toBe(3);
 
     const run = await fetchJson<{ nodes: Array<{ node_id: string; status: string }> }>(`/api/v0/runs/${created.run_id}`);
     expect(run.nodes.find((node) => node.node_id === "B_md_master")?.status).toBe("queued");
 
     const events = await fetchJson<{ events: Array<{ type: string }> }>(`/api/v0/runs/${created.run_id}/events`);
-    expect(events.events.map((event) => event.type)).toEqual(expect.arrayContaining(["scheduler_tick_started", "scheduler_tick_completed"]));
+    expect(events.events.map((event) => event.type)).toEqual(expect.arrayContaining(["execution_plan_calculated", "scheduler_tick_started", "node_inputs_resolved", "scheduler_tick_completed"]));
   });
 
   it("pauses scheduler decisions on pending review gates", async () => {
@@ -829,10 +1165,16 @@ describe("sidecar api", () => {
     videoNode.status = "waiting";
     await writeFile(nodesPath, `${JSON.stringify(nodes, null, 2)}\n`, "utf8");
 
-    await fetchJson(`/api/v0/runs/${created.run_id}/nodes/${ttsNode.node_run_id}/execute`, { method: "POST", body: JSON.stringify({}) });
+    const response = await fetch(`${baseUrl}/api/v0/runs/${created.run_id}/nodes/${ttsNode.node_run_id}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
 
     const run = await fetchJson<{ nodes: Array<{ node_id: string; status: string }> }>(`/api/v0/runs/${created.run_id}`);
-    expect(run.nodes.find((node) => node.node_id === "E_tts")?.status).toBe("done");
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "node_not_executable", reason_code: "required_input_missing" } });
+    expect(run.nodes.find((node) => node.node_id === "E_tts")?.status).toBe("queued");
     expect(run.nodes.find((node) => node.node_id === "F_video")?.status).toBe("waiting");
   });
 

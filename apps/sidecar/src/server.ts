@@ -1,5 +1,6 @@
 import {
   buildCanvasDraftFromWorkflow,
+  adapterInvocationSchema,
   buildDagProjection,
   buildGateDecisionProjection,
   calculateExecutionPlan,
@@ -32,6 +33,7 @@ import {
   RunDraftError,
   type NodeSpec,
   type NodeAttempt,
+  type NodeExecutionDecision,
   type NodeRun,
   type RunSpec,
   type ValidationResult,
@@ -57,6 +59,7 @@ import { CodexCliAdapter, CodexCliAdapterError } from "./codex-cli-adapter";
 import { assertUniqueArtifactTargetPaths, resolveArtifactInputFiles } from "./artifact-input-resolver";
 import { NodeOutputContractError, buildNodeOutputContract } from "./node-output-contract";
 import { codexPreflightFailure, startCodexOperation } from "./codex-real-adapter";
+import { buildRunExecutionPlan } from "./execution-planner";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
@@ -84,8 +87,8 @@ type SchedulerDecision = {
   node_run_id: string;
   node_id: string;
   status: NodeRun["status"];
-  decision: "execute" | "pause_for_gate" | "skip";
-  reason: string;
+  decision: NodeExecutionDecision["decision"];
+  reason_code: string;
   gate_instance_id?: string;
 };
 type SchedulerFailure = {
@@ -99,7 +102,7 @@ type NodeExecutionResult =
   | {
       accepted: false;
       status_code: number;
-      error: { code: string; message: string };
+      error: { code: string; message: string; reason_code?: string };
     }
   | {
       accepted: true;
@@ -130,6 +133,29 @@ type NodeCommitTransaction = {
     gates: GateInstance[];
     created_events: string[];
   };
+  dispatch_intent_relative_path?: string;
+};
+
+type NodeDispatchIntent = {
+  node_run_id: string;
+  invocation: ReturnType<typeof createAdapterInvocation>;
+  decision: {
+    reason_code: string;
+    resolved_input_count: number;
+    resolved_input_ids: string[];
+  };
+  event: {
+    event_id: string;
+    run_id: string;
+    type: "node_inputs_resolved";
+    subject: { type: "NodeRun"; id: string };
+    message: string;
+    created_at: string;
+  };
+  state: "prepared" | "dispatched_unknown" | "invalid_result";
+  prepared_at: string;
+  dispatched_at?: string;
+  error?: { code: string; message: string };
 };
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
@@ -163,9 +189,191 @@ async function readJson<T>(relativePath: string): Promise<T> {
 async function readJsonOptional<T>(relativePath: string): Promise<T | undefined> {
   try {
     return await readJson<T>(relativePath);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isTimestamp(value: unknown): value is string {
+  return isNonEmptyString(value) && Number.isFinite(Date.parse(value));
+}
+
+function isNodeDispatchIntent(value: unknown): value is NodeDispatchIntent {
+  if (!isRecord(value) || !isNonEmptyString(value.node_run_id) || !isRecord(value.invocation) || !isRecord(value.decision) || !isRecord(value.event)) return false;
+  const invocation = value.invocation;
+  const decision = value.decision;
+  const event = value.event;
+  const hasValidError = isRecord(value.error) && isNonEmptyString(value.error.code) && isNonEmptyString(value.error.message);
+  const validState = value.state === "prepared"
+    || (value.state === "dispatched_unknown" && isTimestamp(value.dispatched_at))
+    || (value.state === "invalid_result" && hasValidError);
+  return isNonEmptyString(invocation.operation_id)
+    && isNonEmptyString(invocation.attempt_id)
+    && isNonEmptyString(invocation.run_id)
+    && isNonEmptyString(invocation.node_run_id)
+    && isNonEmptyString(event.event_id)
+    && event.type === "node_inputs_resolved"
+    && isNonEmptyString(event.message)
+    && isTimestamp(event.created_at)
+    && isNonEmptyString(event.run_id)
+    && isRecord(event.subject)
+    && event.subject.type === "NodeRun"
+    && isNonEmptyString(event.subject.id)
+    && isTimestamp(value.prepared_at)
+    && isNonEmptyString(decision.reason_code)
+    && Number.isSafeInteger(decision.resolved_input_count)
+    && Number(decision.resolved_input_count) >= 0
+    && Array.isArray(decision.resolved_input_ids)
+    && decision.resolved_input_ids.every(isNonEmptyString)
+    && validState;
+}
+
+function invalidNodeDispatchIntent(relativePath: string, reason: string): never {
+  throw new Error(`Invalid NodeDispatchIntent: ${relativePath}; ${reason}`);
+}
+
+function adapterOperationPrefix(nodeRunId: string) {
+  return `op_${nodeRunId.replace(/[^a-zA-Z0-9_-]/g, "_")}_`;
+}
+
+function nodeSpecExpectedOutputs(nodeSpec: NodeSpec) {
+  return nodeSpec.outputs.map((output) => ({
+    output_id: output.id,
+    artifact_type: output.artifact_type ?? "document",
+    artifact_spec_ref: output.artifact_spec_ref,
+    required: output.required
+  }));
+}
+
+function sameStringArray(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameResolvedInputs(left: NodeExecutionDecision["resolved_inputs"], right: NodeExecutionDecision["resolved_inputs"]) {
+  return left.length === right.length && left.every((input, index) => {
+    const candidate = right[index];
+    return candidate?.input_id === input.input_id
+      && candidate.source_kind === input.source_kind
+      && candidate.source_ref === input.source_ref
+      && candidate.artifact_id === input.artifact_id
+      && candidate.artifact_version === input.artifact_version
+      && candidate.artifact_hash === input.artifact_hash
+      && candidate.media_type === input.media_type
+      && candidate.required === input.required
+      && isTimestamp(candidate.resolved_at)
+      && isTimestamp(input.resolved_at)
+      && candidate.resolved_at === input.resolved_at;
+  });
+}
+
+function normalizeResolvedInputsForDispatch(inputs: NodeExecutionDecision["resolved_inputs"], dispatchedAt: string) {
+  return inputs.map((input) => ({ ...input, resolved_at: dispatchedAt }));
+}
+
+function nodeInputsResolvedEvent(input: {
+  runId: string;
+  nodeRunId: string;
+  invocation: ReturnType<typeof createAdapterInvocation>;
+  reasonCode: string;
+}) {
+  return {
+    event_id: `evt_${input.invocation.attempt_id}_inputs_resolved`,
+    run_id: input.runId,
+    type: "node_inputs_resolved" as const,
+    subject: { type: "NodeRun" as const, id: input.nodeRunId },
+    message: `NodeRun ${input.nodeRunId} resolved ${input.invocation.resolved_inputs.length} input(s); reason_code=${input.reasonCode}`,
+    created_at: input.invocation.dispatched_at
+  };
+}
+
+async function readNodeDispatchIntent(
+  relativePath: string,
+  expected: {
+    runId: string;
+    nodeRunId: string;
+    nodeId: string;
+    runSpec: RunSpec;
+    workflow: WorkflowSpec;
+    nodeRun: NodeRun;
+    nodeSpec: NodeSpec;
+    decision: NodeExecutionDecision;
+    adapter?: AdapterRegistryEntry;
+  }
+) {
+  const intent = await readJsonOptional<unknown>(relativePath);
+  if (intent === undefined) return undefined;
+  if (!isNodeDispatchIntent(intent)) invalidNodeDispatchIntent(relativePath, "minimal structure is malformed");
+  const parsedInvocation = adapterInvocationSchema.safeParse(intent.invocation);
+  if (!parsedInvocation.success) invalidNodeDispatchIntent(relativePath, "invocation does not satisfy adapterInvocationSchema");
+  const invocation = parsedInvocation.data;
+  const event = intent.event;
+  const decision = intent.decision;
+  const expectedOperationPrefix = adapterOperationPrefix(invocation.node_run_id);
+  const operationTimestamp = invocation.operation_id.slice(expectedOperationPrefix.length);
+  const resolvedInputIds = invocation.resolved_inputs.map((input) => input.input_id);
+  const expectedOutputs = nodeSpecExpectedOutputs(expected.nodeSpec);
+  const expectedResolvedInputs = normalizeResolvedInputsForDispatch(expected.decision.resolved_inputs, invocation.dispatched_at);
+  const rebuiltInvocation = createAdapterInvocation({
+    runSpec: expected.runSpec,
+    workflow: expected.workflow,
+    nodeRun: expected.nodeRun,
+    createdAt: invocation.dispatched_at,
+    adapterKind: expected.adapter?.kind,
+    adapterId: expected.adapter?.id,
+    resolvedInputs: expectedResolvedInputs
+  });
+
+  if (intent.node_run_id !== expected.nodeRunId
+    || invocation.run_id !== expected.runId
+    || invocation.node_run_id !== expected.nodeRunId
+    || invocation.node_id !== expected.nodeId
+    || event.run_id !== expected.runId
+    || !isRecord(event.subject)
+    || event.subject.type !== "NodeRun"
+    || event.subject.id !== expected.nodeRunId
+    || event.event_id !== `evt_${invocation.attempt_id}_inputs_resolved`
+    || invocation.attempt_id !== `attempt_${invocation.operation_id}`
+    || !invocation.operation_id.startsWith(expectedOperationPrefix)
+    || operationTimestamp !== String(Date.parse(invocation.dispatched_at))
+    || invocation.operation_id !== rebuiltInvocation.operation_id
+    || invocation.attempt_id !== rebuiltInvocation.attempt_id
+    || decision.resolved_input_count !== resolvedInputIds.length
+    || !sameStringArray(decision.resolved_input_ids, resolvedInputIds)
+    || decision.reason_code !== expected.decision.reason_code
+    || !sameStringArray(invocation.capability_requirements, expected.nodeSpec.capability_requirements)
+    || invocation.expected_outputs.length !== expectedOutputs.length
+    || invocation.expected_outputs.some((output, index) => {
+      const expectedOutput = expectedOutputs[index];
+      return output.output_id !== expectedOutput?.output_id
+        || output.artifact_type !== expectedOutput.artifact_type
+        || output.artifact_spec_ref !== expectedOutput.artifact_spec_ref
+        || output.required !== expectedOutput.required;
+    })
+    || !sameResolvedInputs(invocation.resolved_inputs, expectedResolvedInputs)
+    || JSON.stringify(invocation) !== JSON.stringify(rebuiltInvocation)
+    || intent.prepared_at !== invocation.dispatched_at) {
+    invalidNodeDispatchIntent(relativePath, "identity or resolved input facts do not match the expected NodeRun");
+  }
+  return {
+    ...intent,
+    invocation: rebuiltInvocation,
+    event: nodeInputsResolvedEvent({
+      runId: expected.runId,
+      nodeRunId: expected.nodeRunId,
+      invocation: rebuiltInvocation,
+      reasonCode: expected.decision.reason_code
+    }),
+    prepared_at: rebuiltInvocation.dispatched_at
+  };
 }
 
 async function writeJson(relativePath: string, value: unknown) {
@@ -368,7 +576,7 @@ async function buildProjectRoadmap() {
   };
 }
 
-async function appendEvent(runId: string, event: unknown) {
+async function withEventJournalLock<T>(runId: string, operation: () => Promise<T>) {
   const previous = eventWriteQueues.get(runId) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) => {
@@ -377,18 +585,41 @@ async function appendEvent(runId: string, event: unknown) {
   eventWriteQueues.set(runId, current);
   await previous;
   try {
-    const file = path.join(workspaceDir, "runs", runId, "events.jsonl");
-    const existing = await readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return "";
-      throw error;
-    });
-    if (existing && !existing.endsWith("\n")) throw new Error("Event Journal has an incomplete trailing record.");
-    for (const line of existing.split("\n").filter(Boolean)) JSON.parse(line);
-    await writeJsonlAtomically(file, `${existing}${JSON.stringify(event)}\n`);
+    return await operation();
   } finally {
     release();
     if (eventWriteQueues.get(runId) === current) eventWriteQueues.delete(runId);
   }
+}
+
+async function readEventJournalLocked(runId: string) {
+  const file = path.join(workspaceDir, "runs", runId, "events.jsonl");
+  const existing = await readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
+  if (existing && !existing.endsWith("\n")) throw new Error("Event Journal has an incomplete trailing record.");
+  const events = existing.split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+  return { file, existing, events };
+}
+
+async function appendEventLocked(runId: string, event: unknown, journal?: Awaited<ReturnType<typeof readEventJournalLocked>>) {
+  const currentJournal = journal ?? await readEventJournalLocked(runId);
+  await writeJsonlAtomically(currentJournal.file, `${currentJournal.existing}${JSON.stringify(event)}\n`);
+}
+
+async function appendEvent(runId: string, event: unknown) {
+  await withEventJournalLock(runId, () => appendEventLocked(runId, event));
+}
+
+async function appendEventIfMissing(runId: string, event: { event_id: string }) {
+  return withEventJournalLock(runId, async () => {
+    const journal = await readEventJournalLocked(runId);
+    const existingIds = new Set(journal.events.map((item) => String(item.event_id ?? "")));
+    if (existingIds.has(event.event_id)) return false;
+    await appendEventLocked(runId, event, journal);
+    return true;
+  });
 }
 
 async function writeJsonlAtomically(target: string, content: string) {
@@ -637,6 +868,12 @@ function nodeCommitTransactionRelativePath(runId: string, nodeRunId: string) {
   const prefix = safeId(nodeRunId).slice(0, 48) || "node";
   const suffix = createHash("sha256").update(nodeRunId).digest("hex").slice(0, 16);
   return `runs/${runId}/transactions/${prefix}_${suffix}.json`;
+}
+
+function nodeDispatchIntentRelativePath(runId: string, nodeRunId: string) {
+  const prefix = safeId(nodeRunId).slice(0, 48) || "node";
+  const suffix = createHash("sha256").update(nodeRunId).digest("hex").slice(0, 16);
+  return `runs/${runId}/dispatches/${prefix}_${suffix}.json`;
 }
 
 function runMutationLockPath(runId: string) {
@@ -910,6 +1147,9 @@ async function applyNodeCommitTransaction(runId: string, transaction: NodeCommit
     if (!existingEventIds.has(event.event_id)) await appendEvent(runId, event);
   }
   await writeJsonAtomically(`runs/${runId}/nodes.json`, Array.from(nodesById.values()));
+  if (transaction.dispatch_intent_relative_path) {
+    await rm(path.join(workspaceDir, transaction.dispatch_intent_relative_path), { force: true });
+  }
   await rm(path.join(workspaceDir, nodeCommitTransactionRelativePath(runId, transaction.node_run_id)), { force: true });
 }
 
@@ -1466,20 +1706,29 @@ async function persistSchedulerFailureAttention(runId: string, failures: Schedul
   const currentAttention = Array.isArray(bundle.attention) ? (bundle.attention as AttentionItem[]) : [];
   const byRootCause = new Map(currentAttention.map((item) => [item.root_cause_key, item]));
   const createdAt = new Date().toISOString();
-  const attentionItems = failures.map((failure) => buildSchedulerFailureAttentionItem({ failure, node: nodes.find((node) => node.node_run_id === failure.node_run_id) }));
-  for (const item of attentionItems) byRootCause.set(item.root_cause_key, item);
+  const attentionByRootCause = new Map<string, AttentionItem>();
+  for (const failure of failures) {
+    const item = buildSchedulerFailureAttentionItem({ failure, node: nodes.find((node) => node.node_run_id === failure.node_run_id) });
+    if (!attentionByRootCause.has(item.root_cause_key)) attentionByRootCause.set(item.root_cause_key, item);
+  }
+  const attentionItems = Array.from(attentionByRootCause.values());
+  const newlyCreatedItems = attentionItems.filter((item) => !byRootCause.has(item.root_cause_key));
+  for (const item of newlyCreatedItems) byRootCause.set(item.root_cause_key, item);
   await writeJson(`runs/${runId}/attention.json`, Array.from(byRootCause.values()));
 
   const events = attentionItems.map((item) => ({
-    event_id: `evt_${item.attention_id}_${Date.parse(createdAt)}`,
+    event_id: `evt_${item.attention_id}_created`,
     run_id: runId,
     type: "attention_item_created",
     subject: { type: "AttentionItem", id: item.attention_id },
     message: `AttentionItem ${item.root_cause_key} opened by scheduler`,
     created_at: createdAt
   }));
-  for (const event of events) await appendEvent(runId, event);
-  return { attention_items: attentionItems, created_events: events.map((event) => event.event_id) };
+  const createdEvents: string[] = [];
+  for (const event of events) {
+    if (await appendEventIfMissing(runId, event)) createdEvents.push(event.event_id);
+  }
+  return { attention_items: newlyCreatedItems, created_events: createdEvents };
 }
 
 async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<NodeExecutionResult> {
@@ -1515,36 +1764,9 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
         error: { code: "not_found", message: "NodeRun not found" }
       };
     }
-    if (!["queued", "running"].includes(targetNodeRun.status)) {
-      return {
-        accepted: false,
-        status_code: 409,
-        error: { code: "node_not_executable", message: `Only queued or running NodeRun can be executed. Current status: ${targetNodeRun.status}` }
-      };
-    }
-
-    const previousNodeRun = structuredClone(targetNodeRun);
     const dispatchedAt = new Date().toISOString();
-    targetNodeRun.status = "running";
-    targetNodeRun.started_at = targetNodeRun.started_at ?? dispatchedAt;
-    targetNodeRun.updated_at = dispatchedAt;
-    await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
-
-    const nodeSpec = lockedBundle.workflow.nodes.find((node) => node.id === targetNodeRun.node_id);
     const artifacts = lockedBundle.artifacts as ArtifactManifest[];
     const gates = lockedBundle.gates as GateInstance[];
-    const provider = targetNodeRun.provider ?? runSpec.resolved_provider_policy.default_provider;
-    const manifests = await readAdapterManifests();
-    const availableCredentials = availableCredentialKeys();
-    const codexHealth = realCodexEnabled(runSpec) ? await codexCliAdapter.getHealth() : undefined;
-    const useRealCodex = Boolean(
-      nodeSpec &&
-      codexHealth?.status === "healthy" &&
-      nodeSpec.capability_requirements.every((capability) => codexCliRealAdapterManifest.capabilities.includes(capability))
-    );
-    const adapter = realCodexEnabled(runSpec)
-      ? (useRealCodex ? codexRealAdapterEntry() : undefined)
-      : nodeSpec && selectAdapterForNode({ manifests, node: nodeSpec, provider, availableCredentials });
     const executionPlan = calculateExecutionPlan({
       runId,
       workflowSnapshotId: runSpec.workflow_snapshot_id,
@@ -1554,8 +1776,68 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       gates,
       calculatedAt: dispatchedAt
     });
-    const resolvedInputs = executionPlan.decisions.find((decision) => decision.node_run_id === targetNodeRun.node_run_id)?.resolved_inputs ?? [];
-    let invocation = createAdapterInvocation({
+    const decision = executionPlan.decisions.find((item) => item.node_run_id === targetNodeRun.node_run_id);
+    if (!decision || decision.decision !== "execute") {
+      return {
+        accepted: false,
+        status_code: 409,
+        error: {
+          code: "node_not_executable",
+          message: `ExecutionPlan decision is ${decision?.decision ?? "missing"}.`,
+          reason_code: decision?.reason_code ?? "node_run_missing"
+        }
+      };
+    }
+    const resolvedInputs = decision.resolved_inputs;
+    const dispatchIntentPath = nodeDispatchIntentRelativePath(runId, nodeRunId);
+    const nodeSpec = lockedBundle.workflow.nodes.find((node) => node.id === targetNodeRun.node_id);
+    if (!nodeSpec) throw new Error(`NodeSpec not found: ${targetNodeRun.node_id}`);
+    const provider = targetNodeRun.provider ?? runSpec.resolved_provider_policy.default_provider;
+    const manifests = await readAdapterManifests();
+    const availableCredentials = availableCredentialKeys();
+    const codexHealth = realCodexEnabled(runSpec) ? await codexCliAdapter.getHealth() : undefined;
+    const useRealCodex = Boolean(
+      codexHealth?.status === "healthy"
+      && nodeSpec.capability_requirements.every((capability) => codexCliRealAdapterManifest.capabilities.includes(capability))
+    );
+    const adapter = realCodexEnabled(runSpec)
+      ? (useRealCodex ? codexRealAdapterEntry() : undefined)
+      : selectAdapterForNode({ manifests, node: nodeSpec, provider, availableCredentials });
+    const existingIntent = await readNodeDispatchIntent(dispatchIntentPath, {
+      runId,
+      nodeRunId,
+      nodeId: targetNodeRun.node_id,
+      runSpec,
+      workflow: lockedBundle.workflow,
+      nodeRun: targetNodeRun,
+      nodeSpec,
+      decision,
+      adapter
+    });
+    if (existingIntent?.state === "dispatched_unknown") {
+      return {
+        accepted: false,
+        status_code: 409,
+        error: {
+          code: "node_dispatch_unknown",
+          message: "NodeRun has a dispatched Adapter invocation with an unknown result; inspect the persisted dispatch intent before retrying.",
+          reason_code: "dispatch_result_unknown"
+        }
+      };
+    }
+    if (existingIntent?.state === "invalid_result") {
+      return {
+        accepted: false,
+        status_code: 409,
+        error: {
+          code: "node_dispatch_invalid",
+          message: "NodeRun has an invalid Adapter result recorded in its dispatch intent; inspect it before retrying.",
+          reason_code: "adapter_result_invalid"
+        }
+      };
+    }
+
+    let invocation = existingIntent?.invocation ?? createAdapterInvocation({
       runSpec,
       workflow: lockedBundle.workflow,
       nodeRun: targetNodeRun,
@@ -1564,6 +1846,32 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       adapterId: adapter?.id,
       resolvedInputs
     });
+    let dispatchIntent = existingIntent;
+    if (!dispatchIntent) {
+      const inputEvent = nodeInputsResolvedEvent({ runId, nodeRunId, invocation, reasonCode: decision.reason_code });
+      dispatchIntent = {
+        node_run_id: nodeRunId,
+        invocation,
+        decision: {
+          reason_code: decision.reason_code,
+          resolved_input_count: resolvedInputs.length,
+          resolved_input_ids: resolvedInputs.map((input) => input.input_id)
+        },
+        event: inputEvent,
+        state: "prepared",
+        prepared_at: dispatchedAt
+      };
+      await writeJsonAtomically(dispatchIntentPath, dispatchIntent);
+    }
+    await appendEventIfMissing(runId, dispatchIntent.event);
+
+    const previousNodeRun = structuredClone(targetNodeRun);
+    dispatchIntent = { ...dispatchIntent, state: "dispatched_unknown", dispatched_at: dispatchedAt };
+    await writeJsonAtomically(dispatchIntentPath, dispatchIntent);
+    targetNodeRun.status = "running";
+    targetNodeRun.started_at = targetNodeRun.started_at ?? dispatchedAt;
+    targetNodeRun.updated_at = dispatchedAt;
+    await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
     let rawResult: AdapterResult;
     if (adapter?.id === "codex-cli-real") {
       const executed = await executeRealCodexAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun });
@@ -1586,6 +1894,14 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     } catch (error) {
       Object.assign(targetNodeRun, previousNodeRun);
       await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
+      await writeJsonAtomically(dispatchIntentPath, {
+        ...dispatchIntent,
+        state: "invalid_result",
+        error: {
+          code: "adapter_result_invalid",
+          message: error instanceof Error ? error.message : "Adapter result did not match the dispatched invocation."
+        }
+      });
       throw error;
     }
     const attempt = createNodeAttemptFromAdapterResult(result);
@@ -1644,8 +1960,9 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
           attempt,
           artifacts: createdArtifacts,
           gates: createdGates,
-          created_events: events.map((event) => event.event_id)
-        }
+          created_events: [dispatchIntent.event.event_id, ...events.map((event) => event.event_id)]
+        },
+        dispatch_intent_relative_path: dispatchIntentPath
       };
       await writeJsonAtomically(transactionPath, transaction);
       factCommitStarted = true;
@@ -1665,46 +1982,6 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
   }
 }
 
-function buildSchedulerDecisions(workflow: WorkflowSpec, nodes: NodeRun[], gates: GateInstance[]): SchedulerDecision[] {
-  const pendingGateByNode = new Map<string, GateInstance>();
-  for (const gate of gates.filter((item) => item.status === "pending_review")) {
-    for (const nodeId of gate.required_before) pendingGateByNode.set(nodeId, gate);
-  }
-  const nodeOrder = new Map(workflow.nodes.map((node, index) => [node.id, index]));
-  return nodes
-    .filter((node) => ["queued", "running", "blocked", "reviewing", "waiting"].includes(node.status))
-    .sort((a, b) => (nodeOrder.get(a.node_id) ?? 9999) - (nodeOrder.get(b.node_id) ?? 9999))
-    .map((node): SchedulerDecision => {
-      const gate = pendingGateByNode.get(node.node_id);
-      if (gate) {
-        return {
-          node_run_id: node.node_run_id,
-          node_id: node.node_id,
-          status: node.status,
-          decision: "pause_for_gate",
-          reason: `GateInstance ${gate.gate_instance_id} pending_review`,
-          gate_instance_id: gate.gate_instance_id
-        };
-      }
-      if (node.status === "queued" || node.status === "running") {
-        return {
-          node_run_id: node.node_run_id,
-          node_id: node.node_id,
-          status: node.status,
-          decision: "execute",
-          reason: node.status === "running" ? "running NodeRun may have a recoverable commit journal" : "queued NodeRun is executable"
-        };
-      }
-      return {
-        node_run_id: node.node_run_id,
-        node_id: node.node_id,
-        status: node.status,
-        decision: "skip",
-        reason: `NodeRun status ${node.status} is not executable by scheduler`
-      };
-    });
-}
-
 function schedulerLimits(value: unknown) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 1;
@@ -1720,30 +1997,60 @@ function schedulerTickLimits(value: unknown) {
 async function buildSchedulerPlan(runId: string, maxNodes: number) {
   await recoverPendingNodeCommitTransactions(runId);
   const bundle = await readRunBundle(runId);
-  const decisions = buildSchedulerDecisions(bundle.workflow, bundle.nodes as NodeRun[], bundle.gates as GateInstance[]);
+  const executionPlan = buildRunExecutionPlan({
+    run: bundle.run as unknown as RunSpec,
+    workflow: bundle.workflow,
+    nodes: bundle.nodes as NodeRun[],
+    artifacts: bundle.artifacts as ArtifactManifest[],
+    gates: bundle.gates as GateInstance[]
+  });
+  const statuses = new Map((bundle.nodes as NodeRun[]).map((node) => [node.node_run_id, node.status]));
+  const decisions: SchedulerDecision[] = executionPlan.decisions.map((decision) => ({
+    node_run_id: decision.node_run_id,
+    node_id: decision.node_id,
+    status: statuses.get(decision.node_run_id) ?? "waiting",
+    decision: decision.decision,
+    reason_code: decision.reason_code,
+    ...(decision.gate_instance_id ? { gate_instance_id: decision.gate_instance_id } : {})
+  }));
   const executable = decisions.filter((decision) => decision.decision === "execute").slice(0, maxNodes);
   const paused = decisions.filter((decision) => decision.decision === "pause_for_gate");
-  const skipped = decisions.filter((decision) => decision.decision === "skip");
-  return { decisions, executable, paused, skipped };
+  const skipped = decisions.filter((decision) => decision.decision !== "execute" && decision.decision !== "pause_for_gate");
+  return { executionPlan, decisions, executable, paused, skipped };
 }
 
 async function commitSchedulerTick(runId: string, maxNodes: number) {
-  const { decisions, executable, paused, skipped } = await buildSchedulerPlan(runId, maxNodes);
+  const initialPlan = await buildSchedulerPlan(runId, maxNodes);
+  const { executionPlan, executable: initialCandidates } = initialPlan;
   const tickId = `sched_${safeId(runId)}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const startedAt = new Date().toISOString();
+  const planEvent = {
+    event_id: `evt_${tickId}_execution_plan`,
+    run_id: runId,
+    type: "execution_plan_calculated",
+    subject: { type: "RunSpec", id: runId },
+    message: `ExecutionPlan ${runId} calculated: decisions=${executionPlan.decisions.length}; ready=${executionPlan.ready_node_run_ids.length}; paused=${executionPlan.paused_node_run_ids.length}; reason_codes=${Array.from(new Set(executionPlan.decisions.map((decision) => decision.reason_code))).sort().join(",")}`,
+    created_at: startedAt
+  };
   const startedEvent = {
     event_id: `evt_${tickId}_started`,
     run_id: runId,
     type: "scheduler_tick_started",
     subject: { type: "RunSpec", id: runId },
-    message: `Scheduler tick started with ${executable.length} executable NodeRun(s)`,
+    message: `Scheduler tick started with ${initialCandidates.length} executable NodeRun(s)`,
     created_at: startedAt
   };
+  await appendEvent(runId, planEvent);
   await appendEvent(runId, startedEvent);
 
   const executed = [];
   const failed: SchedulerFailure[] = [];
-  for (const decision of executable) {
+  const attemptedNodeRunIds = new Set<string>();
+  for (let slot = 0; slot < maxNodes; slot += 1) {
+    const latestPlan = await buildSchedulerPlan(runId, maxNodes);
+    const decision = latestPlan.executable.find((candidate) => !attemptedNodeRunIds.has(candidate.node_run_id));
+    if (!decision) break;
+    attemptedNodeRunIds.add(decision.node_run_id);
     try {
       const result = await executeNodeRunOnce(runId, decision.node_run_id);
       if (!result.accepted) {
@@ -1753,7 +2060,7 @@ async function commitSchedulerTick(runId: string, maxNodes: number) {
           node_id: decision.node_id,
           error: { code: result.error.code, message: result.error.message, recoverable: result.status_code < 500 }
         });
-        continue;
+        break;
       }
       executed.push({ decision, result });
       if (result.committed.node_run.status === "failed") {
@@ -1775,8 +2082,12 @@ async function commitSchedulerTick(runId: string, maxNodes: number) {
           recoverable: false
         }
       });
+      break;
     }
   }
+
+  const finalPlan = await buildSchedulerPlan(runId, maxNodes);
+  const { decisions, executable, paused, skipped } = finalPlan;
 
   const attention = await persistSchedulerFailureAttention(runId, failed);
   const completedAt = new Date().toISOString();
@@ -1796,6 +2107,8 @@ async function commitSchedulerTick(runId: string, maxNodes: number) {
     tick_id: tickId,
     run_id: runId,
     max_nodes: maxNodes,
+    initial_candidates: initialCandidates,
+    execution_plan: finalPlan.executionPlan,
     decisions,
     executable,
     executed,
@@ -1803,14 +2116,18 @@ async function commitSchedulerTick(runId: string, maxNodes: number) {
     paused,
     skipped,
     attention_items: attention.attention_items,
-    created_events: [startedEvent.event_id, ...attention.created_events, completedEvent.event_id],
+    created_events: [planEvent.event_id, startedEvent.event_id, ...attention.created_events, completedEvent.event_id],
     next_suggested_actions: failed.length > 0 ? ["inspect_attention", "retry_node_or_switch_provider"] : paused.length > 0 ? ["review_pending_gates"] : ["refresh_run"]
   };
 }
 
+function schedulerStopReason(plan: Awaited<ReturnType<typeof buildSchedulerPlan>>): "no_executable_nodes" | "paused_for_gate" {
+  return plan.paused.length > 0 || plan.decisions.some((decision) => decision.reason_code === "required_gate_rejected")
+    ? "paused_for_gate"
+    : "no_executable_nodes";
+}
+
 async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPerTick: number) {
-  const runBundle = await readRunBundle(runId);
-  const effectiveMaxTicks = realCodexEnabled(runBundle.run as unknown as RunSpec) && runBundle.workflow.nodes.length > 1 ? 1 : maxTicks;
   const runIdSafe = safeId(runId);
   const schedulerRunId = `sched_run_${runIdSafe}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const startedAt = new Date().toISOString();
@@ -1819,17 +2136,19 @@ async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPe
     run_id: runId,
     type: "scheduler_run_started",
     subject: { type: "RunSpec", id: runId },
-    message: `Scheduler run started with max ${effectiveMaxTicks} tick(s)`,
+    message: `Scheduler run started with max ${maxTicks} tick(s)`,
     created_at: startedAt
   };
   await appendEvent(runId, startedEvent);
 
   const ticks = [];
   let stopReason: "no_executable_nodes" | "paused_for_gate" | "execution_failed" | "max_ticks_reached" = "max_ticks_reached";
-  for (let index = 0; index < effectiveMaxTicks; index += 1) {
+  let lastExecutionPlan: Awaited<ReturnType<typeof buildSchedulerPlan>>["executionPlan"] | undefined;
+  for (let index = 0; index < maxTicks; index += 1) {
     const plan = await buildSchedulerPlan(runId, maxNodesPerTick);
+    lastExecutionPlan = plan.executionPlan;
     if (plan.executable.length === 0) {
-      stopReason = plan.paused.length > 0 ? "paused_for_gate" : "no_executable_nodes";
+      stopReason = schedulerStopReason(plan);
       ticks.push({
         mode: "dry_stop",
         tick_index: index + 1,
@@ -1841,6 +2160,7 @@ async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPe
       break;
     }
     const tick = await commitSchedulerTick(runId, maxNodesPerTick);
+    lastExecutionPlan = tick.execution_plan;
     ticks.push({ tick_index: index + 1, ...tick });
     if (tick.failed.length > 0) {
       stopReason = "execution_failed";
@@ -1849,8 +2169,9 @@ async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPe
   }
   if (stopReason === "max_ticks_reached") {
     const terminalPlan = await buildSchedulerPlan(runId, maxNodesPerTick);
+    lastExecutionPlan = terminalPlan.executionPlan;
     if (terminalPlan.executable.length === 0) {
-      stopReason = terminalPlan.paused.length > 0 ? "paused_for_gate" : "no_executable_nodes";
+      stopReason = schedulerStopReason(terminalPlan);
       ticks.push({
         mode: "dry_stop",
         tick_index: ticks.length + 1,
@@ -1885,8 +2206,9 @@ async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPe
     mode: "run",
     scheduler_run_id: schedulerRunId,
     run_id: runId,
-    max_ticks: effectiveMaxTicks,
+    max_ticks: maxTicks,
     max_nodes_per_tick: maxNodesPerTick,
+    execution_plan: lastExecutionPlan,
     stop_reason: stopReason,
     ticks,
     summary: {
@@ -2521,6 +2843,8 @@ async function route(req: IncomingMessage, res: ServerResponse) {
           tick_id: tickId,
           run_id: runId,
           max_nodes: maxNodes,
+          initial_candidates: plan.executable,
+          execution_plan: plan.executionPlan,
           decisions: plan.decisions,
           executable: plan.executable,
           paused: plan.paused,
@@ -2547,7 +2871,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       if (parts.length === 6) return sendJson(res, 200, { node, attempts: attempts.filter((attempt) => attempt.node_run_id === nodeRunId) });
       if (req.method === "POST" && parts[6] === "execute") {
         const result = await executeNodeRunOnce(runId, nodeRunId);
-        if (!result.accepted) return sendError(res, result.status_code, result.error.code, result.error.message);
+        if (!result.accepted) return sendJson(res, result.status_code, { error: { ...result.error, recoverable: result.status_code < 500 } });
         return sendJson(res, 200, result);
       }
     }
@@ -2657,24 +2981,34 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       if (!lock) {
         return sendError(res, 409, "operation_in_progress", "Run already has a fact mutation in progress.");
       }
+      let released = false;
+      const releaseOnce = async () => {
+        if (released) return;
+        await lock.release();
+        released = true;
+      };
+      const sendErrorAfterRelease = async (status: number, code: string, message: string) => {
+        await releaseOnce();
+        sendError(res, status, code, message);
+      };
 
       try {
         const lockedBundle = await readRunBundle(runId);
         const runSpec = lockedBundle.run as unknown as RunSpec;
         const lockedGates = lockedBundle.gates as GateInstance[];
         const lockedGate = lockedGates.find((item) => item.gate_instance_id === gateId);
-        if (!lockedGate) return sendError(res, 404, "not_found", "Gate not found");
+        if (!lockedGate) return await sendErrorAfterRelease(404, "not_found", "Gate not found");
         const latestDecision = lockedGate.decisions.at(-1);
         if (lockedGate.status !== "decided" || !latestDecision || !["reject", "request_changes"].includes(latestDecision.decision)) {
-          return sendError(res, 409, "gate_not_reworkable", "Only a rejected or request_changes GateInstance can create a rework attempt.");
+          return await sendErrorAfterRelease(409, "gate_not_reworkable", "Only a rejected or request_changes GateInstance can create a rework attempt.");
         }
 
         const lockedArtifacts = lockedBundle.artifacts as ArtifactManifest[];
         const nodes = lockedBundle.nodes as NodeRun[];
         const targetArtifact = lockedArtifacts.find((artifact) => artifact.artifact_id === lockedGate.target.id);
-        if (!targetArtifact) return sendError(res, 404, "not_found", "Target ArtifactManifest not found");
+        if (!targetArtifact) return await sendErrorAfterRelease(404, "not_found", "Target ArtifactManifest not found");
         const producerNode = nodes.find((node) => node.node_run_id === targetArtifact.node_run_id);
-        if (!producerNode) return sendError(res, 404, "not_found", "Producer NodeRun not found");
+        if (!producerNode) return await sendErrorAfterRelease(404, "not_found", "Producer NodeRun not found");
 
         const createdAt = new Date().toISOString();
         const version = nextArtifactVersion(lockedArtifacts, targetArtifact);
@@ -2773,6 +3107,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
         ];
         for (const event of events) await appendEvent(runId, event);
 
+        await releaseOnce();
         return sendJson(res, 201, {
           accepted: true,
           rework_attempt_id: attempt.attempt_id,
@@ -2782,7 +3117,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
           next_suggested_actions: ["review_rework_gate"]
         });
       } finally {
-        await lock.release();
+        await releaseOnce();
       }
     }
     if (req.method === "POST" && parts[4] === "decision") {
@@ -2792,14 +3127,24 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       if (!lock) {
         return sendError(res, 409, "operation_in_progress", "Run already has a fact mutation in progress.");
       }
+      let released = false;
+      const releaseOnce = async () => {
+        if (released) return;
+        await lock.release();
+        released = true;
+      };
+      const sendErrorAfterRelease = async (status: number, code: string, message: string) => {
+        await releaseOnce();
+        sendError(res, status, code, message);
+      };
 
       try {
         const lockedBundle = await readRunBundle(runId);
         const lockedGates = lockedBundle.gates as GateInstance[];
         const lockedGate = lockedGates.find((item) => item.gate_instance_id === gateId);
-        if (!lockedGate) return sendError(res, 404, "not_found", "Gate not found");
+        if (!lockedGate) return await sendErrorAfterRelease(404, "not_found", "Gate not found");
         if (lockedGate.status !== "pending_review") {
-          return sendError(res, 409, "gate_already_decided", "GateInstance is already decided. Create a new review cycle before adding another decision.");
+          return await sendErrorAfterRelease(409, "gate_already_decided", "GateInstance is already decided. Create a new review cycle before adding another decision.");
         }
 
         const decision: GateDecision = {
@@ -2843,6 +3188,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
         };
         await appendEvent(runId, event);
         const bundle = await readRunBundle(runId);
+        await releaseOnce();
         return sendJson(res, 200, {
           accepted: true,
           gate_decision_id: decision.decision_id,
@@ -2851,7 +3197,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
           next_suggested_actions: decision.decision === "approve" ? ["continue_downstream"] : ["create_rework_attempt"]
         });
       } finally {
-        await lock.release();
+        await releaseOnce();
       }
     }
   }

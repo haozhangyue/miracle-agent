@@ -88,6 +88,17 @@
 - 运行锁改为启动前回收死进程遗留锁、运行期绝不抢占其他 Sidecar 锁，避免并发事实写入互相覆盖。
 - P7-03 仍保持每次 Scheduler 请求最多推进一个真实节点；自动连续执行与 Gate 恢复属于 P7-04。
 - 同步 task-baseline：`P7-02`、`P7-03` 标记完成，`current_node_id` 推进到 `p7-04`。
+- 完成 P7-04 Codex Scheduler 连续执行闭环：Scheduler 每 tick 从完整 Run bundle 重算
+  ExecutionPlan，只执行 `execute` 决策；真实多节点在同一请求内连续推进，Gate approve 后下一次
+  Scheduler 重算并恢复下游，reject 保持下游 blocked 并返回 `paused_for_gate`。
+- 新增 `execution_plan_calculated` 和 `node_inputs_resolved` 审计事件；消息只含 Run/Node ID、
+  输入数量和 reason code，不写入 Artifact 正文。Gate 成功响应在释放 mutation lock 后返回，避免紧随其后的
+  rework 请求偶发 `409 operation_in_progress`。
+- 同步 task-baseline：`P7-04` 标记完成，`current_node_id` 推进到 `p7-05`；retry/fallback 保持 P7-05 范围。
+- P7-04 二次审查加固：同一 tick 对锁冲突或非 accepted 结果只尝试一次并停止，Attention 与创建事件按根因去重；
+  Scheduler 最终响应统一投影最终 ExecutionPlan。节点在 Adapter 启动前持久化可恢复、幂等的
+  `NodeDispatchIntent` 与脱敏输入审计，未知派发结果保留审计状态且不自动创建新 Attempt；只有 optional
+  入边的节点由 Planner 决定等待或执行。
 
 ## 4. v0.8.0 发布记录
 

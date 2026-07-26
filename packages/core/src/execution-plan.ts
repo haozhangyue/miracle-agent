@@ -110,16 +110,16 @@ function qualifiedArtifactsForDestinationEdge(workflow: WorkflowSpec, node: Node
   return candidates.filter((artifact, index) => candidates.findIndex((item) => item.artifact_id === artifact.artifact_id) === index);
 }
 
-function latestArtifactForSpec(workflow: WorkflowSpec, artifactSpecId: string, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
+function latestCreatedArtifactForSpec(workflow: WorkflowSpec, artifactSpecId: string, artifacts: ArtifactManifest[]) {
   const artifactSpec = workflow.artifacts.find((item) => item.id === artifactSpecId);
   if (!artifactSpec) return undefined;
-  return newestArtifact(artifactQualifies({ workflow, sourceNodeId: artifactSpec.produced_by, nodeRuns, artifacts, artifactSpec }));
+  return newestArtifact(artifacts.filter((artifact) => artifact.status === "created" && artifactMetadataValid(artifact) && artifactMatchesSpec(workflow, artifact, artifactSpec)));
 }
 
-function gateForSpec(workflow: WorkflowSpec, gates: GateInstance[], gateSpecId: string, runId: string, nodeRuns: NodeRun[], artifacts: ArtifactManifest[]) {
+function gateForSpec(workflow: WorkflowSpec, gates: GateInstance[], gateSpecId: string, runId: string, artifacts: ArtifactManifest[]) {
   const gateSpec = workflow.gates.find((gate) => gate.id === gateSpecId);
   if (!gateSpec) return undefined;
-  const targetArtifact = latestArtifactForSpec(workflow, gateSpec.target_artifact_ref, nodeRuns, artifacts);
+  const targetArtifact = latestCreatedArtifactForSpec(workflow, gateSpec.target_artifact_ref, artifacts);
   if (!targetArtifact) return undefined;
   return [...gates]
     .filter((gate) => gate.gate_spec_id === gateSpecId && gate.run_id === runId)
@@ -170,13 +170,19 @@ export function resolveNodeInputs(input: ResolveNodeInputsInput): ResolvedNodeIn
   });
 }
 
-function gateDecision(node: NodeSpec, workflow: WorkflowSpec, nodeRuns: NodeRun[], artifacts: ArtifactManifest[], gates: GateInstance[], runId: string): { decision?: ExecutionDecision; reasonCode?: string } {
+function gateDecision(node: NodeSpec, workflow: WorkflowSpec, nodeRuns: NodeRun[], artifacts: ArtifactManifest[], gates: GateInstance[], runId: string): { decision?: ExecutionDecision; reasonCode?: string; gateInstanceId?: string } {
   for (const requiredGate of workflow.gates.filter((gate) => gate.required_before.includes(node.id))) {
-    const gate = gateForSpec(workflow, gates, requiredGate.id, runId, nodeRuns, artifacts);
+    const gate = gateForSpec(workflow, gates, requiredGate.id, runId, artifacts);
+    if (!gate) {
+      const targetSpec = workflow.artifacts.find((artifact) => artifact.id === requiredGate.target_artifact_ref);
+      const producer = targetSpec && nodeRunForNodeId(nodeRuns, targetSpec.produced_by);
+      if (producer?.status === "done") return { decision: "pause_for_gate", reasonCode: "required_gate_pending" };
+      continue;
+    }
     const latestDecision = gate && latestGateDecision(gate)?.decision;
     if (gate?.status === "decided" && latestDecision === "approve") continue;
-    if (latestDecision === "reject" || latestDecision === "request_changes" || gate?.status === "invalidated") return { decision: "blocked", reasonCode: "required_gate_rejected" };
-    return { decision: "pause_for_gate", reasonCode: "required_gate_pending" };
+    if (latestDecision === "reject" || latestDecision === "request_changes" || gate?.status === "invalidated") return { decision: "blocked", reasonCode: "required_gate_rejected", gateInstanceId: gate.gate_instance_id };
+    return { decision: "pause_for_gate", reasonCode: "required_gate_pending", gateInstanceId: gate.gate_instance_id };
   }
   return {};
 }
@@ -195,11 +201,12 @@ function nodeDecision(input: CalculateExecutionPlanInput, node: NodeSpec): NodeE
   if (!nodeRun) return { ...base, decision: "skip", reason_code: "node_run_missing" };
   if (terminalStatuses.has(nodeRun.status)) return { ...base, decision: "skip", reason_code: "node_run_terminal" };
   if (node.type === "end" || node.type === "terminate") return { ...base, decision: "skip", reason_code: "terminal_node" };
-  if (nodeRun.status === "blocked") return { ...base, decision: "blocked", reason_code: "node_run_blocked" };
-  if (nodeRun.status === "waiting" || nodeRun.status === "reviewing") return { ...base, decision: "wait", reason_code: "node_run_waiting" };
 
   const gate = gateDecision(node, input.workflow, input.nodeRuns, input.artifacts, input.gates, input.runId);
-  if (gate.decision) return { ...base, decision: gate.decision, reason_code: gate.reasonCode! };
+  if (gate.decision) return { ...base, decision: gate.decision, reason_code: gate.reasonCode!, ...(gate.gateInstanceId ? { gate_instance_id: gate.gateInstanceId } : {}) };
+
+  if (nodeRun.status === "blocked") return { ...base, decision: "blocked", reason_code: "node_run_blocked" };
+  if (nodeRun.status === "waiting" || nodeRun.status === "reviewing") return { ...base, decision: "wait", reason_code: "node_run_waiting" };
 
   const requiredBlocked = requiredEdgeStatus.find((status) => !status.satisfied && !activeStatuses.has(nodeRunForNodeId(input.nodeRuns, status.edge_id.split("->")[0])?.status ?? "blocked"));
   const requiredWaiting = requiredEdgeStatus.some((status) => !status.satisfied && activeStatuses.has(nodeRunForNodeId(input.nodeRuns, status.edge_id.split("->")[0])?.status ?? "blocked"));
