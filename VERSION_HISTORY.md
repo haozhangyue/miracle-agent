@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.8.0` |
 | 版本名称 | 真实工作流工程接入基线 |
-| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 总体设计已通过，当前任务为 `P7-02` 多节点 ExecutionPlan 与输入解析 |
+| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-03 已完成，当前任务为 `P7-04` Codex Scheduler 连续执行闭环 |
 | 基线提交 | P6-08 收口提交（见 Git HEAD） |
 | 基线日期 | 2026-07-16 |
 | 最终评审 | 通过 |
@@ -80,6 +80,14 @@
   P7-10 拆为逐文件 TDD 步骤、依赖、提交点和验收命令。
 - 同步 task-baseline：`P7-01` 标记完成，`current_node_id` 推进到 `p7-02`；
   本次仅完成设计与计划，不提前标记任何工程任务完成。
+- 完成 P7-02 多节点 ExecutionPlan、输入就绪判断和 Artifact 绑定，为真实交接提供确定性计划。
+- 完成 P7-03 Codex 多节点 Artifact 真实交接：按版本和 SHA-256 校验上游产物，冻结
+  `resolved_inputs` 与输出 schema，并将受控输入写入 Attempt workspace。
+- 支持 NodeSpec 驱动的多输出契约、正式 ArtifactManifest/Gate/Attempt/Trace 提交、
+  原子事件写入和可恢复 Node commit journal；拒绝路径逃逸、符号链接、硬链接和身份碰撞。
+- 运行锁改为启动前回收死进程遗留锁、运行期绝不抢占其他 Sidecar 锁，避免并发事实写入互相覆盖。
+- P7-03 仍保持每次 Scheduler 请求最多推进一个真实节点；自动连续执行与 Gate 恢复属于 P7-04。
+- 同步 task-baseline：`P7-02`、`P7-03` 标记完成，`current_node_id` 推进到 `p7-04`。
 
 ## 4. v0.8.0 发布记录
 

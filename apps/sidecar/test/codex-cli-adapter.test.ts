@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,10 +31,14 @@ function createAdapter(environment: Record<string, string> = {}) {
   });
 }
 
+function sha256(content: string) {
+  return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+}
+
 async function createWorkspace(adapter = createAdapter(), attemptId = "attempt_001"): Promise<AttemptWorkspace> {
   return adapter.createAttemptWorkspace({
     attempt_id: attemptId,
-    input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "brief.md" }],
+    input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "brief.md", expected_hash: sha256("approved input\n") }],
     allowed_input_roots: [sourceDir],
     output_schema: { type: "object", properties: {} }
   });
@@ -41,6 +46,19 @@ async function createWorkspace(adapter = createAdapter(), attemptId = "attempt_0
 
 function wait(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function fakeCodexLimitSchemas(): Array<[string, Record<string, unknown>]> {
+  const properties = Object.fromEntries(Array.from({ length: 5_001 }, (_, index) => [`property_${index}`, { type: "string" }]));
+  let deeplyNested: Record<string, unknown> = { type: "string" };
+  for (let depth = 0; depth < 10; depth += 1) {
+    deeplyNested = { type: "object", properties: { value: deeplyNested } };
+  }
+  return [
+    ["more than 5000 object properties", { type: "object", properties }],
+    ["more than 120000 schema characters", { type: "string", const: "x".repeat(120_001) }],
+    ["nesting deeper than 10 levels", deeplyNested]
+  ];
 }
 
 function invocation(attempt: AttemptWorkspace, operationId = "op_001"): AdapterInvocation {
@@ -55,6 +73,7 @@ function invocation(attempt: AttemptWorkspace, operationId = "op_001"): AdapterI
     provider: "codex-local",
     capability_requirements: ["content.longform_draft"],
     input_artifacts: [],
+    resolved_inputs: [],
     expected_outputs: [],
     runtime_control: {
       timeout_ms: 100,
@@ -153,7 +172,70 @@ describe("CodexCliAdapter attempt workspace", () => {
 
     await expect(adapter.createAttemptWorkspace({
       attempt_id: "attempt_escape",
-      input_files: [{ source_path: outside, target_path: "outside.md" }],
+      input_files: [{ source_path: outside, target_path: "outside.md", expected_hash: sha256("outside") }],
+      allowed_input_roots: [sourceDir]
+    })).rejects.toMatchObject({ code: "input_path_not_allowed" });
+  });
+
+  it("rejects a staged copy when its bytes do not match the frozen artifact hash", async () => {
+    const adapter = createAdapter();
+
+    await writeFile(path.join(sourceDir, "brief.md"), "replacement bytes\n", "utf8");
+
+    await expect(adapter.createAttemptWorkspace({
+      attempt_id: "attempt_hash_mismatch",
+      input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "artifacts/brief.md", expected_hash: sha256("approved input\n") }],
+      allowed_input_roots: [sourceDir]
+    })).rejects.toMatchObject({ code: "input_hash_mismatch" });
+  });
+
+  it("requires a frozen expected hash for every staged source input", async () => {
+    const adapter = createAdapter();
+
+    await expect(adapter.createAttemptWorkspace({
+      attempt_id: "attempt_unfrozen_control",
+      input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "launch_context.json" } as never],
+      allowed_input_roots: [sourceDir]
+    })).rejects.toMatchObject({ code: "input_hash_mismatch" });
+  });
+
+  it("writes an inline resolved-inputs control file inside the verified Attempt and freezes its hash", async () => {
+    const adapter = createAdapter();
+    const snapshot = `${JSON.stringify({ resolved_inputs: [], artifact_files: [] }, null, 2)}\n`;
+
+    const attempt = await adapter.createAttemptWorkspace({
+      attempt_id: "attempt_inline_snapshot",
+      input_files: [{
+        source_path: path.join(sourceDir, "brief.md"),
+        target_path: "launch_context.json",
+        expected_hash: sha256("approved input\n")
+      }],
+      inline_input_files: [{
+        target_path: "resolved-inputs.json",
+        content: snapshot,
+        expected_hash: sha256(snapshot)
+      }],
+      allowed_input_roots: [sourceDir],
+      output_schema: { type: "object", additionalProperties: false, required: [], properties: {} }
+    });
+
+    expect(await readFile(path.join(attempt.input_dir, "resolved-inputs.json"), "utf8")).toBe(snapshot);
+    expect(attempt.frozen_input_hashes).toEqual(expect.arrayContaining([
+      { target_path: "launch_context.json", expected_hash: sha256("approved input\n") },
+      { target_path: "resolved-inputs.json", expected_hash: sha256(snapshot) }
+    ]));
+  });
+
+  it("rejects a source swapped to a symbolic link before staging", async () => {
+    const adapter = createAdapter();
+    const replacement = path.join(sourceDir, "replacement.md");
+    await writeFile(replacement, "approved input\n", "utf8");
+    await rm(path.join(sourceDir, "brief.md"));
+    await symlink("replacement.md", path.join(sourceDir, "brief.md"));
+
+    await expect(adapter.createAttemptWorkspace({
+      attempt_id: "attempt_symlink_swap",
+      input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "artifacts/brief.md", expected_hash: sha256("approved input\n") }],
       allowed_input_roots: [sourceDir]
     })).rejects.toMatchObject({ code: "input_path_not_allowed" });
   });
@@ -185,6 +267,19 @@ describe("CodexCliAdapter attempt workspace", () => {
     await adapter.cleanupAttemptWorkspace(attempt);
     expect(JSON.parse(await readFile(path.join(attempt.meta_dir, "attempt.json"), "utf8"))).toMatchObject({ status: "retained" });
     expect(await readFile(path.join(attempt.input_dir, "brief.md"), "utf8")).toBe("approved input\n");
+  });
+
+  it("creates parent-owned output files exclusively without following child-created links", async () => {
+    const adapter = createAdapter();
+    const attempt = await createWorkspace(adapter, "attempt_exclusive_output");
+    const external = path.join(tempRoot, "external-output.md");
+    await writeFile(external, "external remains unchanged\n", "utf8");
+    await symlink(external, path.join(attempt.output_dir, "artifact.md"));
+
+    await expect(adapter.createValidatedOutputFile(attempt, "artifact.md", "artifact content\n")).rejects.toMatchObject({
+      code: "workspace_escape_detected"
+    });
+    expect(await readFile(external, "utf8")).toBe("external remains unchanged\n");
   });
 });
 
@@ -266,6 +361,97 @@ describe("CodexCliAdapter process lifecycle", () => {
     await expect(adapter.startOperation({ invocation: invocation(attempt, "op_attempt_replaced"), attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
   });
 
+  it.each(["input", "meta", "output"] as const)("rejects a symlink swap of attempt %s immediately before spawn without launching Codex", async (segment) => {
+    const marker = path.join(tempRoot, `spawned-after-${segment}-swap`);
+    const adapter = createAdapter({ FAKE_CODEX_EXEC_MARKER: marker });
+    const attempt = await createWorkspace(adapter, `attempt_${segment}_swap`);
+    const external = path.join(tempRoot, `external_${segment}`);
+    await mkdir(external, { recursive: true });
+    await rm(attempt[`${segment}_dir`], { recursive: true, force: true });
+    await symlink(external, attempt[`${segment}_dir`]);
+
+    await expect(adapter.startOperation({ invocation: invocation(attempt, `op_${segment}_swap`), attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("skips cleanup metadata after a rejected workspace swaps meta to an external symlink", async () => {
+    const adapter = createAdapter();
+    const attempt = await createWorkspace(adapter, "attempt_cleanup_meta_swap");
+    const external = path.join(tempRoot, "external-cleanup-meta");
+    await mkdir(external, { recursive: true });
+    await rm(attempt.meta_dir, { recursive: true, force: true });
+    await symlink(external, attempt.meta_dir);
+
+    await expect(adapter.startOperation({ invocation: invocation(attempt, "op_cleanup_meta_swap"), attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
+    await adapter.cleanupAttemptWorkspace(attempt);
+
+    await expect(readFile(path.join(external, "attempt.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a frozen input whose artifacts directory becomes an external matching-hash symlink before spawn", async () => {
+    const marker = path.join(tempRoot, "spawned-after-artifacts-symlink");
+    const adapter = createAdapter({ FAKE_CODEX_EXEC_MARKER: marker });
+    const attempt = await adapter.createAttemptWorkspace({
+      attempt_id: "attempt_artifacts_symlink",
+      input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "artifacts/brief.md", expected_hash: sha256("approved input\n") }],
+      allowed_input_roots: [sourceDir],
+      output_schema: { type: "object", properties: {} }
+    });
+    const external = path.join(tempRoot, "external-artifacts");
+    await mkdir(external, { recursive: true });
+    await writeFile(path.join(external, "brief.md"), "approved input\n", "utf8");
+    await rm(path.join(attempt.input_dir, "artifacts"), { recursive: true, force: true });
+    await symlink(external, path.join(attempt.input_dir, "artifacts"));
+
+    await expect(adapter.startOperation({ invocation: invocation(attempt, "op_artifacts_symlink"), attempt_workspace: attempt })).rejects.toMatchObject({ code: "workspace_escape_detected" });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["launch_context.json", "resolved-inputs.json"])("revalidates frozen control file %s immediately before spawn", async (targetName) => {
+    const marker = path.join(tempRoot, `spawned-after-${targetName}`);
+    const adapter = createAdapter({ FAKE_CODEX_EXEC_MARKER: marker });
+    const snapshot = `${JSON.stringify({ resolved_inputs: [], artifact_files: [] }, null, 2)}\n`;
+    const attempt = await adapter.createAttemptWorkspace({
+      attempt_id: `attempt_control_${targetName.replaceAll(/[^A-Za-z0-9]/g, "_")}`,
+      input_files: [{
+        source_path: path.join(sourceDir, "brief.md"),
+        target_path: "launch_context.json",
+        expected_hash: sha256("approved input\n")
+      }],
+      inline_input_files: [{
+        target_path: "resolved-inputs.json",
+        content: snapshot,
+        expected_hash: sha256(snapshot)
+      }],
+      allowed_input_roots: [sourceDir],
+      output_schema: { type: "object", additionalProperties: false, required: [], properties: {} }
+    });
+    const target = path.join(attempt.input_dir, targetName);
+    await chmod(target, 0o600);
+    await writeFile(target, "changed after staging\n", "utf8");
+
+    await expect(adapter.startOperation({
+      invocation: invocation(attempt, `op_control_${targetName.replaceAll(/[^A-Za-z0-9]/g, "_")}`),
+      attempt_workspace: attempt
+    })).rejects.toMatchObject({ code: "input_hash_mismatch" });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("revalidates the frozen output schema immediately before spawn", async () => {
+    const marker = path.join(tempRoot, "spawned-after-schema-change");
+    const adapter = createAdapter({ FAKE_CODEX_EXEC_MARKER: marker });
+    const attempt = await createWorkspace(adapter, "attempt_schema_change");
+    const schemaPath = path.join(attempt.meta_dir, "output.schema.json");
+    await chmod(schemaPath, 0o600);
+    await writeFile(schemaPath, '{"type":"string"}\n', "utf8");
+
+    await expect(adapter.startOperation({
+      invocation: invocation(attempt, "op_schema_change"),
+      attempt_workspace: attempt
+    })).rejects.toMatchObject({ code: "input_hash_mismatch" });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects a symlinked operations root for receipt writes and orphan recovery", async () => {
     const adapter = createAdapter();
     const attempt = await createWorkspace(adapter, "attempt_operations_root");
@@ -301,14 +487,56 @@ describe("CodexCliAdapter process lifecycle", () => {
     const handle = await adapter.startOperation({ invocation: invocation(attempt), attempt_workspace: attempt });
 
     await expect(handle.result).resolves.toMatchObject({ status: "succeeded", operation_id: "op_001", attempt_id: attempt.attempt_id, artifact_descriptors: [] });
+    expect(JSON.parse(await readFile(path.join(attempt.meta_dir, "attempt.json"), "utf8"))).toMatchObject({ status: "succeeded" });
     await expect(readFile(path.join(workspaceDir, "runs", "run_001", "attempts.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("atomically replaces a child-controlled receipt link without modifying its target", async () => {
+    const adapter = createAdapter();
+    const attempt = await createWorkspace(adapter, "attempt_receipt_link");
+    const operations = path.join(workspaceDir, "runtime", "operations");
+    const external = path.join(tempRoot, "external-receipt.json");
+    await mkdir(operations, { recursive: true });
+    await writeFile(external, "external remains unchanged\n", "utf8");
+    await symlink(external, path.join(operations, "op_receipt_link.json"));
+
+    const handle = await adapter.startOperation({
+      invocation: invocation(attempt, "op_receipt_link"),
+      attempt_workspace: attempt
+    });
+    await expect(handle.result).resolves.toMatchObject({ status: "succeeded" });
+    expect(await readFile(external, "utf8")).toBe("external remains unchanged\n");
+    expect(JSON.parse(await readFile(path.join(operations, "op_receipt_link.json"), "utf8"))).toMatchObject({ status: "succeeded" });
+  });
+
+  it.each(fakeCodexLimitSchemas())("fake Codex rejects Structured Outputs schemas with %s", async (_label, outputSchema) => {
+    const adapter = createAdapter();
+    const attempt = await adapter.createAttemptWorkspace({
+      attempt_id: `attempt_fake_schema_limit_${createHash("sha256").update(JSON.stringify(outputSchema)).digest("hex").slice(0, 8)}`,
+      input_files: [{ source_path: path.join(sourceDir, "brief.md"), target_path: "launch_context.json", expected_hash: sha256("approved input\n") }],
+      allowed_input_roots: [sourceDir],
+      output_schema: outputSchema
+    });
+    const handle = await adapter.startOperation({
+      invocation: invocation(attempt, `op_fake_schema_limit_${attempt.attempt_id.slice(-8)}`),
+      attempt_workspace: attempt
+    });
+
+    await expect(handle.result).resolves.toMatchObject({
+      status: "failed",
+      error: { code: "process_exit_nonzero" }
+    });
   });
 
   it("maps non-zero exits, invalid JSONL, and bounded stdout/stderr violations to terminal results", async () => {
     for (const [mode, status, code] of [["nonzero", "failed", "process_exit_nonzero"], ["invalid-jsonl", "failed", "invalid_adapter_output"], ["huge-output", "aborted", "adapter_output_too_large"], ["huge-stderr", "aborted", "adapter_output_too_large"]] as const) {
       const adapter = createAdapter({ FAKE_CODEX_MODE: mode });
       const attempt = await createWorkspace(adapter, `attempt_${mode}`);
-      const handle = await adapter.startOperation({ invocation: invocation(attempt, `op_${mode}`), attempt_workspace: attempt });
+      const handle = await adapter.startOperation({
+        invocation: invocation(attempt, `op_${mode}`),
+        attempt_workspace: attempt,
+        timeout_ms: 1_000
+      });
       await expect(handle.result).resolves.toMatchObject({ status, error: { code } });
     }
   });

@@ -23,8 +23,9 @@ UI 展示验收方案、`P5-07` 半自动新 Run 草案设计、`P5-08` 首个�
 边界评估和 `P5-09` 回归验收均已完成。P5 形成真实工作流接入设计基线，首接推荐
 Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与 Projection 和
 `P6-04` 至 `P6-08` 已完成并通过工程、API、页面、安全与真实性验收，形成 `v0.8.0`
-真实工作流工程接入基线。`P7-01` 总体设计已通过人工评审，当前主线推进到
-`P7-02` 多节点 ExecutionPlan 与输入解析：先用 Codex CLI 完成多节点纵向闭环和 retry/fallback，再通过
+真实工作流工程接入基线。`P7-01` 总体设计、`P7-02` 多节点 ExecutionPlan 与输入解析和
+`P7-03` Codex 多节点 Artifact 真实交接已完成，当前主线推进到 `P7-04` Scheduler 连续执行闭环：
+先用 Codex CLI 完成多节点纵向闭环和 retry/fallback，再通过
 通用 Model API Adapter 接入 DeepSeek、Kimi 和 MiniMax；P7 不接入 OpenAI 官方 API。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。

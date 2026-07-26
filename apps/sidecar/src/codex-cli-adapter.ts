@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createHash } from "node:crypto";
-import { chmod, copyFile, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { chmod, copyFile, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AdapterInvocation, AdapterResult } from "@miracle/core";
 
@@ -25,6 +26,8 @@ export interface AttemptWorkspace {
   work_dir: string;
   output_dir: string;
   meta_dir: string;
+  frozen_input_hashes?: Array<{ target_path: string; expected_hash: string }>;
+  frozen_schema_hash?: string;
 }
 
 export interface CodexProcessHandle {
@@ -50,6 +53,7 @@ export class CodexCliAdapterError extends Error {
   constructor(
     public readonly code:
       | "input_path_not_allowed"
+      | "input_hash_mismatch"
       | "attempt_workspace_conflict"
       | "workspace_escape_detected"
       | "runtime_workspace_required"
@@ -196,7 +200,8 @@ export class CodexCliAdapter {
 
   async createAttemptWorkspace(input: {
     attempt_id: string;
-    input_files: Array<{ source_path: string; target_path: string }>;
+    input_files: Array<{ source_path: string; target_path: string; expected_hash: string }>;
+    inline_input_files?: Array<{ target_path: string; content: string; expected_hash: string }>;
     allowed_input_roots: string[];
     output_schema?: unknown;
   }): Promise<AttemptWorkspace> {
@@ -230,8 +235,19 @@ export class CodexCliAdapter {
     try {
       await Promise.all([mkdir(attempt.input_dir, { mode: 0o700 }), mkdir(attempt.work_dir, { mode: 0o700 }), mkdir(attempt.output_dir, { mode: 0o700 }), mkdir(attempt.meta_dir, { mode: 0o700 })]);
       const allowedRoots = await Promise.all(input.allowed_input_roots.map(async (root) => realpath(root)));
-      for (const file of input.input_files) await this.stageInput(attempt, file, allowedRoots);
-      if (input.output_schema !== undefined) await writeFile(path.join(attempt.meta_dir, "output.schema.json"), `${JSON.stringify(input.output_schema, null, 2)}\n`, { mode: 0o600 });
+      const frozenInputHashes: Array<{ target_path: string; expected_hash: string }> = [];
+      for (const file of input.input_files) {
+        frozenInputHashes.push(await this.stageInput(attempt, file, allowedRoots));
+      }
+      for (const file of input.inline_input_files ?? []) {
+        frozenInputHashes.push(await this.stageInlineInput(attempt, file));
+      }
+      attempt.frozen_input_hashes = frozenInputHashes;
+      if (input.output_schema !== undefined) {
+        const schemaContent = `${JSON.stringify(input.output_schema, null, 2)}\n`;
+        await writeFile(path.join(attempt.meta_dir, "output.schema.json"), schemaContent, { mode: 0o400 });
+        attempt.frozen_schema_hash = `sha256:${createHash("sha256").update(schemaContent).digest("hex")}`;
+      }
       await this.writeAttemptMetadata(attempt, "prepared");
       return attempt;
     } catch (error) {
@@ -261,11 +277,58 @@ export class CodexCliAdapter {
     return target;
   }
 
+  async createValidatedOutputFile(attempt: AttemptWorkspace, outputPath: string, content: string) {
+    const canonicalAttempt = await this.canonicalAttemptWorkspace(
+      attempt.attempt_id,
+      attempt.frozen_input_hashes,
+      attempt.frozen_schema_hash
+    );
+    const target = await this.resolveOutputPath(canonicalAttempt, outputPath);
+    if (path.dirname(target) !== canonicalAttempt.output_dir) {
+      throw new CodexCliAdapterError("workspace_escape_detected", "Parent-owned outputs must be direct children of the canonical output directory");
+    }
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    let created = false;
+    try {
+      handle = await open(
+        target,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+        0o600
+      );
+      created = true;
+      const entry = await handle.stat();
+      if (!entry.isFile() || entry.nlink !== 1) {
+        throw new CodexCliAdapterError("workspace_escape_detected", "Parent-owned output must be a single-link regular file");
+      }
+      await handle.writeFile(content, "utf8");
+      await handle.sync();
+      await handle.close();
+      handle = undefined;
+      return this.validateOutputFile(canonicalAttempt, outputPath);
+    } catch (error) {
+      await handle?.close().catch(() => undefined);
+      if (created) await rm(target, { force: true }).catch(() => undefined);
+      if (error instanceof CodexCliAdapterError) throw error;
+      throw new CodexCliAdapterError("workspace_escape_detected", "Output path was not available for exclusive parent-owned creation");
+    }
+  }
+
   async cleanupAttemptWorkspace(attempt: AttemptWorkspace) {
     if (Array.from(this.operations.values()).some((operation) => operation.attempt.attempt_id === attempt.attempt_id && !operation.settled)) {
       throw new CodexCliAdapterError("operation_conflict", "Cannot clean an active attempt workspace");
     }
-    await this.writeAttemptMetadata(attempt, "retained");
+    if (!isSafeId(attempt.attempt_id)) return;
+    try {
+      const canonicalAttempt = await this.canonicalAttemptWorkspace(
+        attempt.attempt_id,
+        attempt.frozen_input_hashes,
+        attempt.frozen_schema_hash
+      );
+      if (path.resolve(attempt.root_dir) !== canonicalAttempt.root_dir) return;
+      await this.writeAttemptMetadata(canonicalAttempt, "retained");
+    } catch {
+      // A rejected attempt may no longer have a canonical workspace to retain.
+    }
   }
 
   async startOperation(input: { invocation: AdapterInvocation; attempt_workspace: AttemptWorkspace; timeout_ms?: number; prompt?: string }): Promise<CodexProcessHandle> {
@@ -275,7 +338,12 @@ export class CodexCliAdapter {
     if (this.operations.has(invocation.operation_id) || this.operationReservations.has(invocation.operation_id)) throw new CodexCliAdapterError("operation_conflict", `Operation already exists: ${invocation.operation_id}`);
     this.operationReservations.add(invocation.operation_id);
     try {
-      const canonicalAttempt = await this.verifyCanonicalAttemptWorkspace(invocation, attempt);
+      let canonicalAttempt = await this.verifyCanonicalAttemptWorkspace(invocation, attempt);
+      await this.verifyFrozenInputHashes(canonicalAttempt);
+      await this.verifyFrozenSchema(canonicalAttempt);
+      canonicalAttempt = await this.verifyCanonicalAttemptWorkspace(invocation, canonicalAttempt);
+      await this.verifyFrozenInputHashes(canonicalAttempt);
+      await this.verifyFrozenSchema(canonicalAttempt);
 
       const child = spawn(this.executablePath, [
         ...(this.options.command_prefix_args ?? []),
@@ -336,6 +404,7 @@ export class CodexCliAdapter {
         operation.terminate = setTimeout(() => this.signalProcessGroup(child, "SIGKILL"), this.terminateGraceMs);
         this.operations.delete(invocation.operation_id);
         this.flushPendingProcessEvents(operation);
+        await operation.result;
         throw error;
       }
       operation.startup_pending = false;
@@ -414,7 +483,12 @@ export class CodexCliAdapter {
     return recovered;
   }
 
-  private async stageInput(attempt: AttemptWorkspace, file: { source_path: string; target_path: string }, allowedRoots: string[]) {
+  private async stageInput(attempt: AttemptWorkspace, file: { source_path: string; target_path: string; expected_hash: string }, allowedRoots: string[]) {
+    if (!file.expected_hash) throw new CodexCliAdapterError("input_hash_mismatch", "Every staged input must declare a frozen expected hash");
+    const sourceEntry = await lstat(file.source_path);
+    if (sourceEntry.isSymbolicLink() || !sourceEntry.isFile()) {
+      throw new CodexCliAdapterError("input_path_not_allowed", "Only regular non-symbolic input files may be staged");
+    }
     const source = await realpath(file.source_path);
     if (!allowedRoots.some((root) => isWithin(root, source))) {
       throw new CodexCliAdapterError("input_path_not_allowed", "Input path is outside the allowed roots");
@@ -425,7 +499,34 @@ export class CodexCliAdapter {
     if (!sourceStat.isFile()) throw new CodexCliAdapterError("input_path_not_allowed", "Only regular input files may be staged");
     await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
     await copyFile(source, target);
+    const stagedEntry = await lstat(target);
+    if (stagedEntry.isSymbolicLink() || !stagedEntry.isFile()) {
+      throw new CodexCliAdapterError("workspace_escape_detected", "Staged input must be a regular non-symbolic file");
+    }
+    const stagedHash = `sha256:${createHash("sha256").update(await readFile(target)).digest("hex")}`;
+    if (stagedHash !== file.expected_hash) {
+      throw new CodexCliAdapterError("input_hash_mismatch", "Staged input bytes do not match the frozen input hash");
+    }
     await chmod(target, 0o444);
+    return { target_path: file.target_path, expected_hash: file.expected_hash };
+  }
+
+  private async stageInlineInput(attempt: AttemptWorkspace, file: { target_path: string; content: string; expected_hash: string }) {
+    if (!file.expected_hash) throw new CodexCliAdapterError("input_hash_mismatch", "Every staged input must declare a frozen expected hash");
+    const target = path.resolve(attempt.input_dir, file.target_path);
+    if (!isWithin(path.resolve(attempt.input_dir), target)) throw new CodexCliAdapterError("workspace_escape_detected", "Input staging target escapes attempt input directory");
+    await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+    await writeFile(target, file.content, { encoding: "utf8", mode: 0o600 });
+    const stagedEntry = await lstat(target);
+    if (stagedEntry.isSymbolicLink() || !stagedEntry.isFile()) {
+      throw new CodexCliAdapterError("workspace_escape_detected", "Staged input must be a regular non-symbolic file");
+    }
+    const stagedHash = `sha256:${createHash("sha256").update(await readFile(target)).digest("hex")}`;
+    if (stagedHash !== file.expected_hash) {
+      throw new CodexCliAdapterError("input_hash_mismatch", "Staged input bytes do not match the frozen input hash");
+    }
+    await chmod(target, 0o444);
+    return { target_path: file.target_path, expected_hash: file.expected_hash };
   }
 
   private childEnvironment() {
@@ -685,65 +786,155 @@ export class CodexCliAdapter {
   }
 
   private async verifyCanonicalAttemptWorkspace(invocation: AdapterInvocation, attempt: AttemptWorkspace): Promise<AttemptWorkspace> {
-    const attemptsRoot = await this.ensureRuntimeRoot();
-    const rootDir = path.resolve(attemptsRoot, invocation.attempt_id);
-    const canonicalAttempt: AttemptWorkspace = {
-      attempt_id: invocation.attempt_id,
-      root_dir: rootDir,
-      input_dir: path.join(rootDir, "input"),
-      work_dir: path.join(rootDir, "work"),
-      output_dir: path.join(rootDir, "output"),
-      meta_dir: path.join(rootDir, "meta")
-    };
     if (
       attempt.attempt_id !== invocation.attempt_id ||
-      path.resolve(attempt.root_dir) !== rootDir ||
-      path.resolve(invocation.runtime_control.attempt_workspace) !== rootDir
+      path.resolve(attempt.root_dir) !== path.resolve(invocation.runtime_control.attempt_workspace)
     ) {
       throw new CodexCliAdapterError("workspace_escape_detected", "Invocation does not declare the canonical attempt workspace");
     }
-    try {
-      const [attemptEntry, attemptRoot, workEntry, workRoot] = await Promise.all([
-        lstat(rootDir),
-        realpath(rootDir),
-        lstat(canonicalAttempt.work_dir),
-        realpath(canonicalAttempt.work_dir)
-      ]);
-      if (
-        attemptEntry.isSymbolicLink() ||
-        !attemptEntry.isDirectory() ||
-        !isWithin(attemptsRoot, attemptRoot) ||
-        workEntry.isSymbolicLink() ||
-        !workEntry.isDirectory() ||
-        !isWithin(attemptRoot, workRoot)
-      ) {
-        throw new CodexCliAdapterError("workspace_escape_detected", "Canonical attempt workspace is no longer anchored to the verified attempts root");
-      }
-    } catch (error) {
-      if (error instanceof CodexCliAdapterError) throw error;
-      throw new CodexCliAdapterError("workspace_escape_detected", "Canonical attempt workspace is unavailable or invalid");
+    const canonicalAttempt = await this.canonicalAttemptWorkspace(
+      invocation.attempt_id,
+      attempt.frozen_input_hashes,
+      attempt.frozen_schema_hash
+    );
+    if (path.resolve(attempt.root_dir) !== canonicalAttempt.root_dir) {
+      throw new CodexCliAdapterError("workspace_escape_detected", "Invocation does not declare the canonical attempt workspace");
     }
     return canonicalAttempt;
   }
 
+  private async canonicalAttemptWorkspace(
+    attemptId: string,
+    frozenInputHashes?: AttemptWorkspace["frozen_input_hashes"],
+    frozenSchemaHash?: string
+  ): Promise<AttemptWorkspace> {
+    const attemptsRootPath = await this.ensureRuntimeRoot();
+    const [attemptsEntry, attemptsRoot] = await Promise.all([lstat(attemptsRootPath), realpath(attemptsRootPath)]);
+    if (attemptsEntry.isSymbolicLink() || !attemptsEntry.isDirectory()) {
+      throw new CodexCliAdapterError("workspace_escape_detected", "Verified attempts root is no longer a real directory");
+    }
+    const rootDir = path.resolve(attemptsRoot, attemptId);
+    try {
+      const [attemptEntry, attemptRoot] = await Promise.all([
+        lstat(rootDir),
+        realpath(rootDir)
+      ]);
+      if (
+        attemptEntry.isSymbolicLink() ||
+        !attemptEntry.isDirectory() ||
+        !isWithin(attemptsRoot, attemptRoot)
+      ) {
+        throw new CodexCliAdapterError("workspace_escape_detected", "Canonical attempt workspace is no longer anchored to the verified attempts root");
+      }
+      const children = await Promise.all(([
+        ["input_dir", "input"],
+        ["work_dir", "work"],
+        ["meta_dir", "meta"],
+        ["output_dir", "output"]
+      ] as const).map(async ([key, name]) => {
+        const candidate = path.join(rootDir, name);
+        const [entry, resolved] = await Promise.all([lstat(candidate), realpath(candidate)]);
+        if (entry.isSymbolicLink() || !entry.isDirectory() || !isWithin(attemptRoot, resolved)) {
+          throw new CodexCliAdapterError("workspace_escape_detected", `Canonical attempt ${name} directory is invalid`);
+        }
+        return [key, resolved] as const;
+      }));
+      return {
+        attempt_id: attemptId,
+        root_dir: attemptRoot,
+        input_dir: children.find(([key]) => key === "input_dir")![1],
+        work_dir: children.find(([key]) => key === "work_dir")![1],
+        meta_dir: children.find(([key]) => key === "meta_dir")![1],
+        output_dir: children.find(([key]) => key === "output_dir")![1],
+        frozen_input_hashes: frozenInputHashes,
+        frozen_schema_hash: frozenSchemaHash
+      };
+    } catch (error) {
+      if (error instanceof CodexCliAdapterError) throw error;
+      throw new CodexCliAdapterError("workspace_escape_detected", "Canonical attempt workspace is unavailable or invalid");
+    }
+  }
+
+  private async verifyFrozenInputHashes(attempt: AttemptWorkspace) {
+    for (const frozen of attempt.frozen_input_hashes ?? []) {
+      const [inputEntry, inputRoot] = await Promise.all([lstat(attempt.input_dir), realpath(attempt.input_dir)]);
+      if (inputEntry.isSymbolicLink() || !inputEntry.isDirectory() || inputRoot !== attempt.input_dir) {
+        throw new CodexCliAdapterError("workspace_escape_detected", "Canonical attempt input directory is invalid");
+      }
+      const stagedPath = path.resolve(inputRoot, frozen.target_path);
+      if (!isWithin(inputRoot, stagedPath)) throw new CodexCliAdapterError("workspace_escape_detected", "Input path escapes the attempt input directory");
+      const entry = await lstat(stagedPath);
+      if (entry.isSymbolicLink() || !entry.isFile()) {
+        throw new CodexCliAdapterError("workspace_escape_detected", "Staged frozen input must remain a regular non-symbolic file");
+      }
+      const canonicalFile = await realpath(stagedPath);
+      if (!isWithin(inputRoot, canonicalFile)) {
+        throw new CodexCliAdapterError("workspace_escape_detected", "Staged frozen input escapes the canonical attempt input directory");
+      }
+      const canonicalEntry = await lstat(canonicalFile);
+      if (canonicalEntry.isSymbolicLink() || !canonicalEntry.isFile()) {
+        throw new CodexCliAdapterError("workspace_escape_detected", "Canonical staged frozen input must remain a regular non-symbolic file");
+      }
+      const stagedHash = `sha256:${createHash("sha256").update(await readFile(canonicalFile)).digest("hex")}`;
+      if (stagedHash !== frozen.expected_hash) {
+        throw new CodexCliAdapterError("input_hash_mismatch", "Staged input bytes changed after verification");
+      }
+    }
+  }
+
+  private async verifyFrozenSchema(attempt: AttemptWorkspace) {
+    if (!attempt.frozen_schema_hash) return;
+    const schemaPath = path.join(attempt.meta_dir, "output.schema.json");
+    const [metaEntry, metaRoot, schemaEntry] = await Promise.all([
+      lstat(attempt.meta_dir),
+      realpath(attempt.meta_dir),
+      lstat(schemaPath)
+    ]);
+    if (
+      metaEntry.isSymbolicLink() ||
+      !metaEntry.isDirectory() ||
+      metaRoot !== attempt.meta_dir ||
+      schemaEntry.isSymbolicLink() ||
+      !schemaEntry.isFile() ||
+      schemaEntry.nlink !== 1
+    ) {
+      throw new CodexCliAdapterError("workspace_escape_detected", "Frozen output schema must remain a single-link regular file");
+    }
+    const canonicalSchema = await realpath(schemaPath);
+    if (!isWithin(metaRoot, canonicalSchema)) {
+      throw new CodexCliAdapterError("workspace_escape_detected", "Frozen output schema escapes the canonical metadata directory");
+    }
+    const schemaHash = `sha256:${createHash("sha256").update(await readFile(canonicalSchema)).digest("hex")}`;
+    if (schemaHash !== attempt.frozen_schema_hash) {
+      throw new CodexCliAdapterError("input_hash_mismatch", "Frozen output schema changed after verification");
+    }
+  }
+
   private async writeAttemptMetadata(attempt: AttemptWorkspace, status: string) {
-    await writeFile(path.join(attempt.meta_dir, "attempt.json"), `${JSON.stringify({ attempt_id: attempt.attempt_id, status, updated_at: this.now() }, null, 2)}\n`, { mode: 0o600 });
+    await this.atomicWriteVerifiedFile(
+      attempt.meta_dir,
+      "attempt.json",
+      `${JSON.stringify({ attempt_id: attempt.attempt_id, status, updated_at: this.now() }, null, 2)}\n`
+    );
   }
 
   private async safeWriteAttemptMetadata(attempt: AttemptWorkspace, status: string) {
     try {
-      await this.writeAttemptMetadata(attempt, status);
+      const canonicalAttempt = await this.canonicalAttemptWorkspace(
+        attempt.attempt_id,
+        attempt.frozen_input_hashes,
+        attempt.frozen_schema_hash
+      );
+      await this.writeAttemptMetadata(canonicalAttempt, status);
     } catch {
-      // Process lifecycle must resolve even when the local receipt store is unavailable.
+      // Process lifecycle must resolve even when the retained Attempt store is unavailable.
     }
   }
 
   private async writeOperationReceipt(receipt: OperationReceipt) {
     const dir = await this.ensureOperationsRoot();
-    const target = this.operationReceiptPath(dir, receipt.operation_id);
-    const temporary = `${target}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporary, target);
+    this.operationReceiptPath(dir, receipt.operation_id);
+    await this.atomicWriteVerifiedFile(dir, `${receipt.operation_id}.json`, `${JSON.stringify(receipt, null, 2)}\n`);
   }
 
   private async safeWriteOperationReceipt(receipt: OperationReceipt) {
@@ -759,6 +950,46 @@ export class CodexCliAdapter {
     const target = path.resolve(operationsRoot, `${operationId}.json`);
     if (!isWithin(operationsRoot, target)) throw new CodexCliAdapterError("workspace_escape_detected", "Operation receipt path escapes the verified operations root");
     return target;
+  }
+
+  private async atomicWriteVerifiedFile(directory: string, fileName: string, content: string) {
+    if (path.basename(fileName) !== fileName) {
+      throw new CodexCliAdapterError("workspace_escape_detected", "Atomic file name must not contain path segments");
+    }
+    const verifyDirectory = async () => {
+      const [entry, resolved] = await Promise.all([lstat(directory), realpath(directory)]);
+      if (entry.isSymbolicLink() || !entry.isDirectory() || resolved !== directory) {
+        throw new CodexCliAdapterError("workspace_escape_detected", "Atomic write directory is no longer canonical");
+      }
+    };
+    await verifyDirectory();
+    const target = path.join(directory, fileName);
+    const temporary = path.join(directory, `.${fileName}.${randomUUID()}.tmp`);
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      handle = await open(
+        temporary,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+        0o600
+      );
+      const entry = await handle.stat();
+      if (!entry.isFile() || entry.nlink !== 1) {
+        throw new CodexCliAdapterError("workspace_escape_detected", "Atomic temporary file must be a single-link regular file");
+      }
+      await handle.writeFile(content, "utf8");
+      await handle.sync();
+      await handle.close();
+      handle = undefined;
+      await verifyDirectory();
+      await rename(temporary, target);
+      const finalEntry = await lstat(target);
+      if (finalEntry.isSymbolicLink() || !finalEntry.isFile() || finalEntry.nlink !== 1) {
+        throw new CodexCliAdapterError("workspace_escape_detected", "Atomic target must be a single-link regular file");
+      }
+    } finally {
+      await handle?.close().catch(() => undefined);
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
   }
 
   private async readOperationReceipt(operationId: string) {
