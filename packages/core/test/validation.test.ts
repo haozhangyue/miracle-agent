@@ -75,6 +75,14 @@ const workflow: WorkflowSpec = {
 };
 
 describe("workflow validation", () => {
+  it("rejects empty and overlong node port IDs before execution", () => {
+    for (const id of ["", "x".repeat(257)]) {
+      const candidate = structuredClone(workflow);
+      candidate.nodes[0]!.outputs[0]!.id = id;
+      expect(validateWorkflowSpec(candidate).valid).toBe(false);
+    }
+  });
+
   it("validates references and review boundaries", () => {
     const result = validateWorkflowSpec(workflow);
     expect(result.valid).toBe(true);

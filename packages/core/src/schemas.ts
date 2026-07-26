@@ -8,7 +8,7 @@ const credentialScopeSchema = z.object({
 });
 
 const nodePortSchema = z.object({
-  id: z.string(),
+  id: z.string().min(1).max(256),
   kind: z.enum(["artifact", "parameter"]),
   artifact_type: z.string().optional(),
   required: z.boolean(),

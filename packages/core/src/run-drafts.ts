@@ -182,6 +182,7 @@ export function createRunDraftDryRunPlan(input: {
     ...credentialScopes.filter((scope) => scope.blocking_scope === "optional_branch").map((scope) => scope.credential_ref)
   ]));
   const corePlan = createDryRunPlan(input.workflow, corePlanCredentials);
+  const workflowBlocked = !corePlan.valid;
   const snapshot = createWorkflowSnapshotDraft({ draft: input.draft, workflow: input.workflow, now: resolvedAt });
   const requiredAcknowledgements = [
     ...input.workflow.gates.map((gate) => `required_gate:${gate.id}`),
@@ -190,7 +191,7 @@ export function createRunDraftDryRunPlan(input: {
   const planWithoutHash = {
     draft_plan_id: `draftplan_${input.draft.draft_id}_${input.draft.revision}`,
     draft_id: input.draft.draft_id,
-    status: requiredBlocked ? ("ready_for_dry_run" as const) : ("ready_for_confirmation" as const),
+    status: requiredBlocked || workflowBlocked ? ("ready_for_dry_run" as const) : ("ready_for_confirmation" as const),
     workflow_snapshot_draft_hash: snapshot.snapshot_hash,
     resolved_at: resolvedAt,
     core_plan: corePlan,
@@ -204,9 +205,9 @@ export function createRunDraftDryRunPlan(input: {
       estimated_duration_minutes: { min: input.workflow.nodes.length * 1, max: input.workflow.nodes.length * 5 }
     },
     startability: {
-      required_path: requiredBlocked ? ("blocked" as const) : ("ready" as const),
-      full_workflow: requiredBlocked || optionalBlocked ? ("blocked" as const) : ("ready" as const),
-      recommended_action: requiredBlocked
+      required_path: requiredBlocked || workflowBlocked ? ("blocked" as const) : ("ready" as const),
+      full_workflow: requiredBlocked || workflowBlocked || optionalBlocked ? ("blocked" as const) : ("ready" as const),
+      recommended_action: requiredBlocked || workflowBlocked
         ? ("resolve_required_blockers" as const)
         : optionalBlocked
           ? ("start_without_optional_branches" as const)

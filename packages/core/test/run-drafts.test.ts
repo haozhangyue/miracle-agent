@@ -139,6 +139,26 @@ describe("RunDraft core", () => {
     expect(() => confirmRunDraft({ draft: draft(), plan, actor: "operator", acknowledgements: [] })).toThrow(RunDraftError);
   });
 
+  it("blocks confirmation when the WorkflowSpec itself is invalid", () => {
+    const invalidWorkflow = structuredClone(workflow);
+    invalidWorkflow.nodes[0]!.outputs[0]!.id = "";
+    const plan = createRunDraftDryRunPlan({
+      draft: draft(),
+      workflow: invalidWorkflow,
+      available_credentials: [],
+      now: "2026-07-13T01:01:00.000Z"
+    });
+
+    expect(plan.core_plan.valid).toBe(false);
+    expect(plan.startability.required_path).toBe("blocked");
+    expect(() => confirmRunDraft({
+      draft: draft(),
+      plan,
+      actor: "operator",
+      acknowledgements: plan.required_acknowledgements
+    })).toThrow(/required path is blocked/i);
+  });
+
   it("does not block or require acknowledgement for an optional branch that was not selected", () => {
     const disabled = { ...draft(), enabled_optional_paths: [] };
     const plan = createRunDraftDryRunPlan({ draft: disabled, workflow, available_credentials: [], now: "2026-07-13T01:01:00.000Z" });

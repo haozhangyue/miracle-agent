@@ -143,6 +143,9 @@ if (args[0] === "exec") {
       const launchContext = await readFile(path.resolve(workDir, "../input/launch_context.json"), "utf8")
         .then((value) => JSON.parse(value))
         .catch(() => ({}));
+      if (launchContext.inputs?.force_slow_output) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
       await mkdir(path.dirname(outputPath), { recursive: true });
       await writeFile(
         outputPath,
@@ -184,6 +187,8 @@ if (args[0] === "exec") {
                       { output_id: "a_b_c14cddc033f6", artifact_type: "outline", content: "# raw normalized suffix\n" }
                     ]
                   })
+                  : launchContext.inputs?.force_long_output
+                    ? JSON.stringify({ artifact_type: "report", content: "# bounded identity\n" })
               : JSON.stringify({ artifact_type: "markdown", content: "# Miracle P6-07\n\n这是 fake-codex 生成并经过校验的 Markdown 母稿。\n" }),
         "utf8"
       );

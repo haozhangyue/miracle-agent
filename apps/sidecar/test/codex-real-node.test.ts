@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,6 +75,7 @@ const multiOutputWorkflow: WorkflowSpec = {
   name: "Codex multi-output smoke workflow",
   nodes: [{
     ...workflow.nodes[0]!,
+    review_gate_ref: undefined,
     outputs: [
       { id: "summary", kind: "artifact", artifact_type: "report", artifact_spec_ref: "summary_artifact", required: true },
       { id: "voiceover", kind: "artifact", artifact_type: "script", artifact_spec_ref: "voiceover_artifact", required: true }
@@ -92,6 +94,7 @@ const unsupportedOutputWorkflow: WorkflowSpec = {
   name: "Codex unsupported output smoke workflow",
   nodes: [{
     ...workflow.nodes[0]!,
+    review_gate_ref: undefined,
     outputs: [{ id: "data", kind: "artifact", artifact_type: "json", artifact_spec_ref: "data_artifact", required: true }]
   }],
   gates: [],
@@ -163,6 +166,27 @@ const caseCollisionOutputWorkflow: WorkflowSpec = {
   artifacts: [
     { id: "upper_summary_artifact", type: "report", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } },
     { id: "lower_summary_artifact", type: "script", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } }
+  ]
+};
+
+const longOutputIdWorkflow: WorkflowSpec = {
+  ...workflow,
+  id: "codex-long-output-id-v0",
+  name: "Codex bounded output identity workflow",
+  nodes: [{
+    ...workflow.nodes[0]!,
+    review_gate_ref: undefined,
+    outputs: [{
+      id: "x".repeat(256),
+      kind: "artifact",
+      artifact_type: "report",
+      artifact_spec_ref: "long_output_artifact",
+      required: true
+    }]
+  }],
+  gates: [],
+  artifacts: [
+    { id: "long_output_artifact", type: "report", produced_by: "C_md_master", review_policy: { mode: "none" }, required_for: [], versioning: { immutable: true, compare_by: "hash" } }
   ]
 };
 
@@ -262,10 +286,15 @@ const propertyLimitWorkflow = schemaLimitWorkflow(
   }))
 );
 
-const stringLimitWorkflow = schemaLimitWorkflow("codex-schema-string-limit-v0", [
-  { id: "x".repeat(120_000), kind: "artifact", artifact_type: "report", required: true },
-  { id: "tail", kind: "artifact", artifact_type: "script", required: true }
-]);
+const stringLimitWorkflow = schemaLimitWorkflow(
+  "codex-schema-string-limit-v0",
+  Array.from({ length: 500 }, (_, index) => ({
+    id: `output_${index}_${"x".repeat(240)}`,
+    kind: "artifact" as const,
+    artifact_type: "report",
+    required: true
+  }))
+);
 
 let tempRoot = "";
 let tempWorkspace = "";
@@ -274,6 +303,7 @@ let sidecar: ChildProcessWithoutNullStreams | undefined;
 let baseUrl = "";
 let sidecarOutput = "";
 let fakeCodexMarker = "";
+let staleStartupLock = "";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl}${url}`, {
@@ -298,6 +328,37 @@ async function waitForHealth() {
   throw new Error(`Sidecar did not become healthy.\n${sidecarOutput}`);
 }
 
+async function runStartupProbe(workspace: string, runtime: string) {
+  const probePort = 5900 + Math.floor(Math.random() * 500);
+  const child = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      MIRACLE_WORKSPACE_DIR: workspace,
+      MIRACLE_WORKFLOW_REGISTRY_DIR: path.join(workspace, "workflows"),
+      MIRACLE_RUNTIME_WORKSPACE_DIR: runtime,
+      MIRACLE_SIDECAR_PORT: String(probePort),
+      MIRACLE_CODEX_CLI_PATH: process.execPath,
+      MIRACLE_CODEX_CLI_ARGUMENT_PREFIX: fakeCodex,
+      npm_config_cache: path.join(repoRoot, ".npm-cache")
+    }
+  });
+  let output = "";
+  child.stdout.on("data", (chunk) => { output += chunk.toString(); });
+  child.stderr.on("data", (chunk) => { output += chunk.toString(); });
+  const result = await Promise.race([
+    new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+    }),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`Startup probe did not exit.\n${output}`)), 10_000);
+    })
+  ]).finally(() => {
+    if (!child.killed) child.kill("SIGTERM");
+  });
+  return { ...result, output };
+}
+
 async function launchConfirmedRun(workflowId: string, inputs: Record<string, unknown> = {}) {
   const created = await fetchJson<{ draft: { draft_id: string; revision: number } }>("/api/v0/run-drafts", {
     method: "POST",
@@ -317,6 +378,12 @@ async function launchConfirmedRun(workflowId: string, inputs: Record<string, unk
   });
 }
 
+function expectedSingleArtifactId(runId: string, nodeId: string, outputId: string) {
+  const bounded = (value: string) => value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 32) || "id";
+  const suffix = createHash("sha256").update(JSON.stringify([runId, nodeId, outputId])).digest("hex");
+  return `art_${bounded(runId)}_${bounded(nodeId)}_${outputId}_${suffix}_v1`;
+}
+
 describe("P6-07 Codex real single-node execution", () => {
   beforeAll(async () => {
     tempRoot = await mkdtemp(path.join(tmpdir(), "miracle-p6-07-"));
@@ -330,11 +397,19 @@ describe("P6-07 Codex real single-node execution", () => {
     await writeFile(path.join(tempWorkspace, "workflows", `${handoffWorkflow.id}.json`), `${JSON.stringify(handoffWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${collisionOutputWorkflow.id}.json`), `${JSON.stringify(collisionOutputWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${caseCollisionOutputWorkflow.id}.json`), `${JSON.stringify(caseCollisionOutputWorkflow, null, 2)}\n`, "utf8");
+    await writeFile(path.join(tempWorkspace, "workflows", `${longOutputIdWorkflow.id}.json`), `${JSON.stringify(longOutputIdWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${suffixCollisionOutputWorkflow.id}.json`), `${JSON.stringify(suffixCollisionOutputWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${duplicateSummaryWorkflow.id}.json`), `${JSON.stringify(duplicateSummaryWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${twoNodeIdentityCollisionWorkflow.id}.json`), `${JSON.stringify(twoNodeIdentityCollisionWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${propertyLimitWorkflow.id}.json`), `${JSON.stringify(propertyLimitWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${stringLimitWorkflow.id}.json`), `${JSON.stringify(stringLimitWorkflow, null, 2)}\n`, "utf8");
+    staleStartupLock = path.join(tempWorkspace, "runs", "run-demo-001", "locks", "run-demo-001.mutation.lock");
+    await mkdir(staleStartupLock, { recursive: true });
+    await writeFile(
+      path.join(staleStartupLock, "owner.json"),
+      `${JSON.stringify({ instance_id: "dead-sidecar", owner_token: "stale", pid: 2_147_483_647, created_at: "2020-01-01T00:00:00.000Z" })}\n`,
+      "utf8"
+    );
     const port = 5600 + Math.floor(Math.random() * 300);
     baseUrl = `http://127.0.0.1:${port}`;
     sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
@@ -361,6 +436,84 @@ describe("P6-07 Codex real single-node execution", () => {
     sidecar?.kill("SIGTERM");
     await new Promise((resolve) => setTimeout(resolve, 250));
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it("recovers a mutation lock owned by a dead process before accepting requests", async () => {
+    await expect(stat(staleStartupLock)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a second Sidecar that targets the same workspace", async () => {
+    const probe = await runStartupProbe(tempWorkspace, path.join(tempRoot, "second-runtime"));
+
+    expect(probe.code).not.toBe(0);
+    expect(probe.output).toContain("Workspace is already owned by active Sidecar process");
+  });
+
+  it("fails closed when a mutation lock owner cannot be verified", async () => {
+    const probeWorkspace = path.join(tempRoot, "invalid-owner-workspace", ".miracle");
+    await cp(fixtureWorkspace, probeWorkspace, { recursive: true });
+    const lockDir = path.join(probeWorkspace, "runs", "run-demo-001", "locks", "run-demo-001.mutation.lock");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(path.join(lockDir, "owner.json"), "{}\n", "utf8");
+
+    const probe = await runStartupProbe(probeWorkspace, path.join(tempRoot, "invalid-owner-runtime"));
+
+    expect(probe.code).not.toBe(0);
+    expect(probe.output).toContain("Refusing to recover mutation lock without verifiable owner metadata");
+    await expect(stat(lockDir)).resolves.toBeDefined();
+  });
+
+  it("does not replace an empty workspace instance lock during startup", async () => {
+    const probeWorkspace = path.join(tempRoot, "empty-instance-lock-workspace", ".miracle");
+    const instanceLock = path.join(probeWorkspace, "locks", "sidecar.instance.lock");
+    await cp(fixtureWorkspace, probeWorkspace, { recursive: true });
+    await mkdir(instanceLock, { recursive: true });
+
+    const probe = await runStartupProbe(probeWorkspace, path.join(tempRoot, "empty-instance-lock-runtime"));
+
+    expect(probe.code).not.toBe(0);
+    expect(probe.output).toContain("Refusing to recover mutation lock without verifiable owner metadata");
+    await expect(stat(instanceLock)).resolves.toBeDefined();
+  });
+
+  it("fails closed on a dead workspace instance owner until an operator removes the lock", async () => {
+    const probeWorkspace = path.join(tempRoot, "dead-instance-lock-workspace", ".miracle");
+    const instanceLock = path.join(probeWorkspace, "locks", "sidecar.instance.lock");
+    await cp(fixtureWorkspace, probeWorkspace, { recursive: true });
+    await mkdir(instanceLock, { recursive: true });
+    await writeFile(
+      path.join(instanceLock, "owner.json"),
+      `${JSON.stringify({
+        instance_id: "dead-sidecar",
+        owner_token: "dead-owner",
+        pid: 2_147_483_647,
+        created_at: "2020-01-01T00:00:00.000Z"
+      })}\n`,
+      "utf8"
+    );
+
+    const probe = await runStartupProbe(probeWorkspace, path.join(tempRoot, "dead-instance-lock-runtime"));
+
+    expect(probe.code).not.toBe(0);
+    expect(probe.output).toContain("Remove the stale Sidecar instance lock only after confirming no process uses this workspace");
+    await expect(stat(instanceLock)).resolves.toBeDefined();
+  });
+
+  it("refuses a symlinked locks root without touching its external target", async () => {
+    const probeWorkspace = path.join(tempRoot, "symlink-lock-workspace", ".miracle");
+    const externalLocks = path.join(tempRoot, "external-locks");
+    const locksPath = path.join(probeWorkspace, "runs", "run-demo-001", "locks");
+    await cp(fixtureWorkspace, probeWorkspace, { recursive: true });
+    await mkdir(externalLocks, { recursive: true });
+    await writeFile(path.join(externalLocks, "sentinel.txt"), "keep\n", "utf8");
+    await rm(locksPath, { recursive: true, force: true });
+    await symlink(externalLocks, locksPath, "dir");
+
+    const probe = await runStartupProbe(probeWorkspace, path.join(tempRoot, "symlink-lock-runtime"));
+
+    expect(probe.code).not.toBe(0);
+    expect(probe.output).toContain("Refusing symlinked mutation locks directory");
+    await expect(readFile(path.join(externalLocks, "sentinel.txt"), "utf8")).resolves.toBe("keep\n");
   });
 
   it("converts a confirmed draft and commits a validated Markdown artifact behind a pending gate", async () => {
@@ -477,6 +630,142 @@ describe("P6-07 Codex real single-node execution", () => {
     const draft = await fetchJson<{ draft: { status: string; converted_run_id: string }; audit: Array<{ type: string }> }>(`/api/v0/run-drafts/${created.draft.draft_id}`);
     expect(draft.draft).toMatchObject({ status: "converted", converted_run_id: launched.run_id });
     expect(draft.audit.map((record) => record.type)).toContain("run_draft_converted");
+  });
+
+  it("does not follow a child-controlled formal Artifact link during commit", async () => {
+    const launched = await launchConfirmedRun(workflow.id);
+    const artifactId = expectedSingleArtifactId(launched.run_id, "C_md_master", "md_master");
+    const external = path.join(tempRoot, "external-formal-artifact.md");
+    const target = path.join(tempWorkspace, "artifacts", `${artifactId}.md`);
+    await writeFile(external, "external remains unchanged\n", "utf8");
+    await symlink(external, target);
+
+    const response = await fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const scheduled = await response.json() as { summary: { failures: number; nodes_executed: number } };
+    const bundle = await fetchJson<{ artifacts: unknown[]; gates: unknown[] }>(`/api/v0/runs/${launched.run_id}`);
+
+    expect(response.status).toBe(200);
+    expect(scheduled.summary).toEqual(expect.objectContaining({ failures: 1, nodes_executed: 0 }));
+    expect(await readFile(external, "utf8")).toBe("external remains unchanged\n");
+    expect(bundle.artifacts).toEqual([]);
+    expect(bundle.gates).toEqual([]);
+  });
+
+  it("rolls back earlier files when a later Artifact in the same output batch is unsafe", async () => {
+    const launched = await launchConfirmedRun(multiOutputWorkflow.id, { force_multi_output: true });
+    const voiceoverId = expectedSingleArtifactId(launched.run_id, "C_md_master", "voiceover");
+    const summaryId = expectedSingleArtifactId(launched.run_id, "C_md_master", "summary");
+    const voiceoverPath = path.join(tempWorkspace, "artifacts", `${voiceoverId}.md`);
+    const summaryPath = path.join(tempWorkspace, "artifacts", `${summaryId}.md`);
+    const external = path.join(tempRoot, "external-batch-artifact.md");
+    await writeFile(external, "external remains unchanged\n", "utf8");
+    await symlink(external, summaryPath);
+
+    await fetchJson(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const bundle = await fetchJson<{ artifacts: unknown[] }>(`/api/v0/runs/${launched.run_id}`);
+
+    await expect(readFile(voiceoverPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(external, "utf8")).toBe("external remains unchanged\n");
+    expect(bundle.artifacts).toEqual([]);
+  });
+
+  it("reuses an existing immutable Artifact file when its content hash matches", async () => {
+    const launched = await launchConfirmedRun(multiOutputWorkflow.id, { force_multi_output: true });
+    const existing = [
+      { outputId: "voiceover", content: "这是经校验的口播稿。" },
+      { outputId: "summary", content: "# Miracle P7-03\n\n这是经校验的报告。\n" }
+    ];
+    for (const item of existing) {
+      const artifactId = expectedSingleArtifactId(launched.run_id, "C_md_master", item.outputId);
+      await writeFile(path.join(tempWorkspace, "artifacts", `${artifactId}.md`), item.content, "utf8");
+    }
+
+    const scheduled = await fetchJson<{ summary: { failures: number; nodes_executed: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const bundle = await fetchJson<{ artifacts: unknown[] }>(`/api/v0/runs/${launched.run_id}`);
+
+    expect(scheduled.summary).toEqual(expect.objectContaining({ failures: 0, nodes_executed: 1 }));
+    expect(bundle.artifacts).toHaveLength(2);
+  });
+
+  it("recovers a partial fact commit from the node journal without rerunning Codex", async () => {
+    const launched = await launchConfirmedRun(workflow.id, { force_slow_output: true });
+    const gatesPath = path.join(tempWorkspace, "runs", launched.run_id, "gates.json");
+    const firstRequest = fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    let runningObserved = false;
+    for (let index = 0; index < 200; index += 1) {
+      const current = await fetchJson<{ nodes: Array<{ status: string }> }>(`/api/v0/runs/${launched.run_id}`);
+      if (current.nodes.some((node) => node.status === "running")) {
+        runningObserved = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(runningObserved).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await rm(gatesPath, { force: true });
+    await mkdir(gatesPath);
+    const firstResponse = await firstRequest;
+    const attemptsAfterFailure = await readdir(path.join(runtimeWorkspace, "runtime", "attempts"));
+    await rm(gatesPath, { recursive: true, force: true });
+    await writeFile(gatesPath, "[]\n", "utf8");
+
+    const second = await fetchJson<{ summary: { failures: number; nodes_executed: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const bundle = await fetchJson<{ nodes: Array<{ status: string }>; artifacts: unknown[]; gates: unknown[] }>(`/api/v0/runs/${launched.run_id}`);
+
+    expect([200, 500]).toContain(firstResponse.status);
+    expect(second.summary).toEqual(expect.objectContaining({ failures: 0, nodes_executed: 0 }));
+    expect(await readdir(path.join(runtimeWorkspace, "runtime", "attempts"))).toEqual(attemptsAfterFailure);
+    expect(bundle.nodes).toEqual([expect.objectContaining({ status: "reviewing" })]);
+    expect(bundle.artifacts).toHaveLength(1);
+    expect(bundle.gates).toHaveLength(1);
+  });
+
+  it("does not steal another Sidecar instance mutation lock while requests are active", async () => {
+    const launched = await launchConfirmedRun(workflow.id);
+    const lockDir = path.join(tempWorkspace, "runs", launched.run_id, "locks", `${launched.run_id}.mutation.lock`);
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(
+      path.join(lockDir, "owner.json"),
+      `${JSON.stringify({ instance_id: "other-sidecar", owner_token: "active", pid: process.pid, created_at: new Date().toISOString() })}\n`,
+      "utf8"
+    );
+
+    const response = await fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const scheduled = await response.json() as {
+      stop_reason: string;
+      summary: { failures: number; nodes_executed: number };
+    };
+    const bundle = await fetchJson<{ nodes: Array<{ status: string }> }>(`/api/v0/runs/${launched.run_id}`);
+
+    expect(response.status).toBe(200);
+    expect(scheduled).toMatchObject({
+      stop_reason: "execution_failed",
+      summary: { failures: 1, nodes_executed: 0 }
+    });
+    expect(bundle.nodes[0]?.status).toBe("queued");
+    await expect(readFile(path.join(lockDir, "owner.json"), "utf8")).resolves.toContain("\"other-sidecar\"");
+    await rm(lockDir, { recursive: true, force: true });
   });
 
   it("aborts an invalid Codex output without creating artifact or gate facts", async () => {
@@ -729,6 +1018,23 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(bundle.artifacts).toHaveLength(2);
     expect(new Set(artifactIds).size).toBe(2);
     expect(new Set(artifactPaths).size).toBe(2);
+  });
+
+  it("bounds filesystem components while preserving long output identity with a full hash", async () => {
+    const launched = await launchConfirmedRun(longOutputIdWorkflow.id, { force_long_output: true });
+    await fetchJson(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const bundle = await fetchJson<{
+      artifacts: Array<{ artifact_id: string; path: string }>;
+      attempts: Array<{ status: string; error?: { code: string; message: string } }>;
+    }>(`/api/v0/runs/${launched.run_id}`);
+    const artifact = bundle.artifacts[0]!;
+
+    expect(bundle.artifacts, JSON.stringify(bundle.attempts)).toHaveLength(1);
+    expect(path.basename(artifact.path).length).toBeLessThanOrEqual(255);
+    expect(artifact.artifact_id).toMatch(/_[a-f0-9]{64}_v1$/);
   });
 
   it("preserves a unique raw normalized ID when another output hash suffix would collide with it", async () => {

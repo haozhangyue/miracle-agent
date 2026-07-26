@@ -268,6 +268,19 @@ describe("CodexCliAdapter attempt workspace", () => {
     expect(JSON.parse(await readFile(path.join(attempt.meta_dir, "attempt.json"), "utf8"))).toMatchObject({ status: "retained" });
     expect(await readFile(path.join(attempt.input_dir, "brief.md"), "utf8")).toBe("approved input\n");
   });
+
+  it("creates parent-owned output files exclusively without following child-created links", async () => {
+    const adapter = createAdapter();
+    const attempt = await createWorkspace(adapter, "attempt_exclusive_output");
+    const external = path.join(tempRoot, "external-output.md");
+    await writeFile(external, "external remains unchanged\n", "utf8");
+    await symlink(external, path.join(attempt.output_dir, "artifact.md"));
+
+    await expect(adapter.createValidatedOutputFile(attempt, "artifact.md", "artifact content\n")).rejects.toMatchObject({
+      code: "workspace_escape_detected"
+    });
+    expect(await readFile(external, "utf8")).toBe("external remains unchanged\n");
+  });
 });
 
 describe("CodexCliAdapter process lifecycle", () => {
@@ -424,6 +437,21 @@ describe("CodexCliAdapter process lifecycle", () => {
     await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("revalidates the frozen output schema immediately before spawn", async () => {
+    const marker = path.join(tempRoot, "spawned-after-schema-change");
+    const adapter = createAdapter({ FAKE_CODEX_EXEC_MARKER: marker });
+    const attempt = await createWorkspace(adapter, "attempt_schema_change");
+    const schemaPath = path.join(attempt.meta_dir, "output.schema.json");
+    await chmod(schemaPath, 0o600);
+    await writeFile(schemaPath, '{"type":"string"}\n', "utf8");
+
+    await expect(adapter.startOperation({
+      invocation: invocation(attempt, "op_schema_change"),
+      attempt_workspace: attempt
+    })).rejects.toMatchObject({ code: "input_hash_mismatch" });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects a symlinked operations root for receipt writes and orphan recovery", async () => {
     const adapter = createAdapter();
     const attempt = await createWorkspace(adapter, "attempt_operations_root");
@@ -459,7 +487,26 @@ describe("CodexCliAdapter process lifecycle", () => {
     const handle = await adapter.startOperation({ invocation: invocation(attempt), attempt_workspace: attempt });
 
     await expect(handle.result).resolves.toMatchObject({ status: "succeeded", operation_id: "op_001", attempt_id: attempt.attempt_id, artifact_descriptors: [] });
+    expect(JSON.parse(await readFile(path.join(attempt.meta_dir, "attempt.json"), "utf8"))).toMatchObject({ status: "succeeded" });
     await expect(readFile(path.join(workspaceDir, "runs", "run_001", "attempts.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("atomically replaces a child-controlled receipt link without modifying its target", async () => {
+    const adapter = createAdapter();
+    const attempt = await createWorkspace(adapter, "attempt_receipt_link");
+    const operations = path.join(workspaceDir, "runtime", "operations");
+    const external = path.join(tempRoot, "external-receipt.json");
+    await mkdir(operations, { recursive: true });
+    await writeFile(external, "external remains unchanged\n", "utf8");
+    await symlink(external, path.join(operations, "op_receipt_link.json"));
+
+    const handle = await adapter.startOperation({
+      invocation: invocation(attempt, "op_receipt_link"),
+      attempt_workspace: attempt
+    });
+    await expect(handle.result).resolves.toMatchObject({ status: "succeeded" });
+    expect(await readFile(external, "utf8")).toBe("external remains unchanged\n");
+    expect(JSON.parse(await readFile(path.join(operations, "op_receipt_link.json"), "utf8"))).toMatchObject({ status: "succeeded" });
   });
 
   it.each(fakeCodexLimitSchemas())("fake Codex rejects Structured Outputs schemas with %s", async (_label, outputSchema) => {
@@ -485,7 +532,11 @@ describe("CodexCliAdapter process lifecycle", () => {
     for (const [mode, status, code] of [["nonzero", "failed", "process_exit_nonzero"], ["invalid-jsonl", "failed", "invalid_adapter_output"], ["huge-output", "aborted", "adapter_output_too_large"], ["huge-stderr", "aborted", "adapter_output_too_large"]] as const) {
       const adapter = createAdapter({ FAKE_CODEX_MODE: mode });
       const attempt = await createWorkspace(adapter, `attempt_${mode}`);
-      const handle = await adapter.startOperation({ invocation: invocation(attempt, `op_${mode}`), attempt_workspace: attempt });
+      const handle = await adapter.startOperation({
+        invocation: invocation(attempt, `op_${mode}`),
+        attempt_workspace: attempt,
+        timeout_ms: 1_000
+      });
       await expect(handle.result).resolves.toMatchObject({ status, error: { code } });
     }
   });

@@ -370,9 +370,19 @@ describe("sidecar api", () => {
     const gateId = mdExecution.committed.gates[0]?.gate_instance_id;
     if (!gateId) throw new Error("Expected generated gate");
 
-    const lockName = gateId.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const lockDir = path.join(tempWorkspace, "runs", created.run_id, "locks", `${lockName}.gate.lock`);
+    const lockName = created.run_id.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const lockDir = path.join(tempWorkspace, "runs", created.run_id, "locks", `${lockName}.mutation.lock`);
     await mkdir(lockDir, { recursive: true });
+    await writeFile(
+      path.join(lockDir, "owner.json"),
+      `${JSON.stringify({
+        instance_id: "concurrent-sidecar",
+        owner_token: "gate-test-lock",
+        pid: process.pid,
+        created_at: new Date().toISOString()
+      })}\n`,
+      "utf8"
+    );
 
     const locked = await fetch(`${baseUrl}/api/v0/gates/${gateId}/decision?run_id=${created.run_id}`, {
       method: "POST",
@@ -380,6 +390,7 @@ describe("sidecar api", () => {
       body: JSON.stringify({ decision: "approve", actor: "api-test" })
     });
     expect(locked.status).toBe(409);
+    await rm(lockDir, { recursive: true, force: true });
   });
 
   it("saves and reads a canvas draft", async () => {

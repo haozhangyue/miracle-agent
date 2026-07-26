@@ -32,8 +32,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 |---|---|
 | 当前产品版本 | `v0.8.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
-| 当前阶段 | P6 真实工作流工程接入已验收，进入 P7 扩展规划 |
-| 当前任务焦点 | `P7-01` 多节点真实执行与 Adapter 扩展规划 |
+| 当前阶段 | P7-02 ExecutionPlan 与 P7-03 Codex 多节点 Artifact 真实交接已完成 |
+| 当前任务焦点 | `P7-04` Codex Scheduler 连续执行闭环 |
 | 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
 | P6 验收基线 | `54_P6回归验收与版本收口报告.md` |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
@@ -47,7 +47,10 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 - Adapter 回执在提交 Attempt、Artifact 和 Trace 前执行 operation/node/attempt/provider 关联校验。
 - Codex CLI 健康检查已支持版本与登录状态检测；只返回状态、版本和原因码，不展示凭证值。
 - 真实 CLI attempt 使用仓库外隔离目录，输入只读 staging，输出、超时和取消均受 Sidecar 边界控制。
-- `codex-md-master-v0` 已可完成单节点真实执行，生成 Markdown Artifact 和待审 Gate。
+- Codex 已支持按 ExecutionPlan 将上游 Artifact 的指定版本和 SHA-256 校验后交给下游节点。
+- 下游 Attempt 会冻结 `resolved_inputs`、输出 schema，并把受控输入复制到
+  `input/artifacts/`；任何 hash、media type 或路径校验失败都不会启动 Codex。
+- P7-03 仍采用手动逐 tick：一次 Scheduler 请求最多推进一个真实节点；自动连续执行属于 P7-04。
 
 ```text
 GET  /api/v0/adapters/codex-cli/health
@@ -304,6 +307,20 @@ Sidecar 会强制要求仓库外 runtime workspace；若 `MIRACLE_WORKSPACE_DIR`
 Run 节点详情取消活跃 operation。Attempt 页面只显示非敏感元数据，不显示凭证、隐藏推理
 或外部 runtime 绝对路径。
 
+### 5.12 手动逐 tick 验证 Codex 多节点 Artifact 交接
+
+1. 使用 `MIRACLE_ENABLE_REAL_CODEX=1 npm run dev` 启动系统。
+2. 创建并确认一个包含至少两个 Codex 节点、且下游输入引用上游 Artifact 的 RunDraft。
+3. 第一次调用 Scheduler，系统只执行上游节点并提交正式 ArtifactManifest。
+4. 在 Run 节点详情中确认上游 Artifact 的版本、hash、producer 和输出端口。
+5. 再次调用 Scheduler，系统重新计算 ExecutionPlan，并把选中的上游 Artifact 交给下游 Attempt。
+6. 在下游 Attempt workspace 中，输入只会出现在 `input/artifacts/`，解析快照写入
+   `input/resolved-inputs.json`；运行界面只展示非敏感摘要。
+7. 查看下游 NodeAttempt、ArtifactManifest 和事件审计，确认交接使用的是精确版本和 hash。
+
+当前版本不会在一次真实 Scheduler 请求中自动跑完整条多节点链路。每次调用最多推进一个
+真实节点，这个边界用于让用户在 P7-04 前仍能逐步观察和审核交接结果。
+
 ## 6. 当前版本新增能力
 
 | 范围 | 新增或优化 | 用户可感知变化 |
@@ -318,6 +335,7 @@ Run 节点详情取消活跃 operation。Attempt 页面只显示非敏感元数�
 | P5 真实工作流接入 | W24/W23 真实样本盘点、对象映射、历史 Run 只读导入方案 | 用户能知道真实工作流接入正在从历史 Run 只读展示开始 |
 | 半自动新 Run 草案 | RunDraft、RunDraftDryRunPlan、LaunchConfirmation 和草案审计边界 | 用户后续可在不调用真实 Runner 的情况下准备、检查并确认一次新 Run |
 | Codex 单节点真实执行 | confirmed RunDraft 原子转换、真实 CLI、Markdown 校验、Artifact、Gate、Trace 和取消 | 用户可通过实验模板执行第一条真实单节点链路；真实执行默认关闭并需显式 opt-in |
+| P7-03 Codex 多节点交接 | ExecutionPlan 选择精确 Artifact 版本/hash，冻结下游输入与输出契约，并通过 commit journal 原子提交运行事实 | 用户可通过多次“调度一次”逐节点验证真实产物交接；一次请求不会自动跑完整链路 |
 | P5 回归验收 | 工程测试、20 项 API smoke、真实样本复核和页面截图通过 | 当前运行版本仍是 v0.7.0；真实 importer、RunDraft 和 Adapter 留待 P6 实现 |
 | P6 工程实施计划 | P6-02 至 P6-08 已拆成 historical importer、真实 Run UI、RunDraft、Adapter Contract、Codex CLI 和验收任务 | 用户可按任务基线查看实现顺序；该计划本身不代表功能上线 |
 | P6-02 Historical Importer | 新增 W24/W23 preview/commit、事实型审核投影、内容指纹、可恢复并发锁、回执自愈、source_meta 和只读保护 | 用户可以通过 Sidecar API 在仓库外 runtime workspace 导入历史 Run；缺失审批证据不再显示为 approved，Web 展示和真实 Codex 调用尚未开放 |
@@ -365,6 +383,7 @@ Run 节点详情取消活跃 operation。Attempt 页面只显示非敏感元数�
 | P6-03 | 真实 Run API 与 Web 展示 | Run 列表/详情增加 historical read-only、证据等级和来源缺口；Attention、Agent、Artifact、Gate 跟随选中 Run | 修复跨 Run 切换时旧 NodeRun/Artifact/Gate 请求、非 ASCII 产物路径导致 Artifact ID 重复 | 首页选择 W24/W23 后进入 Run、Attention、智能体、产物和审核页面；历史 Run 隐藏执行、调度、审核和返工操作 | 否，仍需使用仓库外 runtime workspace；截图证据见 `assets/reviews/p6-real-run-ui/` |
 | P6-07 | Codex 单节点真实执行 | confirmed RunDraft 原子启动、受控 Codex 输出、真实 SHA-256、Operation 取消和 Gate 审计 | 修复非 Git attempt workspace 被 CLI 拒绝、结构化 schema 缺少类型导致真实执行失败、启动事务半成品及发布后崩溃重试产生重复 Run 的风险 | 新增“Codex 单节点 Markdown 母稿”模板和“启动正式 Run”；Run 页面展示真实 Adapter、operation、耗时与 Gate | 是，真实调用需设置 `MIRACLE_ENABLE_REAL_CODEX=1`，runtime 必须位于仓库外 |
 | `v0.8.0` / P6-08 | 真实工作流工程接入基线 | W24/W23 historical、RunDraft、真实 Codex、46 项 API 和多 Domain 完整验收 | 修复长 Run/Node/Artifact ID 导致事件审计文本重叠 | 用户可导入真实历史 Run、创建并确认草案、执行 Codex 单节点并进入人工 Gate；下一步为 P7-01 | 启动命令不变；真实导入和执行仍需显式环境变量 |
+| P7-02 / P7-03 | 多节点计划与 Artifact 真实交接 | 按端口、版本、hash 和 media type 解析输入；输出契约由 NodeSpec 生成；事实提交支持崩溃恢复 | 修复路径逃逸、符号链接/硬链接、身份碰撞、部分提交、事件覆盖和运行锁抢占风险 | 对多节点 Run 连续点击“调度一次”，逐节点检查 Artifact 与 Attempt；P7-04 前不会单次自动跑完整链路 | 启动命令不变；真实 Codex 仍需显式 opt-in |
 
 ### 8.3 提交前同步检查
 
@@ -382,6 +401,7 @@ Run 节点详情取消活跃 operation。Attempt 页面只显示非敏感元数�
 | 问题 | 现象 | 处理方式 |
 |---|---|---|
 | Sidecar 未启动 | Web 页面报 API 请求失败，`/api/v0/health` 无响应 | 执行 `npm run dev:sidecar` 或 `npm run dev` |
+| Sidecar 提示 workspace 已被占用 | 启动日志显示 active 或 stale `sidecar.instance.lock` | 先确认没有其他 Sidecar 使用该 workspace；仅在确认 owner PID 已退出后，人工删除 `<workspace>/locks/sidecar.instance.lock` 再启动 |
 | Web 端口被占用 | Vite 终端提示端口变化 | 优先释放端口并使用 `5174`；如端口变化，需确认 API proxy 和 Sidecar CORS |
 | task-baseline 没更新 | 页面仍显示旧 Git HEAD 或旧任务红点 | 刷新页面；确认 `plans/mvp-task-baseline/roadmap.json` 已保存并提交 |
 | 工作区有未提交修改 | task-baseline 显示 dirty | 执行 `git status --short`，确认是否为本轮预期变更 |
@@ -399,7 +419,8 @@ Run 节点详情取消活跃 operation。Attempt 页面只显示非敏感元数�
 
 1. 真实“热点工具更新”历史 Run importer 已实现 Sidecar API，Web 已支持 W24/W23 historical Run
    只读展示，但仍需使用仓库外 runtime workspace 才能看到真实导入数据。
-2. Codex CLI 已开放单节点真实执行；多节点真实连续执行、Hermes、OpenClaw 和官方 API 尚未开放。
+2. Codex CLI 已开放手动逐 tick 的多节点 Artifact 真实交接；单次 Scheduler 自动连续执行、
+   retry/fallback、Hermes、OpenClaw 和模型 API 尚未开放。
 3. 没有云端控制平面、多租户、账号、权限、计费和团队协作。
 4. 没有移动端或 APP 适配，本阶段只面向 Web 工作台。
 5. Infinite Canvas 仍是草稿态，不是完整自由画布产品。

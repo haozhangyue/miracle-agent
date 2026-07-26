@@ -39,8 +39,9 @@ import {
 } from "@miracle/core";
 import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readdir, readFile, writeFile, mkdir, rename, rm, stat } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { constants } from "node:fs";
+import { readdir, readFile, writeFile, mkdir, open, lstat, realpath, rename, rm, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
@@ -59,6 +60,8 @@ import { codexPreflightFailure, startCodexOperation } from "./codex-real-adapter
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
+const serverInstanceId = randomUUID();
+const eventWriteQueues = new Map<string, Promise<void>>();
 const runtimeWorkspaceDir = process.env.MIRACLE_RUNTIME_WORKSPACE_DIR ?? path.join(homedir(), ".miracle-agent");
 const workflowRegistryDir = process.env.MIRACLE_WORKFLOW_REGISTRY_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle/workflows");
 const port = Number(process.env.MIRACLE_SIDECAR_PORT ?? 4317);
@@ -111,6 +114,24 @@ type NodeExecutionResult =
       };
     };
 
+type NodeCommitTransaction = {
+  node_run_id: string;
+  invocation: ReturnType<typeof createAdapterInvocation>;
+  adapter_result: AdapterResult;
+  node_updates: NodeRun[];
+  attempt: NodeAttempt;
+  artifacts: ArtifactManifest[];
+  gates: GateInstance[];
+  events: Array<{ event_id: string }>;
+  committed: {
+    node_run: NodeRun;
+    attempt: NodeAttempt;
+    artifacts: ArtifactManifest[];
+    gates: GateInstance[];
+    created_events: string[];
+  };
+};
+
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -151,6 +172,18 @@ async function writeJson(relativePath: string, value: unknown) {
   const target = path.join(workspaceDir, relativePath);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function writeJsonAtomically(relativePath: string, value: unknown) {
+  const target = path.join(workspaceDir, relativePath);
+  await mkdir(path.dirname(target), { recursive: true });
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await rename(temporary, target);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 async function writeAbsoluteJson(target: string, value: unknown) {
@@ -336,8 +369,36 @@ async function buildProjectRoadmap() {
 }
 
 async function appendEvent(runId: string, event: unknown) {
-  const file = path.join(workspaceDir, "runs", runId, "events.jsonl");
-  await writeFile(file, `${JSON.stringify(event)}\n`, { encoding: "utf8", flag: "a" });
+  const previous = eventWriteQueues.get(runId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  eventWriteQueues.set(runId, current);
+  await previous;
+  try {
+    const file = path.join(workspaceDir, "runs", runId, "events.jsonl");
+    const existing = await readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    });
+    if (existing && !existing.endsWith("\n")) throw new Error("Event Journal has an incomplete trailing record.");
+    for (const line of existing.split("\n").filter(Boolean)) JSON.parse(line);
+    await writeJsonlAtomically(file, `${existing}${JSON.stringify(event)}\n`);
+  } finally {
+    release();
+    if (eventWriteQueues.get(runId) === current) eventWriteQueues.delete(runId);
+  }
+}
+
+async function writeJsonlAtomically(target: string, content: string) {
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await rename(temporary, target);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 async function parseBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -500,12 +561,376 @@ async function readArtifactPreview(artifact: ArtifactManifest) {
   }
 }
 
-async function writeArtifactDescriptorFile(descriptor: AdapterArtifactDescriptor) {
-  if (descriptor.content === undefined) return;
-  const targetPath = resolveWorkspacePath(descriptor.path);
-  if (!targetPath) throw new Error(`Artifact path escapes workspace: ${descriptor.path}`);
-  await mkdir(path.dirname(targetPath), { recursive: true });
-  await writeFile(targetPath, descriptor.content, "utf8");
+async function writeArtifactDescriptorFile(descriptor: AdapterArtifactDescriptor): Promise<{ path?: string; created: boolean }> {
+  if (descriptor.content === undefined) return { created: false };
+  const lexicalTargetPath = resolveWorkspacePath(descriptor.path);
+  if (!lexicalTargetPath || path.dirname(descriptor.path) !== "artifacts") throw new Error(`Artifact path escapes workspace: ${descriptor.path}`);
+  const workspaceRoot = await realpath(workspaceDir);
+  const artifactsRootPath = path.join(workspaceRoot, "artifacts");
+  await mkdir(artifactsRootPath, { recursive: false }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "EEXIST") throw error;
+  });
+  const [artifactsEntry, artifactsRoot] = await Promise.all([lstat(artifactsRootPath), realpath(artifactsRootPath)]);
+  if (
+    artifactsEntry.isSymbolicLink() ||
+    !artifactsEntry.isDirectory() ||
+    artifactsRoot !== artifactsRootPath
+  ) {
+    throw new Error("Artifact parent directory is not canonical.");
+  }
+  const targetPath = path.join(artifactsRoot, path.basename(lexicalTargetPath));
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let created = false;
+  try {
+    handle = await open(
+      targetPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+      0o600
+    );
+    created = true;
+    const entry = await handle.stat();
+    if (!entry.isFile() || entry.nlink !== 1) throw new Error("Artifact target must be a single-link regular file.");
+    await handle.writeFile(descriptor.content, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    return { path: targetPath, created: true };
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    if (created) await rm(targetPath, { force: true }).catch(() => undefined);
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      const [entry, resolved] = await Promise.all([lstat(targetPath), realpath(targetPath)]);
+      if (
+        entry.isSymbolicLink() ||
+        !entry.isFile() ||
+        entry.nlink !== 1 ||
+        path.dirname(resolved) !== artifactsRoot
+      ) {
+        throw new Error("Existing Artifact target is not a canonical single-link file.");
+      }
+      const existingHash = `sha256:${createHash("sha256").update(await readFile(resolved)).digest("hex")}`;
+      if (existingHash === descriptor.hash) return { path: resolved, created: false };
+      throw new Error("Existing Artifact target does not match the immutable descriptor hash.");
+    }
+    throw error;
+  }
+}
+
+async function stageArtifactDescriptorFiles(descriptors: AdapterArtifactDescriptor[]) {
+  const createdPaths: string[] = [];
+  const rollback = async () => {
+    for (const target of createdPaths.reverse()) await rm(target, { force: true }).catch(() => undefined);
+  };
+  try {
+    for (const descriptor of descriptors) {
+      const staged = await writeArtifactDescriptorFile(descriptor);
+      if (staged.created && staged.path) createdPaths.push(staged.path);
+    }
+    return rollback;
+  } catch (error) {
+    await rollback();
+    throw error;
+  }
+}
+
+function nodeCommitTransactionRelativePath(runId: string, nodeRunId: string) {
+  const prefix = safeId(nodeRunId).slice(0, 48) || "node";
+  const suffix = createHash("sha256").update(nodeRunId).digest("hex").slice(0, 16);
+  return `runs/${runId}/transactions/${prefix}_${suffix}.json`;
+}
+
+function runMutationLockPath(runId: string) {
+  return path.join(workspaceDir, "runs", runId, "locks", `${safeId(runId)}.mutation.lock`);
+}
+
+type MutationLockOwner = {
+  instance_id: string;
+  owner_token: string;
+  pid: number;
+  created_at: string;
+};
+
+function isMutationLockOwner(value: unknown): value is MutationLockOwner {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const owner = value as Partial<MutationLockOwner>;
+  return typeof owner.instance_id === "string"
+    && owner.instance_id.length > 0
+    && typeof owner.owner_token === "string"
+    && owner.owner_token.length > 0
+    && Number.isSafeInteger(owner.pid)
+    && Number(owner.pid) > 0
+    && typeof owner.created_at === "string"
+    && Number.isFinite(Date.parse(owner.created_at));
+}
+
+function isProcessAlive(pid: number) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EPERM") return true;
+    if (code === "ESRCH" || code === "EINVAL") return false;
+    throw error;
+  }
+}
+
+async function resolveCanonicalLockTarget(lockDir: string, containerDir: string, errorMessage: string) {
+  const containerEntry = await lstat(containerDir);
+  if (containerEntry.isSymbolicLink() || !containerEntry.isDirectory()) {
+    throw new Error(`${errorMessage}: ${containerDir}`);
+  }
+  const canonicalContainer = await realpath(containerDir);
+  const parent = path.dirname(lockDir);
+  await mkdir(parent, { recursive: true });
+  const parentEntry = await lstat(parent);
+  if (parentEntry.isSymbolicLink() || !parentEntry.isDirectory()) {
+    throw new Error(`${errorMessage}: ${parent}`);
+  }
+  const canonicalParent = await realpath(parent);
+  if (path.dirname(canonicalParent) !== canonicalContainer) {
+    throw new Error(`${errorMessage}: ${parent}`);
+  }
+  return path.join(canonicalParent, path.basename(lockDir));
+}
+
+async function publishOwnedLockDirectory(lockDir: string, owner: MutationLockOwner) {
+  try {
+    await mkdir(lockDir, { recursive: false });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    await writeFile(
+      path.join(lockDir, "owner.json"),
+      `${JSON.stringify(owner)}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 }
+    );
+    return true;
+  } catch (error) {
+    await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function readVerifiableLockOwner(lockDir: string) {
+  const owner = await readJsonFileOptional<unknown>(path.join(lockDir, "owner.json"));
+  if (!isMutationLockOwner(owner)) {
+    throw new Error(`Refusing to recover mutation lock without verifiable owner metadata: ${lockDir}`);
+  }
+  return owner;
+}
+
+async function assertCanonicalLockDirectory(lockDir: string, canonicalParent: string, symlinkMessage: string) {
+  const entry = await lstat(lockDir);
+  if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error(`${symlinkMessage}: ${lockDir}`);
+  const canonicalLockDir = await realpath(lockDir);
+  if (path.dirname(canonicalLockDir) !== canonicalParent) throw new Error(`${symlinkMessage}: ${lockDir}`);
+  return canonicalLockDir;
+}
+
+async function recoverStaleMutationLocksAtStartup() {
+  const runsDir = path.join(workspaceDir, "runs");
+  const canonicalRunsDir = await realpath(runsDir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!canonicalRunsDir) return;
+  let runEntries;
+  try {
+    runEntries = await readdir(runsDir, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+
+  for (const runEntry of runEntries) {
+    if (!runEntry.isDirectory()) continue;
+    const runDir = path.join(runsDir, runEntry.name);
+    const canonicalRunDir = await realpath(runDir);
+    if (path.dirname(canonicalRunDir) !== canonicalRunsDir) {
+      throw new Error(`Refusing non-canonical Run directory during mutation lock recovery: ${runDir}`);
+    }
+    const locksDir = path.join(runDir, "locks");
+    let locksEntry;
+    try {
+      locksEntry = await lstat(locksDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    if (locksEntry.isSymbolicLink() || !locksEntry.isDirectory()) {
+      throw new Error(`Refusing symlinked mutation locks directory: ${locksDir}`);
+    }
+    const canonicalLocksDir = await realpath(locksDir);
+    if (path.dirname(canonicalLocksDir) !== canonicalRunDir) {
+      throw new Error(`Refusing symlinked mutation locks directory: ${locksDir}`);
+    }
+    let lockEntries;
+    try {
+      lockEntries = await readdir(locksDir, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+
+    for (const lockEntry of lockEntries) {
+      const expectedName = `${safeId(runEntry.name)}.mutation.lock`;
+      if (lockEntry.name !== expectedName) continue;
+      const lockDir = path.join(locksDir, lockEntry.name);
+      const canonicalLockDir = await assertCanonicalLockDirectory(
+        lockDir,
+        canonicalLocksDir,
+        "Refusing non-canonical mutation lock directory"
+      );
+      const owner = await readVerifiableLockOwner(canonicalLockDir);
+      if (isProcessAlive(owner.pid)) {
+        throw new Error(`Workspace is already locked by active Sidecar process ${owner.pid}: ${lockDir}`);
+      }
+      await rm(canonicalLockDir, { recursive: true, force: true });
+    }
+  }
+}
+
+async function acquireRunMutationLock(runId: string) {
+  const requestedLockDir = runMutationLockPath(runId);
+  const lockDir = await resolveCanonicalLockTarget(
+    requestedLockDir,
+    path.join(workspaceDir, "runs", runId),
+    "Refusing non-canonical Run mutation lock parent"
+  );
+  const ownerToken = randomUUID();
+  const owner: MutationLockOwner = {
+    instance_id: serverInstanceId,
+    owner_token: ownerToken,
+    pid: process.pid,
+    created_at: new Date().toISOString()
+  };
+  if (!(await publishOwnedLockDirectory(lockDir, owner))) return undefined;
+  return {
+    path: lockDir,
+    release: async () => {
+      const currentOwner = await readJsonFileOptional<unknown>(path.join(lockDir, "owner.json"));
+      if (isMutationLockOwner(currentOwner) && currentOwner.instance_id === serverInstanceId && currentOwner.owner_token === ownerToken) {
+        await rm(lockDir, { recursive: true, force: true });
+      }
+    }
+  };
+}
+
+function workspaceInstanceLockPath() {
+  return path.join(workspaceDir, "locks", "sidecar.instance.lock");
+}
+
+async function acquireWorkspaceInstanceLock() {
+  const lockDir = await resolveCanonicalLockTarget(
+    workspaceInstanceLockPath(),
+    workspaceDir,
+    "Refusing non-canonical Sidecar instance lock parent"
+  );
+  const ownerToken = randomUUID();
+  const owner: MutationLockOwner = {
+    instance_id: serverInstanceId,
+    owner_token: ownerToken,
+    pid: process.pid,
+    created_at: new Date().toISOString()
+  };
+  if (!(await publishOwnedLockDirectory(lockDir, owner))) {
+    const parent = await realpath(path.dirname(lockDir));
+    const canonicalLockDir = await assertCanonicalLockDirectory(
+      lockDir,
+      parent,
+      "Refusing non-canonical Sidecar instance lock"
+    );
+    const existingOwner = await readVerifiableLockOwner(canonicalLockDir);
+    if (isProcessAlive(existingOwner.pid)) {
+      throw new Error(`Workspace is already owned by active Sidecar process ${existingOwner.pid}: ${lockDir}`);
+    }
+    throw new Error(
+      `Remove the stale Sidecar instance lock only after confirming no process uses this workspace: ${lockDir}`
+    );
+  }
+  return {
+    path: lockDir,
+    release: async () => {
+      const currentOwner = await readJsonFileOptional<unknown>(path.join(lockDir, "owner.json"));
+      if (isMutationLockOwner(currentOwner) && currentOwner.instance_id === serverInstanceId && currentOwner.owner_token === ownerToken) {
+        await rm(lockDir, { recursive: true, force: true });
+      }
+    }
+  };
+}
+
+async function readJsonFileOptional<T>(target: string): Promise<T | undefined> {
+  try {
+    return JSON.parse(await readFile(target, "utf8")) as T;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function applyNodeCommitTransaction(runId: string, transaction: NodeCommitTransaction) {
+  const [runSpec, currentNodes, currentAttempts, currentArtifacts, currentGates] = await Promise.all([
+    readJson<RunSpec>(`runs/${runId}/run_spec.json`),
+    readJson<NodeRun[]>(`runs/${runId}/nodes.json`),
+    readJson<NodeAttempt[]>(`runs/${runId}/attempts.json`),
+    readJson<ArtifactManifest[]>(`runs/${runId}/artifacts.json`),
+    readJson<GateInstance[]>(`runs/${runId}/gates.json`)
+  ]);
+  const upsertMissing = <T>(current: T[], additions: T[], identity: (value: T) => string) => {
+    const existing = new Set(current.map(identity));
+    return [...current, ...additions.filter((value) => !existing.has(identity(value)))];
+  };
+  const nodesById = new Map(currentNodes.map((node) => [node.node_run_id, node]));
+  for (const update of transaction.node_updates) {
+    const current = nodesById.get(update.node_run_id);
+    if (!current || Date.parse(current.updated_at) <= Date.parse(update.updated_at)) nodesById.set(update.node_run_id, update);
+  }
+  if (["created", "queued", "running"].includes(runSpec.status)) {
+    runSpec.status = "running";
+    await writeJsonAtomically(`runs/${runId}/run_spec.json`, runSpec);
+  }
+  await writeJsonAtomically(
+    `runs/${runId}/attempts.json`,
+    upsertMissing(currentAttempts, [transaction.attempt], (attempt) => attempt.attempt_id)
+  );
+  await writeJsonAtomically(
+    `runs/${runId}/artifacts.json`,
+    upsertMissing(currentArtifacts, transaction.artifacts, (artifact) => artifact.artifact_id)
+  );
+  await writeJsonAtomically(
+    `runs/${runId}/gates.json`,
+    upsertMissing(currentGates, transaction.gates, (gate) => gate.gate_instance_id)
+  );
+  const existingEventIds = new Set((await readEvents(runId)).map((event) => String(event.event_id ?? "")));
+  for (const event of transaction.events) {
+    if (!existingEventIds.has(event.event_id)) await appendEvent(runId, event);
+  }
+  await writeJsonAtomically(`runs/${runId}/nodes.json`, Array.from(nodesById.values()));
+  await rm(path.join(workspaceDir, nodeCommitTransactionRelativePath(runId, transaction.node_run_id)), { force: true });
+}
+
+async function recoverPendingNodeCommitTransactions(runId: string) {
+  const lock = await acquireRunMutationLock(runId);
+  if (!lock) return;
+  try {
+    const transactionDir = path.join(workspaceDir, "runs", runId, "transactions");
+    const names = await readdir(transactionDir).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    for (const name of names.filter((value) => value.endsWith(".json")).sort()) {
+      const transaction = JSON.parse(await readFile(path.join(transactionDir, name), "utf8")) as NodeCommitTransaction;
+      if (nodeCommitTransactionRelativePath(runId, transaction.node_run_id).endsWith(`/${name}`)) {
+        await applyNodeCommitTransaction(runId, transaction);
+      }
+    }
+  } finally {
+    await lock.release();
+  }
 }
 
 function buildGateInstancesForArtifacts(input: { workflow: WorkflowSpec; runId: string; artifacts: ArtifactManifest[]; descriptors: AdapterArtifactDescriptor[] }): GateInstance[] {
@@ -599,6 +1024,11 @@ function refreshAttentionAfterGateDecision(attention: JsonValue, gateId: string,
 
 function safeId(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function boundedIdentitySegment(value: string, maxLength = 32) {
+  const normalized = safeId(value).slice(0, maxLength);
+  return normalized || "id";
 }
 
 function nextArtifactVersion(artifacts: ArtifactManifest[], targetArtifact: ArtifactManifest) {
@@ -831,7 +1261,7 @@ function outputArtifactIdentitySuffix(runId: string, nodeId: string, outputId: s
 function allocateOutputIdentitySegments(expectedOutputs: ReturnType<typeof createAdapterInvocation>["expected_outputs"]) {
   const normalized = expectedOutputs.map((output) => ({
     output_id: output.output_id,
-    segment: safeId(output.output_id)
+    segment: boundedIdentitySegment(output.output_id, 48)
   }));
   const normalizedCounts = new Map<string, number>();
   for (const output of normalized) {
@@ -848,7 +1278,7 @@ function allocateOutputIdentitySegments(expectedOutputs: ReturnType<typeof creat
   }
   for (const output of normalized) {
     if (allocated.has(output.output_id)) continue;
-    const base = `${output.segment}_${createHash("sha256").update(output.output_id).digest("hex").slice(0, 12)}`;
+    const base = `${output.segment.slice(0, 35)}_${createHash("sha256").update(output.output_id).digest("hex").slice(0, 12)}`;
     let candidate = base;
     let disambiguator = 2;
     while (usedNames.has(candidate.toLowerCase())) {
@@ -948,7 +1378,7 @@ async function executeRealCodexAdapter(input: {
         launchedInvocation.node_id,
         expectedOutput.output_id
       );
-      const artifactId = `art_${safeId(launchedInvocation.run_id)}_${safeId(launchedInvocation.node_id)}_${outputSegment}_${identitySuffix}_v1`;
+      const artifactId = `art_${boundedIdentitySegment(launchedInvocation.run_id)}_${boundedIdentitySegment(launchedInvocation.node_id)}_${outputSegment}_${identitySuffix}_v1`;
       const artifactFileName = `${outputSegment}.${outputExtension(output.artifact_type)}`;
       return {
         output,
@@ -967,9 +1397,7 @@ async function executeRealCodexAdapter(input: {
     const artifactDescriptors: AdapterArtifactDescriptor[] = [];
     for (const planned of plannedOutputs) {
       const { output, expectedOutput, artifactId, artifactFileName, artifactPath } = planned;
-      const outputPath = await codexCliAdapter.resolveOutputPath(attempt, artifactFileName);
-      await writeFile(outputPath, output.content, "utf8");
-      const validatedOutputPath = await codexCliAdapter.validateOutputFile(attempt, artifactFileName);
+      const validatedOutputPath = await codexCliAdapter.createValidatedOutputFile(attempt, artifactFileName, output.content);
       const content = new TextDecoder("utf-8", { fatal: true }).decode(await readFile(validatedOutputPath));
       artifactDescriptors.push({
         artifact_id: artifactId,
@@ -1055,20 +1483,27 @@ async function persistSchedulerFailureAttention(runId: string, failures: Schedul
 }
 
 async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<NodeExecutionResult> {
-  const lockName = safeId(nodeRunId);
-  const lockDir = path.join(workspaceDir, "runs", runId, "locks", `${lockName}.lock`);
-  await mkdir(path.dirname(lockDir), { recursive: true });
-  try {
-    await mkdir(lockDir, { recursive: false });
-  } catch {
+  const lock = await acquireRunMutationLock(runId);
+  if (!lock) {
     return {
       accepted: false,
       status_code: 409,
-      error: { code: "operation_in_progress", message: "NodeRun already has an execute operation in progress." }
+      error: { code: "operation_in_progress", message: "Run already has a node execution commit in progress." }
     };
   }
 
   try {
+    const transactionPath = nodeCommitTransactionRelativePath(runId, nodeRunId);
+    const pendingTransaction = await readJsonOptional<NodeCommitTransaction>(transactionPath);
+    if (pendingTransaction) {
+      await applyNodeCommitTransaction(runId, pendingTransaction);
+      return {
+        accepted: true,
+        invocation: pendingTransaction.invocation,
+        adapter_result: pendingTransaction.adapter_result,
+        committed: pendingTransaction.committed
+      };
+    }
     const lockedBundle = await readRunBundle(runId);
     const runSpec = lockedBundle.run as unknown as RunSpec;
     const nodeRuns = lockedBundle.nodes as NodeRun[];
@@ -1161,61 +1596,72 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       producer: targetNodeRun.agent_id ?? "mock-runner",
       createdAt: result.received_at
     });
-    for (const descriptor of result.artifact_descriptors) await writeArtifactDescriptorFile(descriptor);
+    const rollbackArtifactFiles = await stageArtifactDescriptorFiles(result.artifact_descriptors);
+    let factCommitStarted = false;
+    try {
+      const attempts = (await readJsonOptional<NodeAttempt[]>(`runs/${runId}/attempts.json`)) ?? [];
+      const createdGates = buildGateInstancesForArtifacts({ workflow: lockedBundle.workflow, runId, artifacts: createdArtifacts, descriptors: result.artifact_descriptors });
+      const committedStatus: NodeRun["status"] = result.status === "succeeded" ? (createdGates.length > 0 ? "reviewing" : "done") : "failed";
+      targetNodeRun.status = committedStatus;
+      targetNodeRun.updated_at = result.received_at;
+      targetNodeRun.output_artifacts = Array.from(new Set([...targetNodeRun.output_artifacts, ...createdArtifacts.map((artifact) => artifact.artifact_id)]));
 
-    const attempts = (await readJsonOptional<NodeAttempt[]>(`runs/${runId}/attempts.json`)) ?? [];
-    const createdGates = buildGateInstancesForArtifacts({ workflow: lockedBundle.workflow, runId, artifacts: createdArtifacts, descriptors: result.artifact_descriptors });
-    const committedStatus: NodeRun["status"] = result.status === "succeeded" ? (createdGates.length > 0 ? "reviewing" : "done") : "failed";
-    targetNodeRun.status = committedStatus;
-    targetNodeRun.updated_at = result.received_at;
-    targetNodeRun.output_artifacts = Array.from(new Set([...targetNodeRun.output_artifacts, ...createdArtifacts.map((artifact) => artifact.artifact_id)]));
+      const nextAttempts = [...attempts, attempt];
+      const nextArtifacts = [...artifacts, ...createdArtifacts];
+      const nextGates = [...gates, ...createdGates];
+      if (committedStatus === "done") advanceDownstreamNodes(lockedBundle.workflow, nodeRuns, nextArtifacts, targetNodeRun.node_id, result.received_at);
+      runSpec.status = "running";
 
-    const nextAttempts = [...attempts, attempt];
-    const nextArtifacts = [...artifacts, ...createdArtifacts];
-    const nextGates = [...gates, ...createdGates];
-    if (committedStatus === "done") advanceDownstreamNodes(lockedBundle.workflow, nodeRuns, nextArtifacts, targetNodeRun.node_id, result.received_at);
-    runSpec.status = "running";
-
-    await writeJson(`runs/${runId}/run_spec.json`, runSpec);
-    await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
-    await writeJson(`runs/${runId}/attempts.json`, nextAttempts);
-    await writeJson(`runs/${runId}/artifacts.json`, nextArtifacts);
-    await writeJson(`runs/${runId}/gates.json`, nextGates);
-
-    const runnerEvents = createRunnerTraceEvents({ invocation, result, committedNodeStatus: committedStatus });
-    const artifactEvents = createdArtifacts.map((artifact) => ({
-      event_id: `evt_${artifact.artifact_id}_created`,
-      run_id: runId,
-      type: "artifact_manifest_created",
-      subject: { type: "ArtifactManifest", id: artifact.artifact_id },
-      message: `ArtifactManifest ${artifact.artifact_id} created by Orchestrator`,
-      created_at: artifact.created_at
-    }));
-    const gateEvents = createdGates.map((gate) => ({
-      event_id: `evt_${gate.gate_instance_id}_pending`,
-      run_id: runId,
-      type: "gate_pending_review",
-      subject: { type: "GateInstance", id: gate.gate_instance_id },
-      message: `GateInstance ${gate.gate_instance_id} pending review`,
-      created_at: result.received_at
-    }));
-    const events = [...runnerEvents, ...artifactEvents, ...gateEvents];
-    for (const event of events) await appendEvent(runId, event);
-
-    return {
-      accepted: true,
-      invocation,
-      adapter_result: result,
-      committed: {
-        node_run: targetNodeRun,
+      const runnerEvents = createRunnerTraceEvents({ invocation, result, committedNodeStatus: committedStatus });
+      const artifactEvents = createdArtifacts.map((artifact) => ({
+        event_id: `evt_${artifact.artifact_id}_created`,
+        run_id: runId,
+        type: "artifact_manifest_created",
+        subject: { type: "ArtifactManifest", id: artifact.artifact_id },
+        message: `ArtifactManifest ${artifact.artifact_id} created by Orchestrator`,
+        created_at: artifact.created_at
+      }));
+      const gateEvents = createdGates.map((gate) => ({
+        event_id: `evt_${gate.gate_instance_id}_pending`,
+        run_id: runId,
+        type: "gate_pending_review",
+        subject: { type: "GateInstance", id: gate.gate_instance_id },
+        message: `GateInstance ${gate.gate_instance_id} pending review`,
+        created_at: result.received_at
+      }));
+      const events = [...runnerEvents, ...artifactEvents, ...gateEvents];
+      const transaction: NodeCommitTransaction = {
+        node_run_id: nodeRunId,
+        invocation,
+        adapter_result: result,
+        node_updates: nodeRuns,
         attempt,
         artifacts: createdArtifacts,
         gates: createdGates,
-        created_events: events.map((event) => event.event_id)
-      }
-    };
+        events,
+        committed: {
+          node_run: targetNodeRun,
+          attempt,
+          artifacts: createdArtifacts,
+          gates: createdGates,
+          created_events: events.map((event) => event.event_id)
+        }
+      };
+      await writeJsonAtomically(transactionPath, transaction);
+      factCommitStarted = true;
+      await applyNodeCommitTransaction(runId, transaction);
+      return {
+        accepted: true,
+        invocation,
+        adapter_result: result,
+        committed: transaction.committed
+      };
+    } catch (error) {
+      if (!factCommitStarted) await rollbackArtifactFiles();
+      throw error;
+    }
   } finally {
-    await rm(lockDir, { recursive: true, force: true });
+    await lock.release();
   }
 }
 
@@ -1226,7 +1672,7 @@ function buildSchedulerDecisions(workflow: WorkflowSpec, nodes: NodeRun[], gates
   }
   const nodeOrder = new Map(workflow.nodes.map((node, index) => [node.id, index]));
   return nodes
-    .filter((node) => ["queued", "blocked", "reviewing", "waiting"].includes(node.status))
+    .filter((node) => ["queued", "running", "blocked", "reviewing", "waiting"].includes(node.status))
     .sort((a, b) => (nodeOrder.get(a.node_id) ?? 9999) - (nodeOrder.get(b.node_id) ?? 9999))
     .map((node): SchedulerDecision => {
       const gate = pendingGateByNode.get(node.node_id);
@@ -1240,13 +1686,13 @@ function buildSchedulerDecisions(workflow: WorkflowSpec, nodes: NodeRun[], gates
           gate_instance_id: gate.gate_instance_id
         };
       }
-      if (node.status === "queued") {
+      if (node.status === "queued" || node.status === "running") {
         return {
           node_run_id: node.node_run_id,
           node_id: node.node_id,
           status: node.status,
           decision: "execute",
-          reason: "queued NodeRun is executable"
+          reason: node.status === "running" ? "running NodeRun may have a recoverable commit journal" : "queued NodeRun is executable"
         };
       }
       return {
@@ -1272,6 +1718,7 @@ function schedulerTickLimits(value: unknown) {
 }
 
 async function buildSchedulerPlan(runId: string, maxNodes: number) {
+  await recoverPendingNodeCommitTransactions(runId);
   const bundle = await readRunBundle(runId);
   const decisions = buildSchedulerDecisions(bundle.workflow, bundle.nodes as NodeRun[], bundle.gates as GateInstance[]);
   const executable = decisions.filter((decision) => decision.decision === "execute").slice(0, maxNodes);
@@ -1749,6 +2196,10 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const body = await parseBody(req);
     const workflowId = String(body.workflow_id ?? "");
     if (!workflowId) return sendError(res, 400, "workflow_required", "workflow_id is required");
+    const workflowValidation = validateWorkflowSpec(await readWorkflow(workflowId));
+    if (!workflowValidation.valid) {
+      return sendJson(res, 422, { error: { code: "invalid_workflow_spec", message: "WorkflowSpec must be valid before creating a RunDraft.", recoverable: true }, validation: workflowValidation });
+    }
     const created = await runDraftStore.create({
       draft_id: createRunDraftId(),
       workflow_id: workflowId,
@@ -2010,6 +2461,10 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     }
     const workflowId = String(body.workflow_id ?? "content-production-v0");
     const workflow = await readWorkflow(workflowId);
+    const validation = validateWorkflowSpec(workflow);
+    if (!validation.valid) {
+      return sendJson(res, 422, { error: { code: "invalid_workflow_spec", message: "WorkflowSpec must be valid before creating a Run.", recoverable: true }, validation });
+    }
     const runId = `run-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 17)}-${Math.random().toString(36).slice(2, 6)}`;
     const created = createRunFromWorkflow(workflow, {
       runId,
@@ -2198,13 +2653,9 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     }
     if (req.method === "POST" && parts[4] === "rework") {
       const body = await parseBody(req);
-      const lockName = safeId(gateId);
-      const lockDir = path.join(workspaceDir, "runs", runId, "locks", `${lockName}.rework.lock`);
-      await mkdir(path.dirname(lockDir), { recursive: true });
-      try {
-        await mkdir(lockDir, { recursive: false });
-      } catch {
-        return sendError(res, 409, "operation_in_progress", "GateInstance already has a rework operation in progress.");
+      const lock = await acquireRunMutationLock(runId);
+      if (!lock) {
+        return sendError(res, 409, "operation_in_progress", "Run already has a fact mutation in progress.");
       }
 
       try {
@@ -2331,19 +2782,15 @@ async function route(req: IncomingMessage, res: ServerResponse) {
           next_suggested_actions: ["review_rework_gate"]
         });
       } finally {
-        await rm(lockDir, { recursive: true, force: true });
+        await lock.release();
       }
     }
     if (req.method === "POST" && parts[4] === "decision") {
       const body = await parseBody(req);
       const decisionValue = body.decision === "reject" || body.decision === "request_changes" ? body.decision : "approve";
-      const lockName = safeId(gateId);
-      const lockDir = path.join(workspaceDir, "runs", runId, "locks", `${lockName}.gate.lock`);
-      await mkdir(path.dirname(lockDir), { recursive: true });
-      try {
-        await mkdir(lockDir, { recursive: false });
-      } catch {
-        return sendError(res, 409, "operation_in_progress", "GateInstance already has a decision operation in progress.");
+      const lock = await acquireRunMutationLock(runId);
+      if (!lock) {
+        return sendError(res, 409, "operation_in_progress", "Run already has a fact mutation in progress.");
       }
 
       try {
@@ -2404,7 +2851,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
           next_suggested_actions: decision.decision === "approve" ? ["continue_downstream"] : ["create_rework_attempt"]
         });
       } finally {
-        await rm(lockDir, { recursive: true, force: true });
+        await lock.release();
       }
     }
   }
@@ -2451,8 +2898,29 @@ const server = createServer((req, res) => {
   });
 });
 
+const workspaceInstanceLock = await acquireWorkspaceInstanceLock();
+try {
+  await recoverStaleMutationLocksAtStartup();
+} catch (error) {
+  await workspaceInstanceLock.release();
+  throw error;
+}
+
 server.listen(port, "127.0.0.1", () => {
   console.log(`Miracle Local Sidecar listening on http://127.0.0.1:${port}`);
   console.log(`Workspace: ${workspaceDir}`);
   console.log(`Runtime workspace: ${runtimeWorkspaceDir}`);
 });
+
+let shutdownStarted = false;
+const shutdown = () => {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  server.close(() => {
+    workspaceInstanceLock.release()
+      .catch((error) => console.error("Failed to release Sidecar instance lock", error))
+      .finally(() => process.exit(0));
+  });
+};
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
