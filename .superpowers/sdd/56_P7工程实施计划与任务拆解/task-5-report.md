@@ -144,3 +144,51 @@ P7-06 已完成。功能提交：`dc4195d7f91721f44f11a12e4f4de0b5f2d281b3`（`�
 
 - 保留先前的 credential 回显脱敏、外部 abort、`api_path`、非 2xx、非法 UTF-8 安全修复。
 - 未实现 DeepSeek、Kimi、MiniMax 的真实 Driver，未实现 ProviderRouter 或 fallback，未引入 OpenAI SDK 或 OpenAI 官方服务。
+
+## 全局审查第三轮修复（2026-07-31）
+
+功能修复提交：`ba16b0aeff81268b28b08e8e54cfb2fea5cc0f15`（`完善Model API授权与持久化收据`）。报告提交：待提交。
+
+### RED
+
+1. `npm run test -w packages/core -- model-api.test.ts`
+   - 结果：失败，3 个新增用例失败；已声明但仅授权 `provider-a` 的 credential 被 `provider-b` profile 接受，且 `blob:`、`ftp:` base_url 被接受。
+2. `npm run test -w apps/sidecar -- model-api-adapter.test.ts`
+   - 结果：失败；profile base_url 含 userinfo 时，即使恶意 Driver 给出同源 request，Adapter 仍返回 `succeeded`，而不是 `provider_request_invalid`。
+3. `npm run test -w apps/sidecar -- model-api-server.test.ts`
+   - 结果：失败；provider scope 不匹配时 fake provider 收到 `Authorization: Bearer fixture-secret`，并且终态后不存在 `model-api-operations/<operation_id>.json`。
+
+### GREEN 与验证
+
+1. `npm run test -w packages/core -- model-api.test.ts`
+   - 结果：通过，11 tests。
+2. `npm run test -w apps/sidecar -- model-api-adapter.test.ts`
+   - 结果：通过，17 tests。
+3. `npm run test -w apps/sidecar -- model-api-server.test.ts`
+   - 结果：通过，4 tests；包括 Sidecar 重启后的重复取消。
+4. `npm run typecheck -w packages/core` 与 `npm run typecheck -w apps/sidecar`
+   - 结果：均通过。
+5. `npm run build -w packages/core` 与 `npm run build -w apps/sidecar`
+   - 结果：均通过。
+6. `npm run test -w packages/core`
+   - 结果：通过，8 files、125 tests。
+7. `npm run test -w apps/sidecar`
+   - 结果：通过，12 files、210 tests。
+8. `git diff --check`
+   - 结果：通过。
+
+### 修复文件
+
+- 修改 `packages/core/src/schemas.ts`、`packages/core/test/model-api.test.ts`：ProviderProfile 的 credential_ref 必须声明，且 required_credentials.providers 存在时必须包含 profile.provider；base_url 仅允许无 userinfo 的 HTTP(S)。
+- 修改 `apps/sidecar/src/model-api-adapter.ts`、`apps/sidecar/test/model-api-adapter.test.ts`：Adapter 在 Driver buildRequest 后再次校验 profile base_url 为无 userinfo 的 HTTP(S)，再验证 request 的 scheme、userinfo 和完全相同的 origin；覆盖 `blob:`、`ftp:` 和 userinfo 恶意 Driver 探针。
+- 修改 `apps/sidecar/src/server.ts`、`apps/sidecar/test/model-api-server.test.ts`：执行前防御 provider scope，未授权时稳定返回 `credential_not_authorized` 且不读取/外发 credential；为每个终态 Model API operation 写入最小化、原子持久化 receipt，取消端点先查询它并在 Sidecar 重启后仍返回 `already_finished`。
+
+### 接口与安全结论
+
+- 终态 receipt 位于 workspace 的 `model-api-operations/<operation_id>.json`，operation_id 仅接受 `[A-Za-z0-9_-]+`；内容只含 operation、attempt、run、node、adapter、provider、status 与完成时间，不含 credential。现有最多 128 条的内存 tombstone 只作读取加速。
+- provider scope 集成测试使用已声明的 key、仅授权 `provider-a`、profile 使用 `provider-b`。精确断言 `credential_not_authorized`，fake provider 没有收到 authorization 记录，API、持久化 attempt、事件和 Sidecar/provider 日志均不含 secret。
+- 没有引入 OpenAI SDK 或 OpenAI 官方服务；`openai-compatible` 仍只表示传输协议。没有实现真实厂商 Driver、ProviderRouter 或 fallback。
+
+### 已知限制
+
+- 终态 receipt 保留策略沿用 workspace receipt 机制；本任务不新增清理器。其路径受 operation_id 白名单约束，写入使用既有原子 JSON 写入流程。
