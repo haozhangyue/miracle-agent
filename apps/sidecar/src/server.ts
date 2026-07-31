@@ -90,6 +90,7 @@ const modelApiOperations = new Map<string, {
   node_run_id: string;
   adapter_id: string;
   provider: string;
+  provider_profile_id?: string;
   started_at: string;
   cancel_requested: boolean;
   controller: AbortController;
@@ -101,6 +102,7 @@ const modelApiOperationTombstones = new Map<string, {
   node_run_id: string;
   adapter_id: string;
   provider: string;
+  provider_profile_id?: string;
   status: AdapterResult["status"];
   completed_at: string;
 }>();
@@ -113,6 +115,7 @@ type ModelApiOperationReceipt = {
   node_run_id: string;
   adapter_id: string;
   provider: string;
+  provider_profile_id?: string;
   status: AdapterResult["status"];
   completed_at: string;
 };
@@ -173,16 +176,20 @@ type SchedulerFailure = {
 };
 type CanvasObject = CanvasLayout["objects"][number];
 type RunRoutingDecision = ProviderRoutingDecision & {
+  decision_id: string;
+  revision: number;
   node_run_id: string;
   current_adapter_kind?: "codex" | "model-api";
   target_attempt_number: number;
 };
 type FallbackConfirmation = {
   confirmation_id: string;
+  decision_id: string;
   operation_id: string;
   node_run_id: string;
   expected_current_adapter_kind: "codex" | "model-api";
   target_provider_profile_id: string;
+  target_attempt_number: number;
   actor: string;
   status: "confirmed";
   confirmed_at: string;
@@ -190,6 +197,7 @@ type FallbackConfirmation = {
 type ProviderFallbackContext = {
   decision: RunRoutingDecision;
   selected_provider: string;
+  selected_profile_id: string;
   started_event: {
     event_id: string;
     run_id: string;
@@ -836,7 +844,7 @@ async function appendEvent(runId: string, event: unknown) {
   await withEventJournalLock(runId, () => appendEventLocked(runId, event));
 }
 
-async function appendEventIfMissing(runId: string, event: { event_id: string }) {
+async function appendEventIfMissing(runId: string, event: { event_id: string; [key: string]: unknown }) {
   return withEventJournalLock(runId, async () => {
     const journal = await readEventJournalLocked(runId);
     const existingIds = new Set(journal.events.map((item) => String(item.event_id ?? "")));
@@ -891,11 +899,39 @@ async function readFallbackConfirmations(runId: string) {
   return (await readJsonOptional<FallbackConfirmation[]>(fallbackConfirmationsPath(runId))) ?? [];
 }
 
-async function persistRoutingDecision(runId: string, decision: RunRoutingDecision) {
+async function persistRoutingDecision(
+  runId: string,
+  decision: Omit<RunRoutingDecision, "decision_id" | "revision">
+): Promise<{ decision: RunRoutingDecision; created: boolean }> {
   const current = await readRoutingDecisions(runId);
-  const identity = (item: RunRoutingDecision) => `${item.operation_id}\0${item.node_run_id}\0${item.target_attempt_number}`;
-  const next = [...current.filter((item) => identity(item) !== identity(decision)), decision];
-  await writeJsonAtomically(routingDecisionsPath(runId), next);
+  const identity = (item: { operation_id: string; node_run_id: string; target_attempt_number: number }) =>
+    `${item.operation_id}\0${item.node_run_id}\0${item.target_attempt_number}`;
+  const revisions = current.filter((item) => identity(item) === identity(decision));
+  const latest = revisions.sort((left, right) => left.revision - right.revision).at(-1);
+  const comparable = (item: Omit<RunRoutingDecision, "decision_id" | "revision"> | RunRoutingDecision) => ({
+    operation_id: item.operation_id,
+    node_run_id: item.node_run_id,
+    current_adapter_kind: item.current_adapter_kind,
+    target_attempt_number: item.target_attempt_number,
+    selected_adapter_kind: item.selected_adapter_kind,
+    selected_provider_profile_id: item.selected_provider_profile_id,
+    candidate_profile_ids: item.candidate_profile_ids,
+    rejected_candidates: item.rejected_candidates,
+    reason_codes: item.reason_codes,
+    estimated_cost: item.estimated_cost,
+    requires_confirmation: item.requires_confirmation
+  });
+  if (latest && JSON.stringify(comparable(latest)) === JSON.stringify(comparable(decision))) {
+    return { decision: latest, created: false };
+  }
+  const revision = (latest?.revision ?? 0) + 1;
+  const decisionId = `route_${createHash("sha256")
+    .update(JSON.stringify([decision.operation_id, decision.node_run_id, decision.target_attempt_number, revision, comparable(decision)]))
+    .digest("hex")
+    .slice(0, 24)}`;
+  const persisted = { ...decision, decision_id: decisionId, revision };
+  await writeJsonAtomically(routingDecisionsPath(runId), [...current, persisted]);
+  return { decision: persisted, created: true };
 }
 
 function adapterKindFromAttempt(attempt: NodeAttempt): "codex" | "model-api" | undefined {
@@ -1016,13 +1052,24 @@ async function buildProviderFallbackContext(input: {
     },
     decided_at: input.decidedAt
   });
-  const record: RunRoutingDecision = {
+  const draftRecord: Omit<RunRoutingDecision, "decision_id" | "revision"> = {
     ...decision,
     node_run_id: input.nodeRun.node_run_id,
     current_adapter_kind: currentAdapterKind,
     target_attempt_number: input.activeRetry.attempt_number
   };
-  await persistRoutingDecision(input.runId, record);
+  const persistedDecision = await persistRoutingDecision(input.runId, draftRecord);
+  const record = persistedDecision.decision;
+  if (persistedDecision.created) {
+    await appendEventIfMissing(input.runId, {
+      event_id: `evt_${record.decision_id}`,
+      run_id: input.runId,
+      type: "provider_routing_decided",
+      subject: { type: "NodeRun", id: input.nodeRun.node_run_id },
+      message: `Provider routing revision ${record.revision}: ${record.reason_codes.join(", ")}`,
+      created_at: record.decided_at
+    });
+  }
   if (!decision.selected_provider_profile_id) return { confirmation_required: false };
   const selectedEntry = catalog.find((entry) => entry.profile.id === decision.selected_provider_profile_id);
   if (!selectedEntry) return { confirmation_required: false };
@@ -1034,13 +1081,20 @@ async function buildProviderFallbackContext(input: {
     message: `Provider fallback started: ${failedProvider ?? currentAdapterKind} -> ${selectedEntry.profile.provider}`,
     created_at: input.decidedAt
   };
-  const context = { decision: record, selected_provider: selectedEntry.profile.provider, started_event: startedEvent };
+  const context = {
+    decision: record,
+    selected_provider: selectedEntry.profile.provider,
+    selected_profile_id: selectedEntry.profile.id,
+    started_event: startedEvent
+  };
   if (!decision.requires_confirmation) return { context, confirmation_required: false };
   const confirmed = (await readFallbackConfirmations(input.runId)).some((confirmation) =>
-    confirmation.operation_id === decision.operation_id
+    confirmation.decision_id === record.decision_id
+    && confirmation.operation_id === record.operation_id
     && confirmation.node_run_id === input.nodeRun.node_run_id
     && confirmation.expected_current_adapter_kind === currentAdapterKind
-    && confirmation.target_provider_profile_id === decision.selected_provider_profile_id
+    && confirmation.target_provider_profile_id === record.selected_provider_profile_id
+    && confirmation.target_attempt_number === record.target_attempt_number
     && confirmation.status === "confirmed"
   );
   return { context, confirmation_required: !confirmed };
@@ -1892,8 +1946,27 @@ async function executeSidecarAdapter(input: {
     return { ...result, provider_receipt: { ...result.provider_receipt, operation_id: "op_mismatched" } };
   }
   if (input.adapter.kind === "model-api") {
-    const catalogEntry = (await readProviderCatalogEntries()).find((candidate) => candidate.profile.provider === input.invocation.provider);
-    const profile = catalogEntry?.profile ?? input.adapter.provider_profiles?.find((candidate) => candidate.provider === input.invocation.provider);
+    const catalogEntries = (await readProviderCatalogEntries())
+      .filter((candidate) => candidate.profile.provider === input.invocation.provider);
+    const manifestProfiles = (input.adapter.provider_profiles ?? [])
+      .filter((candidate) => candidate.provider === input.invocation.provider);
+    const requestedProfileId = input.invocation.provider_profile_id;
+    const catalogEntry = requestedProfileId
+      ? catalogEntries.find((candidate) => candidate.profile.id === requestedProfileId)
+      : catalogEntries.length === 1 ? catalogEntries[0] : undefined;
+    const manifestProfile = !requestedProfileId && catalogEntries.length === 0 && manifestProfiles.length === 1
+      ? manifestProfiles[0]
+      : undefined;
+    const profile = catalogEntry?.profile ?? manifestProfile;
+    if (!requestedProfileId && (catalogEntries.length > 1 || (catalogEntries.length === 0 && manifestProfiles.length > 1))) {
+      return buildAdapterUnavailableResult({
+        invocation: input.invocation,
+        message: `Provider ${input.invocation.provider} has multiple profiles; an explicit provider_profile_id is required.`,
+        errorCode: "provider_profile_ambiguous",
+        recoverable: false,
+        receivedAt
+      });
+    }
     if (!profile) {
       return buildAdapterUnavailableResult({
         invocation: input.invocation,
@@ -1921,6 +1994,15 @@ async function executeSidecarAdapter(input: {
         invocation: input.invocation,
         message: `No registered ProviderDriver is available for provider ${profile.provider}.`,
         errorCode: "provider_driver_unregistered",
+        recoverable: false,
+        receivedAt
+      });
+    }
+    if (profile.verification_status !== "healthy") {
+      return buildAdapterUnavailableResult({
+        invocation: input.invocation,
+        message: `ProviderProfile ${profile.id} is not healthy and cannot execute.`,
+        errorCode: "provider_not_healthy",
         recoverable: false,
         receivedAt
       });
@@ -1954,6 +2036,7 @@ async function executeSidecarAdapter(input: {
       node_run_id: input.invocation.node_run_id,
       adapter_id: input.invocation.adapter_id,
       provider: input.invocation.provider,
+      provider_profile_id: profile.id,
       started_at: new Date().toISOString(),
       cancel_requested: false,
       controller
@@ -1975,6 +2058,7 @@ async function executeSidecarAdapter(input: {
         node_run_id: input.invocation.node_run_id,
         adapter_id: input.invocation.adapter_id,
         provider: input.invocation.provider,
+        provider_profile_id: profile.id,
         status: result?.status ?? "unknown",
         completed_at: new Date().toISOString()
       };
@@ -3154,6 +3238,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       resolvedInputs,
       operationId: activeRetry?.operation_id,
       attemptNumber: activeRetry?.attempt_number,
+      providerProfileId: fallbackContext?.selected_profile_id,
       remainingTotalBudgetMs: retryRemainingBudgetMs
     });
     let dispatchIntent = existingIntent;
@@ -4571,77 +4656,110 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     if (req.method === "POST" && parts[4] === "nodes" && parts[5] && parts[6] === "fallback-confirmation") {
       const nodeRunId = getId(parts, 5);
       const body = await parseBody(req);
+      const decisionId = typeof body.decision_id === "string" ? body.decision_id : "";
       const operationId = typeof body.operation_id === "string" ? body.operation_id : "";
       const expectedKind = body.expected_current_adapter_kind === "codex" || body.expected_current_adapter_kind === "model-api"
         ? body.expected_current_adapter_kind
         : undefined;
       const targetProfileId = typeof body.target_provider_profile_id === "string" ? body.target_provider_profile_id : "";
       const actor = typeof body.actor === "string" ? body.actor.trim() : "";
-      if (!operationId || !expectedKind || !targetProfileId || !actor) {
-        return sendError(res, 400, "fallback_confirmation_invalid", "operation_id, expected_current_adapter_kind, target_provider_profile_id and actor are required.");
+      if (!decisionId || !operationId || !expectedKind || !targetProfileId || !actor) {
+        return sendError(res, 400, "fallback_confirmation_invalid", "decision_id, operation_id, expected_current_adapter_kind, target_provider_profile_id and actor are required.");
       }
       const lock = await acquireRunMutationLock(runId);
       if (!lock) return sendError(res, 409, "operation_in_progress", "Run already has a state mutation in progress.");
+      let responseStatus = 500;
+      let responseBody: Record<string, unknown> = {
+        error: { code: "fallback_confirmation_failed", message: "Fallback confirmation did not complete." }
+      };
       try {
-        const [nodes, attempts, decisions, confirmations] = await Promise.all([
+        const [nodes, attempts, decisions, confirmations, schedules] = await Promise.all([
           readJson<NodeRun[]>(`runs/${runId}/nodes.json`),
           readJson<NodeAttempt[]>(`runs/${runId}/attempts.json`),
           readRoutingDecisions(runId),
-          readFallbackConfirmations(runId)
+          readFallbackConfirmations(runId),
+          retryScheduleStore.list(runId)
         ]);
-        if (!nodes.some((node) => node.node_run_id === nodeRunId)) return sendError(res, 404, "not_found", "NodeRun not found");
-        const currentDecision = decisions
-          .filter((decision) => decision.node_run_id === nodeRunId)
-          .sort((left, right) => Date.parse(left.decided_at) - Date.parse(right.decided_at))
-          .at(-1);
-        const operationAttempts = attempts
-          .filter((attempt) => attempt.node_run_id === nodeRunId && attempt.operation_id === operationId)
-          .sort((left, right) => (left.attempt_number ?? 1) - (right.attempt_number ?? 1));
-        const currentKind = operationAttempts.length > 0 ? adapterKindFromAttempt(operationAttempts.at(-1)!) : undefined;
-        if (
-          !currentDecision
-          || currentDecision.operation_id !== operationId
-          || currentDecision.requires_confirmation !== true
-          || currentDecision.selected_adapter_kind !== "model-api"
-          || currentDecision.current_adapter_kind !== expectedKind
-          || currentKind !== expectedKind
-          || currentDecision.selected_provider_profile_id !== targetProfileId
-        ) {
-          return sendError(res, 409, "routing_decision_not_current", "Fallback confirmation does not match the current routing decision and Attempt facts.");
+        if (!nodes.some((node) => node.node_run_id === nodeRunId)) {
+          responseStatus = 404;
+          responseBody = { error: { code: "not_found", message: "NodeRun not found" } };
+        } else {
+          const currentDecision = decisions
+            .filter((decision) => decision.node_run_id === nodeRunId)
+            .sort((left, right) => left.revision - right.revision)
+            .at(-1);
+          const operationAttempts = attempts
+            .filter((attempt) => attempt.node_run_id === nodeRunId && attempt.operation_id === operationId)
+            .sort((left, right) => (left.attempt_number ?? 1) - (right.attempt_number ?? 1));
+          const currentKind = operationAttempts.length > 0 ? adapterKindFromAttempt(operationAttempts.at(-1)!) : undefined;
+          const currentSchedule = schedules.find((schedule) =>
+            schedule.operation_id === operationId
+            && schedule.node_run_id === nodeRunId
+            && schedule.attempt_number === currentDecision?.target_attempt_number
+          );
+          if (
+            !currentDecision
+            || currentDecision.decision_id !== decisionId
+            || currentDecision.operation_id !== operationId
+            || currentDecision.requires_confirmation !== true
+            || currentDecision.selected_adapter_kind !== "model-api"
+            || currentDecision.current_adapter_kind !== expectedKind
+            || currentKind !== expectedKind
+            || currentDecision.selected_provider_profile_id !== targetProfileId
+            || !currentSchedule
+          ) {
+            responseStatus = 409;
+            responseBody = {
+              error: {
+                code: "routing_decision_not_current",
+                message: "Fallback confirmation does not match the current routing decision, active RetrySchedule and Attempt facts."
+              }
+            };
+          } else {
+            const existing = confirmations.find((confirmation) =>
+              confirmation.decision_id === decisionId
+              && confirmation.operation_id === operationId
+              && confirmation.node_run_id === nodeRunId
+              && confirmation.expected_current_adapter_kind === expectedKind
+              && confirmation.target_provider_profile_id === targetProfileId
+              && confirmation.target_attempt_number === currentDecision.target_attempt_number
+              && confirmation.status === "confirmed"
+            );
+            if (existing) {
+              responseStatus = 200;
+              responseBody = { confirmation: existing, reused: true };
+            } else {
+              const confirmedAt = new Date().toISOString();
+              const confirmation: FallbackConfirmation = {
+                confirmation_id: `fallback_confirmation_${safeId(operationId)}_${Date.now()}`,
+                decision_id: decisionId,
+                operation_id: operationId,
+                node_run_id: nodeRunId,
+                expected_current_adapter_kind: expectedKind,
+                target_provider_profile_id: targetProfileId,
+                target_attempt_number: currentDecision.target_attempt_number,
+                actor,
+                status: "confirmed",
+                confirmed_at: confirmedAt
+              };
+              await writeJsonAtomically(fallbackConfirmationsPath(runId), [...confirmations, confirmation]);
+              await appendEventIfMissing(runId, {
+                event_id: `evt_${confirmation.confirmation_id}`,
+                run_id: runId,
+                type: "provider_fallback_confirmed",
+                subject: { type: "NodeRun", id: nodeRunId },
+                message: `Provider fallback confirmed by ${actor} for ${targetProfileId}`,
+                created_at: confirmedAt
+              });
+              responseStatus = 201;
+              responseBody = { confirmation, reused: false };
+            }
+          }
         }
-        const existing = confirmations.find((confirmation) =>
-          confirmation.operation_id === operationId
-          && confirmation.node_run_id === nodeRunId
-          && confirmation.expected_current_adapter_kind === expectedKind
-          && confirmation.target_provider_profile_id === targetProfileId
-          && confirmation.status === "confirmed"
-        );
-        if (existing) return sendJson(res, 200, { confirmation: existing, reused: true });
-        const confirmedAt = new Date().toISOString();
-        const confirmation: FallbackConfirmation = {
-          confirmation_id: `fallback_confirmation_${safeId(operationId)}_${Date.now()}`,
-          operation_id: operationId,
-          node_run_id: nodeRunId,
-          expected_current_adapter_kind: expectedKind,
-          target_provider_profile_id: targetProfileId,
-          actor,
-          status: "confirmed",
-          confirmed_at: confirmedAt
-        };
-        await writeJsonAtomically(fallbackConfirmationsPath(runId), [...confirmations, confirmation]);
-        const confirmedEvent = {
-          event_id: `evt_${confirmation.confirmation_id}`,
-          run_id: runId,
-          type: "provider_fallback_confirmed",
-          subject: { type: "NodeRun", id: nodeRunId },
-          message: `Provider fallback confirmed by ${actor} for ${targetProfileId}`,
-          created_at: confirmedAt
-        };
-        await appendEventIfMissing(runId, confirmedEvent);
-        return sendJson(res, 201, { confirmation, reused: false });
       } finally {
         await lock.release();
       }
+      return sendJson(res, responseStatus, responseBody);
     }
     if (req.method === "POST" && parts[4] === "scheduler" && parts[5] === "tick") {
       const body = await parseBody(req);

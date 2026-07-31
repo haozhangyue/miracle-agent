@@ -227,6 +227,7 @@ export interface AdapterInvocation {
   adapter_kind: "mock-local" | "codex" | "hermes" | "openclaw" | "official-api" | "model-api";
   adapter_id: string;
   provider: string;
+  provider_profile_id?: string;
   capability_requirements: string[];
   input_artifacts: string[];
   resolved_inputs: ResolvedNodeInput[];
@@ -436,6 +437,7 @@ export interface AdapterArtifactDescriptor {
 
 export interface ProviderReceipt extends Record<string, unknown> {
   provider: string;
+  provider_profile_id?: string;
   adapter_kind: AdapterInvocation["adapter_kind"];
   adapter_id: string;
   model?: string;

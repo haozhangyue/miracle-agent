@@ -61,6 +61,7 @@ async function executeProvider(
   const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as { profile: Record<string, unknown> };
   catalog.profile.base_url = fakeProviderBaseUrl;
   catalog.profile.api_path = apiPath;
+  catalog.profile.verification_status = "healthy";
   if (options.catalogDriverId) (catalog as { driver_id?: string }).driver_id = options.catalogDriverId;
   await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`, "utf8");
   if (options.catalog === "missing") {
@@ -71,6 +72,7 @@ async function executeProvider(
     if (!profile) throw new Error(`Missing manifest profile for ${provider}`);
     profile.base_url = fakeProviderBaseUrl;
     profile.api_path = apiPath;
+    profile.verification_status = "healthy";
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   }
 

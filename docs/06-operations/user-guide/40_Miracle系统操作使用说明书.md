@@ -364,8 +364,9 @@ reject GateDecision 不会推进下游；Scheduler 返回 `paused_for_gate`，�
 
 默认自动 Attempt 总数不超过 3。策略只允许 fixed/exponential 退避，并拒绝负数、NaN、
 Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5，模板可显式覆盖。
-当前版本不实现 Provider fallback。P7-07 已完成三家 Driver 工程接入，但三家凭证均缺失、
-真实 smoke 未执行，保持 `configured_unverified`；本阶段不使用 OpenAI SDK 或 OpenAI 官方 API。
+当前版本已实现受控 Provider fallback。P7-07 已完成三家 Driver 工程接入，P7-08 已完成
+同类 Model API 自动 fallback 与 Codex 跨 kind 人工确认；三家凭证仍缺失、真实 smoke 未执行，
+保持 `configured_unverified` 且不可执行。本阶段不使用 OpenAI SDK 或 OpenAI 官方 API。
 
 ### 5.14 配置与检查模型 Provider
 
@@ -419,6 +420,7 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
    curl -X POST http://127.0.0.1:4317/api/v0/runs/<runId>/nodes/<nodeRunId>/fallback-confirmation \
      -H 'content-type: application/json' \
      -d '{
+       "decision_id":"route_...",
        "operation_id":"op_...",
        "expected_current_adapter_kind":"codex",
        "target_provider_profile_id":"kimi-default",
@@ -426,9 +428,9 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
      }'
    ```
 
-   operation、当前 kind 或目标 Profile 任一不匹配时返回
-   `409 routing_decision_not_current`。确认不会修改历史 Attempt，也不会把未验证 Provider
-   自动升级为 healthy。
+   decision、operation、当前 kind、活动 RetrySchedule 或目标 Profile 任一不匹配时返回
+   `409 routing_decision_not_current`。Decision 按 revision 追加保存，确认不会修改历史 Attempt，
+   也不会把未验证 Provider 自动升级为 healthy。
 
 ## 6. 当前版本新增能力
 
@@ -543,7 +545,8 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
    只读展示，但仍需使用仓库外 runtime workspace 才能看到真实导入数据。
 2. Codex CLI 已开放按 ExecutionPlan 的多节点连续调度、Gate 暂停/批准恢复和显式 failed
    的限次 retry；DeepSeek/Kimi/MiniMax Driver 已开放工程接入，但本轮三家凭证缺失、真实
-   smoke 未执行，均为 `configured_unverified`。Provider fallback、Hermes 和 OpenClaw 尚未实现。
+   smoke 未执行，均为 `configured_unverified` 且不可执行。受控 Provider fallback 已实现；Hermes
+   和 OpenClaw 尚未实现。
 3. 没有云端控制平面、多租户、账号、权限、计费和团队协作。
 4. 没有移动端或 APP 适配，本阶段只面向 Web 工作台。
 5. Infinite Canvas 仍是草稿态，不是完整自由画布产品。

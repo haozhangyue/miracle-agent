@@ -439,6 +439,7 @@ export const adapterInvocationSchema = z.object({
   adapter_kind: adapterKindSchema,
   adapter_id: z.string().min(1),
   provider: z.string().min(1),
+  provider_profile_id: z.string().min(1).optional(),
   capability_requirements: z.array(z.string()),
   input_artifacts: z.array(z.string()),
   resolved_inputs: z.array(resolvedNodeInputSchema),
@@ -456,6 +457,7 @@ export const adapterInvocationSchema = z.object({
 
 export const providerReceiptSchema = z.object({
   provider: z.string().min(1),
+  provider_profile_id: z.string().min(1).optional(),
   adapter_kind: adapterKindSchema,
   adapter_id: z.string().min(1),
   model: z.string().min(1).optional(),

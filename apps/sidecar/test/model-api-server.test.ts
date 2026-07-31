@@ -57,6 +57,14 @@ async function writeModelProfile(mode: string) {
   profiles[0]!.base_url = providerBaseUrl;
   profiles[0]!.api_path = `/v1/chat/completions?mode=${mode}`;
   profiles[0]!.credential_ref = "MODEL_API_FIXTURE_CREDENTIAL";
+  profiles[0]!.verification_status = "healthy";
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+async function setFixtureManifestVerification(status: "configured_unverified" | "healthy") {
+  const manifestPath = path.join(workspace, "adapters", "model-api.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { provider_profiles: Array<Record<string, unknown>> };
+  manifest.provider_profiles[0]!.verification_status = status;
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
@@ -183,6 +191,21 @@ describe("Model API Sidecar integration", () => {
 
     expect(response.status).toBe(200);
     expect(JSON.stringify([body, persisted, events, sidecarOutput])).not.toContain("fixture-secret");
+  });
+
+  it("rejects a configured but unverified Provider Profile without sending a network request", async () => {
+    await writeModelProfile("record-authorization");
+    await setFixtureManifestVerification("configured_unverified");
+    await rm(path.join(workspace, "providers", "fixture-compatible.json"), { force: true });
+    const outputBefore = providerOutput;
+    const { runId, nodeRunId } = await createModelRun();
+
+    const response = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ adapter_result: { error: { code: "provider_not_healthy", recoverable: false } } });
+    expect(providerOutput).toBe(outputBefore);
   });
 
   it("projects registered catalog Drivers and rejects missing MiniMax credentials before fetch", async () => {

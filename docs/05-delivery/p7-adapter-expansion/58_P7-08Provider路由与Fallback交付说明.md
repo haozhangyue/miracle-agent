@@ -56,8 +56,8 @@ WorkflowSpec 硬编码。
 GET /api/v0/runs/:runId/routing-decisions
 ```
 
-返回 Run 的 `routing_decisions` 和 `fallback_confirmations`。Decision 包含候选、拒绝原因、
-预计成本、是否需要确认和决策时间，不包含凭证或输入正文。
+返回 Run 的 `routing_decisions` 和 `fallback_confirmations`。Decision 以不可变 `decision_id +
+revision` 追加保存，包含候选、拒绝原因、预计成本、是否需要确认和决策时间，不包含凭证或输入正文。
 
 ### 4.2 确认跨 kind fallback
 
@@ -66,6 +66,7 @@ POST /api/v0/runs/:runId/nodes/:nodeRunId/fallback-confirmation
 Content-Type: application/json
 
 {
+  "decision_id": "route_...",
   "operation_id": "op_...",
   "expected_current_adapter_kind": "codex",
   "target_provider_profile_id": "kimi-default",
@@ -73,8 +74,8 @@ Content-Type: application/json
 }
 ```
 
-Sidecar 会重新核对当前 NodeAttempt、当前 Decision、Adapter kind 和目标 Profile。不存在当前
-决策、kind 不一致、目标变化或 operation 已变化时返回
+Sidecar 会重新核对当前 NodeAttempt、当前 Decision revision、活动 RetrySchedule、Adapter kind
+和目标 Profile。不存在当前决策、schedule 已消费、kind 不一致、目标变化或 operation 已变化时返回
 `409 routing_decision_not_current`，不会让旧确认覆盖新决策。重复提交同一有效确认返回已有记录。
 
 ## 5. 验收证据

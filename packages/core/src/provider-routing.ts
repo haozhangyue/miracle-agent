@@ -1,12 +1,18 @@
 import { providerRoutingInputSchema } from "./schemas";
 import type { ProviderRoutingCandidate, ProviderRoutingDecision, ProviderRoutingInput } from "./types";
 
-const recoverableFallbackErrors = new Set(["rate_limit", "provider_temporary_5xx", "network_error", "adapter_timeout", "adapter_process_error"]);
+const modelApiFallbackErrors = new Set(["rate_limit", "provider_temporary_5xx", "network_error", "adapter_timeout"]);
+const codexCrossKindFallbackErrors = new Set(["adapter_process_error", "network_error", "adapter_timeout"]);
 
 function rejectionReason(input: ProviderRoutingInput, candidate: ProviderRoutingCandidate) {
   if (!input.allowed_adapter_kinds.includes(candidate.adapter_kind)) return "adapter_kind_not_allowed";
-  if (input.failure && input.current_adapter_kind === "model-api" && candidate.adapter_kind !== input.current_adapter_kind) {
-    return "automatic_fallback_kind_mismatch";
+  if (input.failure) {
+    if (input.current_adapter_kind === "model-api" && candidate.adapter_kind !== "model-api") {
+      return "automatic_fallback_kind_mismatch";
+    }
+    if (input.current_adapter_kind === "codex" && candidate.adapter_kind !== "model-api") {
+      return "codex_fallback_requires_model_api_target";
+    }
   }
   if (!input.capability_requirements.every((capability) => candidate.capabilities.includes(capability))) return "capability_incomplete";
   if (!candidate.executable) return "adapter_not_executable";
@@ -41,7 +47,17 @@ export function selectProviderRoute(input: ProviderRoutingInput): ProviderRoutin
     decided_at: input.decided_at
   };
 
-  if (input.failure && !recoverableFallbackErrors.has(input.failure.error_code)) {
+  if (input.failure && !input.current_adapter_kind) {
+    return {
+      ...base,
+      rejected_candidates: rejected("fallback_current_adapter_kind_missing"),
+      reason_codes: ["fallback_current_adapter_kind_missing"]
+    };
+  }
+  const permittedFallbackErrors = input.current_adapter_kind === "codex"
+    ? codexCrossKindFallbackErrors
+    : modelApiFallbackErrors;
+  if (input.failure && !permittedFallbackErrors.has(input.failure.error_code)) {
     return { ...base, rejected_candidates: rejected("fallback_error_not_recoverable"), reason_codes: ["fallback_error_not_recoverable"] };
   }
   if (input.failure && input.failure.status !== "failed" && input.failure.status !== "timed_out") {

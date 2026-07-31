@@ -196,6 +196,44 @@ afterAll(async () => {
   await rm(tempRoot, { recursive: true, force: true });
 });
 
+async function prepareCrossKindRetry(operationId: string) {
+  const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workflow_id: crossKindWorkflow.id, execution_policy: "auto" })
+  });
+  const run = await runResponse.json() as { run_id: string; initial_node_runs: string[] };
+  expect(runResponse.status).toBe(201);
+  const nodeRunId = run.initial_node_runs[0]!;
+  const attemptedAt = new Date(Date.now() - 1_000).toISOString();
+  const runDir = path.join(workspace, `runs/${run.run_id}`);
+  const runSpec = JSON.parse(await readFile(path.join(runDir, "run_spec.json"), "utf8")) as { resolved_components: string[] };
+  runSpec.resolved_components = [...new Set([...runSpec.resolved_components, "codex-cli-real"])];
+  await writeFile(path.join(runDir, "run_spec.json"), `${JSON.stringify(runSpec, null, 2)}\n`, "utf8");
+  await writeFile(path.join(runDir, "attempts.json"), `${JSON.stringify([{
+    attempt_id: `attempt_${operationId}`,
+    node_run_id: nodeRunId,
+    operation_id: operationId,
+    attempt_number: 1,
+    attempt_kind: "execute",
+    status: "failed",
+    provider_receipt: { provider: "codex-local", adapter_kind: "codex", adapter_id: "codex-cli-real", operation_id: operationId },
+    error: { code: "adapter_process_error", message: "fixture", recoverable: true },
+    created_at: attemptedAt,
+    dispatched_at: attemptedAt,
+    received_at: attemptedAt
+  }], null, 2)}\n`, "utf8");
+  await writeFile(path.join(runDir, "retry_schedule.json"), `${JSON.stringify([{
+    operation_id: operationId,
+    node_run_id: nodeRunId,
+    attempt_number: 2,
+    reason_code: "retryable_error",
+    scheduled_for: attemptedAt,
+    budget_snapshot: { attempts_used: 1, elapsed_ms: 1_000, cost_used: 0, max_attempts: 2, total_time_budget_ms: 30_000, cost_budget: 5 }
+  }], null, 2)}\n`, "utf8");
+  return { runId: run.run_id, nodeRunId };
+}
+
 describe("provider fallback orchestration", () => {
   it("reuses the operation id and creates a new Attempt when falling back from DeepSeek 429 to Kimi", async () => {
     const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
@@ -212,9 +250,12 @@ describe("provider fallback orchestration", () => {
     expect(first).toMatchObject({ adapter_result: { status: "failed" }, retry_decision: { action: "schedule_retry" } });
 
     const secondResponse = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/execute`, { method: "POST" });
-    const second = await secondResponse.json() as { invocation: { operation_id: string; attempt_number: number; provider: string }; adapter_result: { status: string } };
+    const second = await secondResponse.json() as { invocation: { operation_id: string; attempt_number: number; provider: string; provider_profile_id?: string }; adapter_result: { status: string } };
     expect(secondResponse.status).toBe(200);
-    expect(second).toMatchObject({ invocation: { operation_id: first.invocation.operation_id, attempt_number: 2, provider: "kimi" }, adapter_result: { status: "succeeded" } });
+    expect(second).toMatchObject({
+      invocation: { operation_id: first.invocation.operation_id, attempt_number: 2, provider: "kimi", provider_profile_id: "kimi-default" },
+      adapter_result: { status: "succeeded", provider_receipt: { provider_profile_id: "kimi-default" } }
+    });
 
     const detail = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}`)).json() as {
       attempts: Array<{ operation_id: string; provider_receipt?: { provider?: string } }>;
@@ -230,6 +271,45 @@ describe("provider fallback orchestration", () => {
     expect(routing.routing_decisions).toContainEqual(expect.objectContaining({ selected_provider_profile_id: "kimi-default" }));
     const events = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/events`)).json() as { events: Array<{ type: string }> };
     expect(events.events.map((event) => event.type)).toEqual(expect.arrayContaining(["provider_fallback_started", "provider_fallback_completed"]));
+  });
+
+  it("executes the exact selected Profile when one Provider has multiple Profiles", async () => {
+    const sourcePath = path.join(workspace, "providers/kimi.json");
+    const alternatePath = path.join(workspace, "providers/kimi-alternate.json");
+    const alternate = JSON.parse(await readFile(sourcePath, "utf8")) as {
+      id: string;
+      display_name: string;
+      profile: { id: string; model: string };
+      routing: { user_priority: number; cost_tier: number };
+    };
+    alternate.id = "kimi-alternate";
+    alternate.display_name = "kimi alternate";
+    alternate.profile.id = "kimi-alternate-profile";
+    alternate.profile.model = "kimi-alternate-fixture";
+    alternate.routing = { user_priority: 0, cost_tier: 0 };
+    await writeFile(alternatePath, `${JSON.stringify(alternate, null, 2)}\n`, "utf8");
+    try {
+      const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workflow_id: fallbackWorkflow.id, execution_policy: "auto" })
+      });
+      const run = await runResponse.json() as { run_id: string; initial_node_runs: string[] };
+      const first = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/execute`, { method: "POST" })).json() as {
+        invocation: { operation_id: string };
+      };
+      const secondResponse = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/execute`, { method: "POST" });
+      expect(secondResponse.status).toBe(200);
+      expect(await secondResponse.json()).toMatchObject({
+        invocation: { operation_id: first.invocation.operation_id, provider: "kimi", provider_profile_id: "kimi-alternate-profile" },
+        adapter_result: {
+          status: "succeeded",
+          provider_receipt: { provider: "kimi", provider_profile_id: "kimi-alternate-profile", model: "kimi-alternate-fixture" }
+        }
+      });
+    } finally {
+      await rm(alternatePath, { force: true });
+    }
   });
 
   it("rejects healthy Provider profiles when the Model API Adapter is not executable", async () => {
@@ -283,6 +363,7 @@ describe("provider fallback orchestration", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        decision_id: "route_stale",
         operation_id: "op_stale",
         expected_current_adapter_kind: "codex",
         target_provider_profile_id: "deepseek-default",
@@ -301,6 +382,7 @@ describe("provider fallback orchestration", () => {
     });
     const run = await runResponse.json() as { run_id: string; initial_node_runs: string[] };
     const operationId = "op_confirmation_current";
+    const decisionId = "route_confirmation_current";
     await writeFile(path.join(workspace, `runs/${run.run_id}/attempts.json`), `${JSON.stringify([{
       attempt_id: `attempt_${operationId}`,
       node_run_id: run.initial_node_runs[0],
@@ -313,9 +395,12 @@ describe("provider fallback orchestration", () => {
       created_at: "2026-08-01T00:00:00.000Z"
     }], null, 2)}\n`, "utf8");
     await writeFile(path.join(workspace, `runs/${run.run_id}/routing_decisions.json`), `${JSON.stringify([{
+      decision_id: decisionId,
+      revision: 1,
       operation_id: operationId,
       node_run_id: run.initial_node_runs[0],
       current_adapter_kind: "codex",
+      target_attempt_number: 2,
       selected_adapter_kind: "model-api",
       selected_provider_profile_id: "kimi-default",
       candidate_profile_ids: ["kimi-default"],
@@ -324,11 +409,19 @@ describe("provider fallback orchestration", () => {
       requires_confirmation: true,
       decided_at: "2026-08-01T00:00:01.000Z"
     }], null, 2)}\n`, "utf8");
+    await writeFile(path.join(workspace, `runs/${run.run_id}/retry_schedule.json`), `${JSON.stringify([{
+      operation_id: operationId,
+      node_run_id: run.initial_node_runs[0],
+      attempt_number: 2,
+      reason_code: "retryable_error",
+      scheduled_for: "2026-08-01T00:00:00.000Z",
+      budget_snapshot: { attempts_used: 1, elapsed_ms: 1_000, cost_used: 0, max_attempts: 2, total_time_budget_ms: 30_000, cost_budget: 5 }
+    }], null, 2)}\n`, "utf8");
 
     const confirm = async (expectedKind: string, target: string) => fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/fallback-confirmation`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operation_id: operationId, expected_current_adapter_kind: expectedKind, target_provider_profile_id: target, actor: "test-operator" })
+      body: JSON.stringify({ decision_id: decisionId, operation_id: operationId, expected_current_adapter_kind: expectedKind, target_provider_profile_id: target, actor: "test-operator" })
     });
     expect((await confirm("model-api", "kimi-default")).status).toBe(409);
     expect((await confirm("codex", "deepseek-default")).status).toBe(409);
@@ -338,6 +431,10 @@ describe("provider fallback orchestration", () => {
     const repeated = await confirm("codex", "kimi-default");
     expect(repeated.status).toBe(200);
     expect(await repeated.json()).toMatchObject({ reused: true, confirmation: { operation_id: operationId } });
+    await writeFile(path.join(workspace, `runs/${run.run_id}/retry_schedule.json`), "[]\n", "utf8");
+    const staleAfterScheduleRemoval = await confirm("codex", "kimi-default");
+    expect(staleAfterScheduleRemoval.status).toBe(409);
+    expect(await staleAfterScheduleRemoval.json()).toMatchObject({ error: { code: "routing_decision_not_current" } });
   });
 
   it("executes a confirmed Codex-to-model-api fallback with the selected Provider", async () => {
@@ -387,11 +484,17 @@ describe("provider fallback orchestration", () => {
     const blocked = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}/execute`, { method: "POST" });
     expect(blocked.status).toBe(409);
     expect(await blocked.json()).toMatchObject({ error: { code: "fallback_confirmation_required" } });
+    const routing = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/routing-decisions`)).json() as {
+      routing_decisions: Array<{ decision_id: string; revision: number }>;
+    };
+    const decision = routing.routing_decisions.at(-1)!;
+    expect(decision).toMatchObject({ revision: 1 });
 
     const confirmed = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}/fallback-confirmation`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        decision_id: decision.decision_id,
         operation_id: operationId,
         expected_current_adapter_kind: "codex",
         target_provider_profile_id: "kimi-default",
@@ -403,8 +506,62 @@ describe("provider fallback orchestration", () => {
     const executed = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}/execute`, { method: "POST" });
     expect(executed.status).toBe(200);
     expect(await executed.json()).toMatchObject({
-      invocation: { operation_id: operationId, attempt_number: 2, adapter_kind: "model-api", provider: "kimi" },
-      adapter_result: { status: "succeeded", provider_receipt: { adapter_kind: "model-api", provider: "kimi" } }
+      invocation: { operation_id: operationId, attempt_number: 2, adapter_kind: "model-api", provider: "kimi", provider_profile_id: "kimi-default" },
+      adapter_result: { status: "succeeded", provider_receipt: { adapter_kind: "model-api", provider: "kimi", provider_profile_id: "kimi-default" } }
     });
+  });
+
+  it("keeps routing Decisions append-only and rejects confirmation for an older revision", async () => {
+    const operationId = "op_cross_kind_revision";
+    const { runId, nodeRunId } = await prepareCrossKindRetry(operationId);
+    const firstBlocked = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
+    expect(firstBlocked.status).toBe(409);
+    const firstHistory = await (await fetch(`${baseUrl}/api/v0/runs/${runId}/routing-decisions`)).json() as {
+      routing_decisions: Array<{ decision_id: string; revision: number; selected_provider_profile_id?: string }>;
+    };
+    expect(firstHistory.routing_decisions).toHaveLength(1);
+    expect(firstHistory.routing_decisions[0]).toMatchObject({ revision: 1, selected_provider_profile_id: "kimi-default" });
+
+    const sourcePath = path.join(workspace, "providers/kimi.json");
+    const alternatePath = path.join(workspace, "providers/kimi-revision.json");
+    const alternate = JSON.parse(await readFile(sourcePath, "utf8")) as {
+      id: string;
+      display_name: string;
+      profile: { id: string; model: string };
+      routing: { user_priority: number; cost_tier: number };
+    };
+    alternate.id = "kimi-revision";
+    alternate.display_name = "kimi revision";
+    alternate.profile.id = "kimi-revision-profile";
+    alternate.profile.model = "kimi-revision-fixture";
+    alternate.routing = { user_priority: 0, cost_tier: 0 };
+    await writeFile(alternatePath, `${JSON.stringify(alternate, null, 2)}\n`, "utf8");
+    try {
+      const revisedBlocked = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
+      expect(revisedBlocked.status).toBe(409);
+      const revisedHistory = await (await fetch(`${baseUrl}/api/v0/runs/${runId}/routing-decisions`)).json() as {
+        routing_decisions: Array<{ decision_id: string; revision: number; selected_provider_profile_id?: string }>;
+      };
+      expect(revisedHistory.routing_decisions).toEqual([
+        expect.objectContaining({ decision_id: firstHistory.routing_decisions[0]!.decision_id, revision: 1, selected_provider_profile_id: "kimi-default" }),
+        expect.objectContaining({ revision: 2, selected_provider_profile_id: "kimi-revision-profile" })
+      ]);
+
+      const stale = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/fallback-confirmation`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          decision_id: firstHistory.routing_decisions[0]!.decision_id,
+          operation_id: operationId,
+          expected_current_adapter_kind: "codex",
+          target_provider_profile_id: "kimi-default",
+          actor: "test-operator"
+        })
+      });
+      expect(stale.status).toBe(409);
+      expect(await stale.json()).toMatchObject({ error: { code: "routing_decision_not_current" } });
+    } finally {
+      await rm(alternatePath, { force: true });
+    }
   });
 });

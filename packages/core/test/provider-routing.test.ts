@@ -52,6 +52,7 @@ describe("Provider Router", () => {
       capability_requirements: ["text.generate", "workspace.write"],
       allowed_adapter_kinds: ["codex", "model-api"],
       current_adapter_kind: "codex",
+      failure: { error_code: "adapter_process_error", status: "failed" },
       profiles: [{
         ...baseInput.profiles[0],
         capabilities: ["text.generate", "workspace.write"],
@@ -61,6 +62,42 @@ describe("Provider Router", () => {
       selected_adapter_kind: "model-api",
       requires_confirmation: true,
       reason_codes: expect.arrayContaining(["cross_kind_fallback_requires_confirmation"])
+    });
+  });
+
+  it("rejects fallback when failure facts omit the current Adapter kind", () => {
+    const decision = selectProviderRoute({
+      ...baseInput,
+      current_adapter_kind: undefined,
+      failed_profile_id: "deepseek-default",
+      failure: { error_code: "network_error", status: "failed" }
+    });
+    expect(decision.selected_provider_profile_id).toBeUndefined();
+    expect(decision.reason_codes).toContain("fallback_current_adapter_kind_missing");
+  });
+
+  it("does not treat Adapter process errors as automatic Model API Provider fallback", () => {
+    const decision = selectProviderRoute({
+      ...baseInput,
+      failed_profile_id: "deepseek-default",
+      failure: { error_code: "adapter_process_error", status: "failed" }
+    });
+    expect(decision.selected_provider_profile_id).toBeUndefined();
+    expect(decision.reason_codes).toContain("fallback_error_not_recoverable");
+  });
+
+  it("rejects Codex-to-Codex fallback candidates instead of selecting them automatically", () => {
+    const decision = selectProviderRoute({
+      ...baseInput,
+      allowed_adapter_kinds: ["codex", "model-api"],
+      current_adapter_kind: "codex",
+      failure: { error_code: "adapter_process_error", status: "failed" },
+      profiles: [{ ...baseInput.profiles[0], id: "codex-route", adapter_kind: "codex" }]
+    });
+    expect(decision.selected_provider_profile_id).toBeUndefined();
+    expect(decision.rejected_candidates).toContainEqual({
+      profile_id: "codex-route",
+      reason_code: "codex_fallback_requires_model_api_target"
     });
   });
 

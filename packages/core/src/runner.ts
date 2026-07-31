@@ -58,6 +58,7 @@ export function createAdapterInvocation(input: {
   createdAt?: string;
   adapterKind?: AdapterInvocation["adapter_kind"];
   adapterId?: string;
+  providerProfileId?: string;
   resolvedInputs?: ResolvedNodeInput[];
   operationId?: string;
   attemptNumber?: number;
@@ -97,6 +98,7 @@ export function createAdapterInvocation(input: {
           : "mock-local-adapter"
     ),
     provider: input.nodeRun.provider ?? input.runSpec.resolved_provider_policy.default_provider,
+    ...(input.providerProfileId ? { provider_profile_id: input.providerProfileId } : {}),
     capability_requirements: nodeSpec.capability_requirements,
     input_artifacts: input.nodeRun.upstream_artifacts,
     resolved_inputs: input.resolvedInputs ?? [],

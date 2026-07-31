@@ -169,6 +169,9 @@
   外部请求，也不接 OpenAI 官方 API/SDK。
 - 同步 README、文档导航、用户手册、路线图和 task-baseline：`P7-08` 标记完成，
   `current_node_id` 推进到 `p7-09`。本次仍保持 `v0.8.0`，P7-10 再统一评估版本号。
+- 独立审查修订：Provider Profile ID 贯穿 Invocation、receipt 与执行解析；
+  `configured_unverified` 不再允许派发；Router 收紧为显式 kind/error 转换矩阵；fallback 确认绑定
+  不可变 decision revision 与活动 RetrySchedule，并在释放 Run 锁后才返回响应。
 
 ## 4. v0.8.0 发布记录
 

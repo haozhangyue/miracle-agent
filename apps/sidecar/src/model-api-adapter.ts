@@ -156,6 +156,7 @@ export class ModelApiAdapter {
     const control = abortSignals({ signal: input.signal, timeout_ms: input.invocation.runtime_control.timeout_ms });
     const receipt = (extra: Record<string, unknown> = {}) => ({
       provider: input.profile.provider,
+      provider_profile_id: input.profile.id,
       adapter_kind: input.invocation.adapter_kind,
       adapter_id: input.invocation.adapter_id,
       model: input.profile.model,
