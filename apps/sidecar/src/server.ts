@@ -491,6 +491,10 @@ async function writeJson(relativePath: string, value: unknown) {
 async function writeJsonAtomically(relativePath: string, value: unknown) {
   const target = path.join(workspaceDir, relativePath);
   await mkdir(path.dirname(target), { recursive: true });
+  await writeJsonAtomicallyAt(target, value);
+}
+
+async function writeJsonAtomicallyAt(target: string, value: unknown) {
   const temporary = `${target}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
@@ -502,7 +506,47 @@ async function writeJsonAtomically(relativePath: string, value: unknown) {
 
 function modelApiOperationReceiptRelativePath(operationId: string) {
   if (!/^[A-Za-z0-9_-]+$/.test(operationId)) return undefined;
-  return `model-api-operations/${operationId}.json`;
+  return `${operationId}.json`;
+}
+
+function isPathInside(parent: string, candidate: string) {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+}
+
+async function modelApiOperationReceiptRoot() {
+  const canonicalWorkspace = await realpath(workspaceDir);
+  if (!(await stat(canonicalWorkspace)).isDirectory()) throw new Error("Model API receipt workspace is not a directory.");
+  const receiptRoot = path.join(canonicalWorkspace, "model-api-operations");
+  try {
+    const rootInfo = await lstat(receiptRoot);
+    if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) throw new Error("Model API receipt root is unsafe.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    await mkdir(receiptRoot, { mode: 0o700 });
+  }
+  const rootInfo = await lstat(receiptRoot);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) throw new Error("Model API receipt root is unsafe.");
+  const canonicalRoot = await realpath(receiptRoot);
+  if (canonicalRoot !== receiptRoot || !isPathInside(canonicalWorkspace, canonicalRoot)) {
+    throw new Error("Model API receipt root escapes the workspace.");
+  }
+  const handle = await open(receiptRoot, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    if (!(await handle.stat()).isDirectory()) throw new Error("Model API receipt root is not a directory.");
+    const currentRoot = await lstat(receiptRoot);
+    if (currentRoot.isSymbolicLink() || !currentRoot.isDirectory() || await realpath(receiptRoot) !== canonicalRoot) {
+      throw new Error("Model API receipt root changed during verification.");
+    }
+  } finally {
+    await handle.close();
+  }
+  return canonicalRoot;
+}
+
+async function delayModelApiReceiptWrite() {
+  const delayMs = Number(process.env.MIRACLE_MODEL_API_RECEIPT_WRITE_DELAY_MS ?? "0");
+  if (Number.isFinite(delayMs) && delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 function isModelApiOperationReceipt(value: unknown, operationId: string): value is ModelApiOperationReceipt {
@@ -517,16 +561,29 @@ function isModelApiOperationReceipt(value: unknown, operationId: string): value 
 }
 
 async function writeModelApiOperationReceipt(receipt: ModelApiOperationReceipt) {
-  const relativePath = modelApiOperationReceiptRelativePath(receipt.operation_id);
-  if (!relativePath) throw new Error("Model API operation_id is unsafe for receipt persistence.");
-  await writeJsonAtomically(relativePath, receipt);
+  const fileName = modelApiOperationReceiptRelativePath(receipt.operation_id);
+  if (!fileName) throw new Error("Model API operation_id is unsafe for receipt persistence.");
+  await modelApiOperationReceiptRoot();
+  await delayModelApiReceiptWrite();
+  const receiptRoot = await modelApiOperationReceiptRoot();
+  await writeJsonAtomicallyAt(path.join(receiptRoot, fileName), receipt);
 }
 
 async function readModelApiOperationReceipt(operationId: string) {
-  const relativePath = modelApiOperationReceiptRelativePath(operationId);
-  if (!relativePath) return undefined;
-  const receipt = await readJsonOptional<unknown>(relativePath);
-  return isModelApiOperationReceipt(receipt, operationId) ? receipt : undefined;
+  const fileName = modelApiOperationReceiptRelativePath(operationId);
+  if (!fileName) return undefined;
+  try {
+    const receiptRoot = await modelApiOperationReceiptRoot();
+    const receiptHandle = await open(path.join(receiptRoot, fileName), constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const receipt = JSON.parse(await receiptHandle.readFile({ encoding: "utf8" })) as unknown;
+      return isModelApiOperationReceipt(receipt, operationId) ? receipt : undefined;
+    } finally {
+      await receiptHandle.close();
+    }
+  } catch {
+    return undefined;
+  }
 }
 
 async function writeAbsoluteJson(target: string, value: unknown) {
@@ -1532,7 +1589,7 @@ function selectAdapterForNode(input: {
   provider: string;
   availableCredentials: string[];
 }) {
-  return (
+  const selected = (
     selectAdapterManifest({
       manifests: input.manifests,
       capabilityRequirements: input.node.capability_requirements,
@@ -1547,6 +1604,12 @@ function selectAdapterForNode(input: {
       availableCredentials: input.availableCredentials
     })
   );
+  if (selected) return selected;
+  return buildAdapterRegistry({ manifests: input.manifests, availableCredentials: input.availableCredentials }).find((adapter) =>
+    adapter.kind === "model-api"
+    && (adapter.supported_providers.includes(input.provider) || adapter.default_provider === input.provider)
+    && input.node.capability_requirements.every((capability) => adapter.capabilities.includes(capability))
+  );
 }
 
 async function executeSidecarAdapter(input: {
@@ -1557,7 +1620,7 @@ async function executeSidecarAdapter(input: {
   receivedAt?: string;
 }): Promise<AdapterResult> {
   const receivedAt = input.receivedAt ?? new Date().toISOString();
-  if (!input.adapter.executable) {
+  if (!input.adapter.executable && input.adapter.kind !== "model-api") {
     return {
       operation_id: input.invocation.operation_id,
       attempt_id: input.invocation.attempt_id,
@@ -1630,6 +1693,26 @@ async function executeSidecarAdapter(input: {
         receivedAt
       });
     }
+    if (!input.adapter.executable) {
+      return buildAdapterUnavailableResult({
+        invocation: input.invocation,
+        message: `Adapter ${input.adapter.id} is unavailable: ${input.adapter.unavailable_reasons.join(", ")}`,
+        errorCode: "adapter_unavailable",
+        recoverable: true,
+        receivedAt
+      });
+    }
+    try {
+      await modelApiOperationReceiptRoot();
+    } catch {
+      return buildAdapterUnavailableResult({
+        invocation: input.invocation,
+        message: "Model API operation receipt storage is unavailable.",
+        errorCode: "operation_receipt_unavailable",
+        recoverable: false,
+        receivedAt
+      });
+    }
     const credential = process.env[profile.credential_ref];
     if (!credential) {
       return buildAdapterUnavailableResult({
@@ -1672,18 +1755,15 @@ async function executeSidecarAdapter(input: {
         status: result?.status ?? "unknown",
         completed_at: new Date().toISOString()
       };
-      try {
-        await writeModelApiOperationReceipt(tombstone);
-        modelApiOperationTombstones.delete(tombstone.operation_id);
-        modelApiOperationTombstones.set(tombstone.operation_id, tombstone);
-        while (modelApiOperationTombstones.size > maxModelApiOperationTombstones) {
-          const oldestOperationId = modelApiOperationTombstones.keys().next().value;
-          if (oldestOperationId === undefined) break;
-          modelApiOperationTombstones.delete(oldestOperationId);
-        }
-      } finally {
-        modelApiOperations.delete(input.invocation.operation_id);
+      modelApiOperations.delete(input.invocation.operation_id);
+      modelApiOperationTombstones.delete(tombstone.operation_id);
+      modelApiOperationTombstones.set(tombstone.operation_id, tombstone);
+      while (modelApiOperationTombstones.size > maxModelApiOperationTombstones) {
+        const oldestOperationId = modelApiOperationTombstones.keys().next().value;
+        if (oldestOperationId === undefined) break;
+        modelApiOperationTombstones.delete(oldestOperationId);
       }
+      await writeModelApiOperationReceipt(tombstone);
     }
   }
   if (input.adapter.execution_mode !== "mock-compatible") {

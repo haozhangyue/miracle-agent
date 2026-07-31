@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,6 +69,20 @@ async function writeProviderScopeMismatchModelProfile() {
   profiles[0]!.base_url = providerBaseUrl;
   profiles[0]!.api_path = "/v1/chat/completions?mode=record-authorization";
   profiles[0]!.provider = "provider-b";
+  profiles[0]!.credential_ref = "MODEL_API_FIXTURE_CREDENTIAL";
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+async function writeUnsupportedCredentialSourceModelProfile() {
+  const manifestPath = path.join(workspace, "adapters", "model-api.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+  const profiles = manifest.provider_profiles as Array<Record<string, unknown>>;
+  manifest.supported_providers = ["fixture-compatible"];
+  manifest.default_provider = "fixture-compatible";
+  manifest.required_credentials = [{ key: "MODEL_API_FIXTURE_CREDENTIAL", label: "Model API fixture credential", source: "keychain", required: true }];
+  profiles[0]!.base_url = providerBaseUrl;
+  profiles[0]!.api_path = "/v1/chat/completions?mode=record-authorization";
+  profiles[0]!.provider = "fixture-compatible";
   profiles[0]!.credential_ref = "MODEL_API_FIXTURE_CREDENTIAL";
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
@@ -168,6 +182,20 @@ describe("Model API Sidecar integration", () => {
     expect(body).toMatchObject({ error: { code: "credential_not_authorized" } });
   });
 
+  it("refuses a schema-valid non-env credential source without sending a provider request", async () => {
+    await writeUnsupportedCredentialSourceModelProfile();
+    const outputBefore = providerOutput;
+    const { runId, nodeRunId } = await createModelRun();
+    const response = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
+    const body = await response.json();
+    const persisted = await readFile(path.join(workspace, "runs", runId, "attempts.json"), "utf8");
+    const events = await readFile(path.join(workspace, "runs", runId, "events.jsonl"), "utf8");
+
+    expect(body).toMatchObject({ adapter_result: { error: { code: "credential_not_authorized" } } });
+    expect(providerOutput).toBe(outputBefore);
+    expect(JSON.stringify([body, persisted, events, sidecarOutput, providerOutput])).not.toContain("fixture-secret");
+  });
+
   it("cancels a registered Model API operation through the existing operation endpoint", async () => {
     await writeModelProfile("slow");
     const { runId, nodeRunId } = await createModelRun();
@@ -208,5 +236,57 @@ describe("Model API Sidecar integration", () => {
 
     const cancellation = await fetch(`${baseUrl}/api/v0/operations/${body.invocation.operation_id}/cancel`, { method: "POST" });
     expect(await cancellation.json()).toMatchObject({ operation_id: body.invocation.operation_id, status: "already_finished" });
+  });
+
+  it("treats a completed Model API operation as terminal before its delayed receipt write", async () => {
+    sidecar?.kill("SIGTERM");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        MIRACLE_WORKSPACE_DIR: workspace,
+        MIRACLE_SIDECAR_PORT: baseUrl.split(":").at(-1)!,
+        MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret",
+        MIRACLE_MODEL_API_RECEIPT_WRITE_DELAY_MS: "800"
+      }
+    });
+    sidecar.stdout.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
+    sidecar.stderr.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
+    await waitFor(`${baseUrl}/api/v0/health`);
+
+    await writeModelProfile("slow");
+    const { runId, nodeRunId } = await createModelRun();
+    let executionSettled = false;
+    const execution = fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" }).finally(() => { executionSettled = true; });
+    const operation = await waitForOperation(runId);
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const operations = await (await fetch(`${baseUrl}/api/v0/operations?run_id=${encodeURIComponent(runId)}`)).json() as { operations: unknown[] };
+      if (operations.operations.length === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    expect(executionSettled).toBe(false);
+    const cancellation = await fetch(`${baseUrl}/api/v0/operations/${operation.operation_id}/cancel`, { method: "POST" });
+    expect(await cancellation.json()).toMatchObject({ operation_id: operation.operation_id, status: "already_finished" });
+    expect((await execution).status).toBe(200);
+  });
+
+  it("never writes a Model API receipt through a pre-existing root symlink", async () => {
+    await writeModelProfile("record-authorization");
+    const receiptRoot = path.join(workspace, "model-api-operations");
+    const outside = path.join(tempRoot, "outside-receipts");
+    await mkdir(outside);
+    await rm(receiptRoot, { recursive: true, force: true });
+    await symlink(outside, receiptRoot, "dir");
+    const outputBefore = providerOutput;
+    const { runId, nodeRunId } = await createModelRun();
+    const response = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
+    const body = await response.json();
+
+    expect(body).toMatchObject({ adapter_result: { error: { code: "operation_receipt_unavailable" } } });
+    expect(providerOutput).toBe(outputBefore);
+    expect(await readdir(outside)).toEqual([]);
   });
 });
