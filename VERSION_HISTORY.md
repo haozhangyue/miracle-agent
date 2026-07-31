@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.8.0` |
 | 版本名称 | 真实工作流工程接入基线 |
-| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-06 已完成，当前任务为 `P7-07` DeepSeek/Kimi/MiniMax Provider Driver |
+| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-07 已完成，当前任务为 `P7-08` Provider fallback 与灵活路由 |
 | 基线提交 | P6-08 收口提交（见 Git HEAD） |
 | 基线日期 | 2026-07-16 |
 | 最终评审 | 通过 |
@@ -136,6 +136,17 @@
 - 新增 fake provider server，覆盖 success、401、429、500、慢响应、无效 JSON、usage
   缺失和超大响应；本轮不实现 DeepSeek/Kimi/MiniMax Driver、ProviderRouter 或 fallback。
 - 同步 task-baseline：`P7-06` 标记完成，`current_node_id` 推进到 `p7-07`。
+- 完成 P7-07 DeepSeek、Kimi、MiniMax Provider Driver 工程接入：新增 ProviderProfile、
+  三家 Driver、`GET /api/v0/providers`、fake-server 契约验收和显式 opt-in 的
+  `npm run smoke:provider`。Driver 通过 `ModelApiAdapter -> ProviderDriver -> ProviderProfile`
+  分层调用，模型字符串只由 Profile 默认值提供。
+- 修复/固化 Provider 错误与安全合同：无凭证返回 `missing_credential` 且不发送网络请求；
+  未知 Driver 不 fallback；MiniMax 仅接受 `base_resp.status_code === 0` 的最小兼容响应；
+  Key 不持久化、不写入 receipt、日志、错误或 smoke Artifact。
+- 本轮 `DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`、`MINIMAX_API_KEY` 均缺失，未运行真实外部
+  smoke；三家保持 `configured_unverified`，不得声明 healthy，也不伪造真实 Artifact 或 receipt。
+- 同步 README、文档导航、用户手册、路线图和 task-baseline：`P7-07` 标记完成，
+  `current_node_id` 推进到 `p7-08`。本次不升级 `v0.8.0`；P7-10 再做版本收口。
 
 ## 4. v0.8.0 发布记录
 
@@ -688,10 +699,10 @@ P6 已完成并发布：
 v0.8.0 真实工作流工程接入基线（已发布）
 ```
 
-下一版本优先完成 P7-01 设计评审，然后以 Codex CLI 依次实施多节点执行计划、
-Artifact 交接、Scheduler 连续执行和 retry/fallback。Codex 纵向闭环稳定后，再通过
-通用 Model API Adapter 接入 DeepSeek、Kimi 和 MiniMax；P7 不接 OpenAI 官方 API。
-在 P7 实施与版本范围评审通过前不预设新版本号。
+P7-01 至 P7-07 已完成：Codex 多节点执行、Artifact 交接、连续调度、retry、通用 Model API
+Adapter 与三家 Provider Driver 已落地。三家凭证均缺失、真实 smoke 未执行，全部保持
+`configured_unverified`。下一版本优先完成 P7-08 Provider Router 与 fallback；P7 不接 OpenAI
+官方 API。在 P7-10 验收与版本范围评审通过前不预设新版本号，也不升级 `v0.8.0`。
 
 首个具备真实 Schema 校验器、Event Journal 和本地 runner 的可执行技术版本，建议发布：
 

@@ -32,8 +32,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 |---|---|
 | 当前产品版本 | `v0.8.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
-| 当前阶段 | P7-02 至 P7-06 已完成，已形成 Model API 通用兼容 Adapter 契约 |
-| 当前任务焦点 | `P7-07` DeepSeek/Kimi/MiniMax Provider Driver |
+| 当前阶段 | P7-02 至 P7-07 已完成，已接入三家 Provider Driver；真实连通尚未验证 |
+| 当前任务焦点 | `P7-08` Provider fallback 与灵活路由 |
 | 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
 | P6 验收基线 | `54_P6回归验收与版本收口报告.md` |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
@@ -54,6 +54,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
   `execution_plan_calculated` 与 `node_inputs_resolved` 审计只记录 ID、数量和 reason code。
 - Model API Adapter 使用 Node.js 原生 `fetch` 处理兼容协议；用户只配置 ProviderProfile
   的 `credential_ref`，不会在 Adapter 回执、错误或运行界面看到凭证值。
+- DeepSeek、Kimi、MiniMax Driver 与 `GET /api/v0/providers` 已接入；本轮三家 Key 均未配置，
+  未执行真实 smoke，三家 Profile 均为 `configured_unverified`，不代表 healthy。
 
 ```text
 GET  /api/v0/adapters/codex-cli/health
@@ -137,6 +139,9 @@ npm run dev:web
 | `MIRACLE_RUNTIME_WORKSPACE_DIR` | `~/.miracle-agent` | 指定仓库外 attempt runtime |
 | `MIRACLE_ENABLE_REAL_CODEX` | 未设置 | 设为 `1` 时允许已确认草案调用真实 Codex CLI |
 | `MIRACLE_CODEX_CLI_PATH` | `codex` | 可选，覆盖 Codex CLI 可执行文件 |
+| `DEEPSEEK_API_KEY` | 未设置 | DeepSeek 运行时凭证，仅用于显式 opt-in 的真实调用 |
+| `MOONSHOT_API_KEY` | 未设置 | Kimi 运行时凭证，仅用于显式 opt-in 的真实调用 |
+| `MINIMAX_API_KEY` | 未设置 | MiniMax 运行时凭证，仅用于显式 opt-in 的真实调用 |
 
 示例：
 
@@ -358,9 +363,34 @@ Provider fallback 仍属于 P7-08，当前 Scheduler 不会自动切换 Provider
 
 默认自动 Attempt 总数不超过 3。策略只允许 fixed/exponential 退避，并拒绝负数、NaN、
 Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5，模板可显式覆盖。
-当前版本不实现 Provider fallback。P7-06 已提供兼容协议的通用 transport 和 fixture
-契约，但 DeepSeek、Kimi、MiniMax 的真实 Driver 与验证仍属于 P7-07；本阶段不使用
-OpenAI SDK 或 OpenAI 官方 API。
+当前版本不实现 Provider fallback。P7-07 已完成三家 Driver 工程接入，但三家凭证均缺失、
+真实 smoke 未执行，保持 `configured_unverified`；本阶段不使用 OpenAI SDK 或 OpenAI 官方 API。
+
+### 5.14 配置与检查模型 Provider
+
+1. 仅在需要真实验证的机器上配置目标环境变量，例如：
+
+   ```bash
+   export DEEPSEEK_API_KEY='...'
+   export MOONSHOT_API_KEY='...'
+   export MINIMAX_API_KEY='...'
+   ```
+
+2. 启动 Sidecar 后访问 `GET http://127.0.0.1:4317/api/v0/providers`。未配置 Key 时为
+   `missing_credential`，不会发送网络请求；配置 Key 但尚未完成真实验证时为
+   `configured_unverified`。
+3. 取得用户明确授权后，可对一个目标 Provider 执行脱敏 smoke：
+
+   ```bash
+   MIRACLE_ENABLE_MODEL_API=1 MIRACLE_SMOKE_PROVIDER=deepseek npm run smoke:provider
+   ```
+
+   可将 `deepseek` 替换为 `kimi` 或 `minimax`。smoke Artifact 仅写入
+   `<MIRACLE_WORKSPACE_DIR>/smoke-artifacts/`，目录与文件名有安全校验；输出、日志和回执
+   不得含 API Key 或敏感正文。
+4. 只有完成真实 health probe 与脱敏 completion 后，对应 Provider 才可标记 `healthy`。
+   凭证存在、Profile 已配置或 fake-server 测试通过都不能替代该验证。Provider fallback 尚未
+   实现，属于 P7-08。
 
 ## 6. 当前版本新增能力
 
@@ -369,7 +399,8 @@ OpenAI SDK 或 OpenAI 官方 API。
 | P4 本地 MVP | Web、Sidecar、core、fixture workspace 形成可运行基线 | 用户可以本地启动并走通首页、Dry-run、Run、Attention、Agent、Artifact、Gate、Canvas |
 | Run 工作区 | DAG、Node Detail、Attempt、Scheduler、事件审计 | 用户能看清任务执行到哪个节点、为何暂停、如何继续 |
 | Retry 与恢复 | 到期排期、重启幂等、Attempt 历史、三类预算和根因 Attention | 用户能确认何时自动重试、预算为何停止，以及如何安全恢复 |
-| P7-06 通用 Model API Adapter | 兼容协议 transport、ProviderProfile、usage/receipt、timeout/取消/大小/JSON 错误边界和 fake provider 契约 | 用户可配置不含明文凭证的 ProviderProfile；真实厂商连接仍待 P7-07 |
+| P7-06 通用 Model API Adapter | 兼容协议 transport、ProviderProfile、usage/receipt、timeout/取消/大小/JSON 错误边界和 fake provider 契约 | 为三家已接入 Driver 提供共享调用层；不使用 OpenAI SDK 或官方 API |
+| P7-07 Provider 接入 | DeepSeek/Kimi/MiniMax Driver、`GET /api/v0/providers`、显式 smoke 与安全路径 | 用户可检查凭证与验证状态；三家凭证均缺失、真实 smoke 未执行，均为 `configured_unverified`，不是 healthy |
 | Gate 审核 | approve/reject/request_changes、返工版本、决策投影 | 用户能处理审核、创建返工版本，并保留审计证据 |
 | Attention | 根因聚合和关联对象展开 | 用户能从异常直接定位 Agent、Node、Artifact、Gate |
 | Artifact Board | Artifact detail 和本地预览 | 用户能查看产物版本、审核状态和预览内容 |
@@ -429,6 +460,7 @@ OpenAI SDK 或 OpenAI 官方 API。
 | P7-02 / P7-03 / P7-04 | 多节点计划、Artifact 真实交接与连续调度 | 按端口、版本、hash 和 media type 解析输入；每 tick 重算 ExecutionPlan；Gate 暂停、批准恢复与拒绝阻断均有审计 | 修复路径逃逸、符号链接/硬链接、身份碰撞、部分提交、事件覆盖、运行锁抢占和 Gate 响应后锁残留风险 | 使用一次 Scheduler run 连续推进就绪节点，审核 Gate 后再次调度；审计不显示 Artifact 正文 | 启动命令不变；真实 Codex 仍需显式 opt-in |
 | P7-05 | Retry 与故障恢复 | 错误分类、fixed/exponential 退避、attempt/time/cost 预算、NodeAttempt 历史、重启恢复和 Attention 动作 | 修复混合 Gate/P0 blocker 被 Gate 动作遮蔽、legacy RetryState 锁竞争 500、旧 retry intent 重复 unknown 不稳定，以及并发读取 NodeRun 时偶发空 JSON | 在 Node detail 查看 retry 状态和预算；全局混合阻塞先处理 Attention，Gate 返工仍在节点详情可达 | 启动命令不变；`dispatched_unknown` 不会自动重派 |
 | P7-06 | 通用 Model API Adapter | `model-api` kind、兼容协议 transport、ProviderProfile、usage/receipt、稳定错误和 fake provider 测试契约 | 凭证仅通过运行时引用传递，不会进入 profile、回执或错误 | 暂无新增 UI；后续 Provider Driver 可复用此契约 | 启动命令不变；不使用 OpenAI SDK 或官方 API |
+| P7-07 | DeepSeek/Kimi/MiniMax Provider Driver | 三家 Driver、Profile、`GET /api/v0/providers`、错误合同和安全 smoke 路径 | MiniMax `base_resp` 最小兼容检查、未知 Driver 拒绝且无 fallback | 新增 Provider 配置、状态检查与显式 smoke 操作 | 需设置对应 Key 且显式 `MIRACLE_ENABLE_MODEL_API=1`；本轮三家凭证均缺失、真实 smoke 未执行，均非 healthy |
 
 ### 8.3 提交前同步检查
 
@@ -461,6 +493,8 @@ OpenAI SDK 或 OpenAI 官方 API。
 | 真实工作流没有进入 UI | 检查首页“继续运行”是否出现 `content-production-real-v0` | 确认 Sidecar 使用同一个包含 historical Run 的 runtime workspace，并刷新页面；W24/W23 页面应显示 `Historical · Read-only` |
 | 启动正式 Run 返回 adapter_not_ready | RunDraft 保持 confirmed，没有创建正式 Run | 确认设置 `MIRACLE_ENABLE_REAL_CODEX=1`，再检查 `/api/v0/adapters/codex-cli/health`、`codex --version` 和 `codex login status` |
 | Codex Run 执行失败但没有 Artifact | NodeAttempt 为 failed/aborted，Attention 出现执行失败 | 查看 Attempt error code 和事件审计；修复 CLI、schema 或输出问题后创建新草案重试，系统不会提交未校验产物 |
+| Provider 显示 `missing_credential` | `GET /api/v0/providers` 未发现对应 Key | 在运行 Sidecar 的环境设置对应 API Key 后重启或刷新；不要把 Key 写入 Profile、日志或 Git |
+| Provider 显示 `configured_unverified` | Key 已配置但尚未完成真实验证 | 取得明确授权后运行单 Provider 脱敏 smoke；未完成真实 health/completion 前不得改为 healthy |
 
 ## 10. 当前限制
 
@@ -469,8 +503,8 @@ OpenAI SDK 或 OpenAI 官方 API。
 1. 真实“热点工具更新”历史 Run importer 已实现 Sidecar API，Web 已支持 W24/W23 historical Run
    只读展示，但仍需使用仓库外 runtime workspace 才能看到真实导入数据。
 2. Codex CLI 已开放按 ExecutionPlan 的多节点连续调度、Gate 暂停/批准恢复和显式 failed
-   的限次 retry；Model API 已具备通用兼容 transport，但 Provider fallback、Hermes、
-   OpenClaw 及 DeepSeek/Kimi/MiniMax 真实 Driver 尚未开放。
+   的限次 retry；DeepSeek/Kimi/MiniMax Driver 已开放工程接入，但本轮三家凭证缺失、真实
+   smoke 未执行，均为 `configured_unverified`。Provider fallback、Hermes 和 OpenClaw 尚未实现。
 3. 没有云端控制平面、多租户、账号、权限、计费和团队协作。
 4. 没有移动端或 APP 适配，本阶段只面向 Web 工作台。
 5. Infinite Canvas 仍是草稿态，不是完整自由画布产品。

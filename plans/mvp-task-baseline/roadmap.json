@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p7-07",
+  "current_node_id": "p7-08",
   "generated_from": [
     "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
     "docs/04-engineering/p3-detailed-design/23_P3MVP任务拆解与验收计划.md",
@@ -18,6 +18,7 @@
     "docs/05-delivery/p4-mvp/34_P4第五轮_D8_D9_Canvas节点草稿与Run刷新交付说明.md",
     "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md",
     "docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md",
+    "docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md",
     "docs/06-operations/release/35_P4_MVP回归验收与版本收口报告.md",
     "docs/05-delivery/p5-real-workflow/36_P5真实工作流接入详细计划与任务拆解.md",
     "docs/05-delivery/p5-real-workflow/37_P5-01真实工作区盘点报告.md",
@@ -230,6 +231,7 @@
         "docs/06-operations/release/54_P6回归验收与版本收口报告.md",
         "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md",
         "docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md",
+        "docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md",
         "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
         "plans/mvp-task-baseline/roadmap.json"
       ]
@@ -796,19 +798,19 @@
       "id": "p7-07",
       "day": "P7-07",
       "title": "DeepSeek/Kimi/MiniMax Provider 接入",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p7-provider-drivers",
       "parallel_group": "provider-drivers",
       "depends_on": ["p7-06"],
       "can_parallelize": true,
       "recommended_agent": "Provider agents",
-      "deliverables": ["三个 Provider Driver", "fake server 契约测试", "至少一个真实脱敏小样本", "configured_unverified 状态", "官方文档核对记录"]
+      "deliverables": ["三个 Provider Driver", "fake server 契约测试", "真实凭证可用后补做脱敏 smoke", "configured_unverified 状态", "本轮三家凭证缺失/未实测记录", "官方文档核对记录"]
     },
     {
       "id": "p7-08",
       "day": "P7-08",
       "title": "Provider fallback 与灵活路由",
-      "status": "planned",
+      "status": "current",
       "serial_group": "p7-vertical-closure",
       "parallel_group": "p7-mainline",
       "depends_on": ["p7-05", "p7-07"],

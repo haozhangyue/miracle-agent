@@ -25,8 +25,8 @@ Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与
 `P6-04` 至 `P6-08` 已完成并通过工程、API、页面、安全与真实性验收，形成 `v0.8.0`
 真实工作流工程接入基线。`P7-01` 总体设计、`P7-02` 多节点 ExecutionPlan 与输入解析和
 `P7-03` Codex 多节点 Artifact 真实交接、`P7-04` Scheduler 连续执行、`P7-05`
-Retry 与故障恢复和 `P7-06` 通用 Model API Adapter 已完成，当前主线推进到
-`P7-07` DeepSeek/Kimi/MiniMax Provider Driver：
+Retry 与故障恢复、`P7-06` 通用 Model API Adapter 和 `P7-07` DeepSeek/Kimi/MiniMax
+Provider Driver 工程接入已完成，当前主线推进到 `P7-08` Provider fallback 与灵活路由：
 Codex CLI 已可按 ExecutionPlan 连续执行、在 Gate 暂停后批准恢复，并对明确 failed 或
 已确认终止的 timed_out AdapterResult 按节点策略、fixed/exponential 退避和
 attempt/time/cost 预算创建新 NodeAttempt；
@@ -34,7 +34,9 @@ attempt/time/cost 预算创建新 NodeAttempt；
 凭证、权限、输入或 Artifact 缺失进入 blocked Attention；未知派发结果、取消、终止和
 无效回执不会自动重派。P7-06 已提供原生 `fetch` 的 compatible transport、统一超时、
 取消、响应大小、JSON、usage、receipt 与稳定错误映射；ProviderProfile 只保存
-`credential_ref`。Provider fallback 仍属于 P7-08，且 P7 不接入 OpenAI SDK 或官方 API。
+`credential_ref`。三家 Driver 已接入，但 `DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`、
+`MINIMAX_API_KEY` 均未配置，本轮未执行真实 smoke，三家保持 `configured_unverified`，
+不得视为 healthy。Provider fallback 属于 P7-08，且 P7 不接入 OpenAI SDK 或官方 API。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -73,6 +75,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - [54_P6回归验收与版本收口报告.md](docs/06-operations/release/54_P6回归验收与版本收口报告.md)：P6 工程、46 项 API、安全真实性、页面截图和 `v0.8.0` 发布结论。
 - [55_P7多节点真实执行与模型Adapter扩展总体设计.md](docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md)：P7 Codex 纵向闭环、retry/fallback 和低成本模型 API 扩展评审基线。
 - [56_P7工程实施计划与任务拆解.md](docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md)：P7-02 至 P7-10 的逐文件 TDD 实施步骤、依赖、提交点和验收命令。
+- [57_P7-07模型Provider接入交付说明.md](docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md)：三家 Provider Driver、配置/检查、状态语义、安全边界与真实 smoke 未执行记录。
 - [40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)：启动、菜单操作、版本变化和常见问题。
 
 目录约定：
@@ -81,7 +84,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - `90-reference`：外部研究和参考输入，不替代当前架构真相。
 - `99-archive`：历史评审和候选方案，默认可跳过。
 
-`00-56` 编号继续保留在文件名中，用于阶段追溯；目录只负责按内容领域组织，不替代文档状态。
+`00-57` 编号继续保留在文件名中，用于阶段追溯；目录只负责按内容领域组织，不替代文档状态。
 
 `prototypes/`、`assets/`、`fixtures/`、`apps/`、`packages/` 和 `plans/` 保持为工程或资产目录，不与设计说明 Markdown 混放。
 
