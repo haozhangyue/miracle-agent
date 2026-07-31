@@ -160,6 +160,26 @@ describe("ModelApiAdapter", () => {
     await expect(pending).resolves.toMatchObject({ status: "cancelled", error: { code: "operation_cancelled" } });
   });
 
+  it("rejects a custom Driver request URL with a different origin before fetch", async () => {
+    const { openAiCompatibleDriver } = await import("../src/provider-drivers/openai-compatible");
+    const adapter = new (await import("../src/model-api-adapter")).ModelApiAdapter({
+      driver: { ...openAiCompatibleDriver, buildRequest: () => ({ url: "http://127.0.0.1:1/cross-origin", init: {} }) }
+    });
+
+    const result = await adapter.execute({ invocation, profile: profile(), credential: "fixture-secret", signal: new AbortController().signal });
+
+    expect(result).toMatchObject({ status: "failed", error: { code: "provider_request_invalid", recoverable: false } });
+    expect(JSON.stringify(result)).not.toContain("fixture-secret");
+  });
+
+  it("returns a cross-origin redirect response without following it", async () => {
+    const adapter = await loadAdapter();
+    const result = await adapter.execute({ invocation, profile: profile("redirect"), credential: "fixture-secret", signal: new AbortController().signal });
+
+    expect(result).toMatchObject({ status: "failed", error: { code: "provider_http_error", recoverable: false } });
+    expect(JSON.stringify(result)).not.toContain("fixture-secret");
+  });
+
   it.each(["//provider.example/v1/chat", "//user@provider.example/v1/chat", "https://provider.example/v1/chat"])("rejects unsafe api_path in the driver: %s", async (apiPath) => {
     const { openAiCompatibleDriver } = await import("../src/provider-drivers/openai-compatible");
     expect(() => openAiCompatibleDriver.buildRequest({ invocation, profile: { ...profile(), api_path: apiPath }, credential: "fixture-secret" })).toThrow(/api_path/i);

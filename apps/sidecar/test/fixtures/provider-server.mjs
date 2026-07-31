@@ -33,6 +33,15 @@ const server = createServer(async (req, res) => {
     res.flushHeaders();
     return;
   }
+  if (mode === "redirect") {
+    res.writeHead(302, { location: "http://127.0.0.1:1/cross-origin" });
+    res.end();
+    return;
+  }
+  if (mode === "record-authorization") {
+    process.stdout.write(`provider-authorization:${req.headers.authorization ?? ""}\n`);
+    return json(res, 200, successBody());
+  }
   if (mode === "slow") return setTimeout(() => json(res, 200, successBody()), 300);
   if (mode === "invalid-utf8") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8" });

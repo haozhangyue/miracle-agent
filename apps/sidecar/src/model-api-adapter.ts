@@ -19,6 +19,7 @@ type AbortKind = "timeout" | "cancelled";
 
 class ProviderResponseTooLargeError extends Error {}
 class ProviderResponseInvalidError extends Error {}
+class ProviderRequestInvalidError extends Error {}
 
 function abortSignals(input: { signal: AbortSignal; timeout_ms: number }) {
   const controller = new AbortController();
@@ -82,6 +83,24 @@ function sanitizeDriverError(error: AdapterError, credential: string): AdapterEr
   };
 }
 
+function validateDriverRequestUrl(requestUrl: string, baseUrl: string) {
+  try {
+    const request = new URL(requestUrl);
+    const profileBase = new URL(baseUrl);
+    if (
+      !["http:", "https:"].includes(request.protocol)
+      || request.username.length > 0
+      || request.password.length > 0
+      || request.origin !== profileBase.origin
+    ) {
+      throw new ProviderRequestInvalidError();
+    }
+  } catch (error) {
+    if (error instanceof ProviderRequestInvalidError) throw error;
+    throw new ProviderRequestInvalidError();
+  }
+}
+
 export class ModelApiAdapter {
   private readonly driver: ProviderDriver;
   private readonly maxResponseBytes: number;
@@ -117,7 +136,8 @@ export class ModelApiAdapter {
 
     try {
       const request = this.driver.buildRequest(input);
-      const response = await fetch(request.url, { ...request.init, signal: control.signal });
+      validateDriverRequestUrl(request.url, input.profile.base_url);
+      const response = await fetch(request.url, { ...request.init, redirect: "manual", signal: control.signal });
       if (!response.ok) {
         void response.body?.cancel().catch(() => undefined);
         return failure("failed", sanitizeDriverError(this.driver.mapError({ response }), input.credential));
@@ -160,6 +180,9 @@ export class ModelApiAdapter {
       }
       if (error instanceof ProviderResponseInvalidError) {
         return failure("failed", { code: "provider_response_invalid", message: "Provider returned invalid UTF-8.", recoverable: false });
+      }
+      if (error instanceof ProviderRequestInvalidError) {
+        return failure("failed", { code: "provider_request_invalid", message: "Provider Driver returned an unsafe request URL.", recoverable: false });
       }
       return failure("failed", sanitizeDriverError(this.driver.mapError({ error }), input.credential));
     } finally {

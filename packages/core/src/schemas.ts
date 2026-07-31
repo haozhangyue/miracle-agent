@@ -2,6 +2,7 @@ import { z } from "zod";
 import { isOriginRelativeApiPath } from "./model-api";
 import type {
   AdapterInvocation,
+  AdapterManifest,
   AdapterResult,
   ExecutionPlan,
   NodeExecutionDecision,
@@ -248,7 +249,7 @@ export const providerProfileSchema: z.ZodType<ProviderProfile> = z.object({
   verification_status: z.enum(["configured_unverified", "healthy", "degraded", "unavailable"])
 }).strict();
 
-export const adapterManifestSchema = z.object({
+const adapterManifestSchemaBase = z.object({
   id: z.string(),
   kind: z.enum(["mock-local", "codex", "hermes", "openclaw", "official-api", "model-api"]),
   display_name: z.string(),
@@ -266,6 +267,18 @@ export const adapterManifestSchema = z.object({
     can_execute: z.boolean(),
     entrypoint: z.string().optional()
   })
+});
+
+export const adapterManifestSchema: z.ZodType<AdapterManifest> = adapterManifestSchemaBase.superRefine((manifest, context) => {
+  const credentialKeys = new Set(manifest.required_credentials.map((credential) => credential.key));
+  for (const [index, profile] of (manifest.provider_profiles ?? []).entries()) {
+    if (credentialKeys.has(profile.credential_ref)) continue;
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["provider_profiles", index, "credential_ref"],
+      message: "provider credential_ref must be declared in required_credentials"
+    });
+  }
 });
 
 const adapterKindSchema = z.enum(["mock-local", "codex", "hermes", "openclaw", "official-api", "model-api"]);

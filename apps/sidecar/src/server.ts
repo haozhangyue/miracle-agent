@@ -80,13 +80,26 @@ const serverInstanceId = randomUUID();
 const eventWriteQueues = new Map<string, Promise<void>>();
 const modelApiOperations = new Map<string, {
   operation_id: string;
+  attempt_id: string;
   run_id: string;
   node_run_id: string;
   adapter_id: string;
   provider: string;
   started_at: string;
+  cancel_requested: boolean;
   controller: AbortController;
 }>();
+const modelApiOperationTombstones = new Map<string, {
+  operation_id: string;
+  attempt_id: string;
+  run_id: string;
+  node_run_id: string;
+  adapter_id: string;
+  provider: string;
+  status: AdapterResult["status"];
+  completed_at: string;
+}>();
+const maxModelApiOperationTombstones = 128;
 const runtimeWorkspaceDir = process.env.MIRACLE_RUNTIME_WORKSPACE_DIR ?? path.join(homedir(), ".miracle-agent");
 const workflowRegistryDir = process.env.MIRACLE_WORKFLOW_REGISTRY_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle/workflows");
 const port = Number(process.env.MIRACLE_SIDECAR_PORT ?? 4317);
@@ -1548,6 +1561,16 @@ async function executeSidecarAdapter(input: {
         receivedAt
       });
     }
+    const credentialRequirement = input.adapter.required_credentials.find((candidate) => candidate.key === profile.credential_ref);
+    if (!credentialRequirement || credentialRequirement.source !== "env") {
+      return buildAdapterUnavailableResult({
+        invocation: input.invocation,
+        message: "Provider credential_ref is not authorized for this Model API Adapter.",
+        errorCode: "credential_not_authorized",
+        recoverable: false,
+        receivedAt
+      });
+    }
     const credential = process.env[profile.credential_ref];
     if (!credential) {
       return buildAdapterUnavailableResult({
@@ -1561,22 +1584,43 @@ async function executeSidecarAdapter(input: {
     const controller = new AbortController();
     modelApiOperations.set(input.invocation.operation_id, {
       operation_id: input.invocation.operation_id,
+      attempt_id: input.invocation.attempt_id,
       run_id: input.invocation.run_id,
       node_run_id: input.invocation.node_run_id,
       adapter_id: input.invocation.adapter_id,
       provider: input.invocation.provider,
       started_at: new Date().toISOString(),
+      cancel_requested: false,
       controller
     });
+    let result: AdapterResult | undefined;
     try {
-      return await new ModelApiAdapter({ driver: openAiCompatibleDriver }).execute({
+      result = await new ModelApiAdapter({ driver: openAiCompatibleDriver }).execute({
         invocation: input.invocation,
         profile,
         credential,
         signal: controller.signal
       });
+      return result;
     } finally {
       modelApiOperations.delete(input.invocation.operation_id);
+      const tombstone = {
+        operation_id: input.invocation.operation_id,
+        attempt_id: input.invocation.attempt_id,
+        run_id: input.invocation.run_id,
+        node_run_id: input.invocation.node_run_id,
+        adapter_id: input.invocation.adapter_id,
+        provider: input.invocation.provider,
+        status: result?.status ?? "unknown",
+        completed_at: new Date().toISOString()
+      };
+      modelApiOperationTombstones.delete(tombstone.operation_id);
+      modelApiOperationTombstones.set(tombstone.operation_id, tombstone);
+      while (modelApiOperationTombstones.size > maxModelApiOperationTombstones) {
+        const oldestOperationId = modelApiOperationTombstones.keys().next().value;
+        if (oldestOperationId === undefined) break;
+        modelApiOperationTombstones.delete(oldestOperationId);
+      }
     }
   }
   if (input.adapter.execution_mode !== "mock-compatible") {
@@ -3716,9 +3760,14 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const operationId = getId(parts, 3);
     const modelApiOperation = modelApiOperations.get(operationId);
     if (modelApiOperation) {
+      if (modelApiOperation.cancel_requested) {
+        return sendJson(res, 200, { operation_id: operationId, status: "already_finished" });
+      }
+      modelApiOperation.cancel_requested = true;
       modelApiOperation.controller.abort();
-      return sendJson(res, 200, { operation_id: operationId, status: "cancel_requested" });
+      return sendJson(res, 200, { operation_id: operationId, status: "cancelled" });
     }
+    if (modelApiOperationTombstones.has(operationId)) return sendJson(res, 200, { operation_id: operationId, status: "already_finished" });
     const result = await codexCliAdapter.cancelOperation(operationId);
     return sendJson(res, 200, { operation_id: operationId, status: result });
   }
@@ -3727,7 +3776,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const runId = url.searchParams.get("run_id") ?? undefined;
     const activeModelApiOperations = Array.from(modelApiOperations.values())
       .filter((operation) => runId === undefined || operation.run_id === runId)
-      .map(({ controller: _controller, ...operation }) => ({ ...operation, status: "running" }));
+      .map(({ controller: _controller, cancel_requested, ...operation }) => ({ ...operation, status: cancel_requested ? "cancel_requested" : "running" }));
     return sendJson(res, 200, { operations: [...codexCliAdapter.listActiveOperations(runId), ...activeModelApiOperations] });
   }
 

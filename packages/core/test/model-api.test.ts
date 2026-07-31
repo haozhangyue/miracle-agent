@@ -60,7 +60,7 @@ describe("model API contract", () => {
         }
       ],
       runtime: { local_executor: "external-api", can_execute: true }
-    }) as Record<string, unknown>;
+    }) as unknown as Record<string, unknown>;
 
     expect(manifest.provider_profiles).toEqual([
       expect.objectContaining({
@@ -71,6 +71,33 @@ describe("model API contract", () => {
       })
     ]);
     expect(JSON.stringify(manifest)).not.toContain("fixture-secret");
+  });
+
+  it("rejects a provider profile whose credential_ref is not declared by its manifest", () => {
+    const manifest = {
+      id: "model-api-compatible-adapter",
+      kind: "model-api",
+      display_name: "Model API Compatible Adapter",
+      version: "0.1.0",
+      status: "experimental",
+      description: "A generic compatible transport contract.",
+      execution_mode: "external",
+      capabilities: ["model.call"],
+      supported_providers: ["fixture-compatible"],
+      default_provider: "fixture-compatible",
+      required_credentials: [],
+      provider_profiles: [{
+        id: "fixture-compatible-default",
+        provider: "fixture-compatible",
+        model: "fixture-chat",
+        base_url: "https://provider.example",
+        credential_ref: "AWS_SECRET_ACCESS_KEY",
+        verification_status: "configured_unverified"
+      }],
+      runtime: { local_executor: "external-api", can_execute: true }
+    };
+
+    expect(() => adapterManifestSchema.parse(manifest)).toThrow(/credential_ref/i);
   });
 
   it.each(["//provider.example/v1/chat", "//user@provider.example/v1/chat", "https://provider.example/v1/chat", "v1/chat/completions"])("rejects unsafe provider api_path %s", (apiPath) => {

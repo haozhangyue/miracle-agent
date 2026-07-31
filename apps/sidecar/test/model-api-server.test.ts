@@ -14,6 +14,7 @@ let workspace = "";
 let baseUrl = "";
 let providerBaseUrl = "";
 let sidecarOutput = "";
+let providerOutput = "";
 let sidecar: ChildProcessWithoutNullStreams | undefined;
 let provider: ChildProcessWithoutNullStreams | undefined;
 
@@ -32,16 +33,15 @@ async function waitFor(url: string) {
 
 async function waitForFixturePort() {
   return new Promise<string>((resolve, reject) => {
-    let output = "";
-    const timer = setTimeout(() => reject(new Error(`Provider fixture did not start: ${output}`)), 5_000);
+    const timer = setTimeout(() => reject(new Error(`Provider fixture did not start: ${providerOutput}`)), 5_000);
     provider?.stdout.on("data", (chunk) => {
-      output += chunk.toString();
-      const match = output.match(/provider-fixture:(\d+)/);
+      providerOutput += chunk.toString();
+      const match = providerOutput.match(/provider-fixture:(\d+)/);
       if (!match) return;
       clearTimeout(timer);
       resolve(match[1]!);
     });
-    provider?.stderr.on("data", (chunk) => { output += chunk.toString(); });
+    provider?.stderr.on("data", (chunk) => { providerOutput += chunk.toString(); });
   });
 }
 
@@ -49,8 +49,21 @@ async function writeModelProfile(mode: string) {
   const manifestPath = path.join(workspace, "adapters", "model-api.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
   const profiles = manifest.provider_profiles as Array<Record<string, unknown>>;
+  manifest.required_credentials = [{ key: "MODEL_API_FIXTURE_CREDENTIAL", label: "Model API fixture credential", source: "env", required: true }];
   profiles[0]!.base_url = providerBaseUrl;
   profiles[0]!.api_path = `/v1/chat/completions?mode=${mode}`;
+  profiles[0]!.credential_ref = "MODEL_API_FIXTURE_CREDENTIAL";
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+async function writeUnauthorizedModelProfile() {
+  const manifestPath = path.join(workspace, "adapters", "model-api.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+  const profiles = manifest.provider_profiles as Array<Record<string, unknown>>;
+  manifest.required_credentials = [];
+  profiles[0]!.base_url = providerBaseUrl;
+  profiles[0]!.api_path = "/v1/chat/completions?mode=record-authorization";
+  profiles[0]!.credential_ref = "AWS_SECRET_ACCESS_KEY";
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
@@ -93,8 +106,8 @@ async function createModelRun() {
 async function waitForOperation(runId: string) {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    const body = await (await fetch(`${baseUrl}/api/v0/operations?run_id=${encodeURIComponent(runId)}`)).json() as { operations: Array<{ operation_id: string }> };
-    if (body.operations[0]) return body.operations[0].operation_id;
+    const body = await (await fetch(`${baseUrl}/api/v0/operations?run_id=${encodeURIComponent(runId)}`)).json() as { operations: Array<{ operation_id: string; attempt_id?: string }> };
+    if (body.operations[0]) return body.operations[0];
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error("Model API operation was not registered");
@@ -111,7 +124,7 @@ describe("Model API Sidecar integration", () => {
     baseUrl = `http://127.0.0.1:${port}`;
     sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
       cwd: repoRoot,
-      env: { ...process.env, MIRACLE_WORKSPACE_DIR: workspace, MIRACLE_SIDECAR_PORT: String(port), MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret" }
+      env: { ...process.env, MIRACLE_WORKSPACE_DIR: workspace, MIRACLE_SIDECAR_PORT: String(port), MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret", AWS_SECRET_ACCESS_KEY: "aws-secret-never-send" }
     });
     sidecar.stdout.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
     sidecar.stderr.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
@@ -136,18 +149,32 @@ describe("Model API Sidecar integration", () => {
     expect(JSON.stringify([body, persisted, events, sidecarOutput])).not.toContain("fixture-secret");
   });
 
+  it("refuses an undeclared credential_ref without sending its environment secret", async () => {
+    await writeUnauthorizedModelProfile();
+    const { runId, nodeRunId } = await createModelRun();
+    const response = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
+    const body = await response.json();
+
+    expect(JSON.stringify([body, sidecarOutput, providerOutput])).not.toContain("aws-secret-never-send");
+    expect(response.status).not.toBe(200);
+  });
+
   it("cancels a registered Model API operation through the existing operation endpoint", async () => {
     await writeModelProfile("slow");
     const { runId, nodeRunId } = await createModelRun();
     const execution = fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
-    const operationId = await waitForOperation(runId);
-    const cancellation = await fetch(`${baseUrl}/api/v0/operations/${operationId}/cancel`, { method: "POST" });
+    const operation = await waitForOperation(runId);
+    const cancellation = await fetch(`${baseUrl}/api/v0/operations/${operation.operation_id}/cancel`, { method: "POST" });
     const cancelBody = await cancellation.json();
     const executionResponse = await execution;
     const executionBody = await executionResponse.json();
 
-    expect(cancelBody).toMatchObject({ operation_id: operationId, status: "cancel_requested" });
+    expect(operation).toMatchObject({ attempt_id: expect.any(String) });
+    expect(cancelBody).toMatchObject({ operation_id: operation.operation_id, status: "cancelled" });
     expect(executionResponse.status).toBe(200);
     expect(executionBody).toMatchObject({ adapter_result: { status: "cancelled", error: { code: "operation_cancelled" } } });
+
+    const repeatedCancellation = await fetch(`${baseUrl}/api/v0/operations/${operation.operation_id}/cancel`, { method: "POST" });
+    expect(await repeatedCancellation.json()).toMatchObject({ operation_id: operation.operation_id, status: "already_finished" });
   });
 });
