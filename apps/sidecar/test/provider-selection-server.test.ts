@@ -17,7 +17,7 @@ const providerCases = [
 
 let fakeProvider: Server;
 let fakeProviderBaseUrl = "";
-const receivedRequests: Array<{ path: string; authorization?: string; model?: string }> = [];
+const receivedRequests: Array<{ path: string; authorization?: string; model?: string; stream?: unknown }> = [];
 
 async function unusedLoopbackPort() {
   const server = createServer();
@@ -47,7 +47,13 @@ async function stopProcess(process: ChildProcessWithoutNullStreams | undefined) 
   await new Promise<void>((resolve) => process.once("exit", () => resolve()));
 }
 
-async function executeProvider(provider: string, credentialKey: string, apiPath: string, configured: boolean) {
+async function executeProvider(
+  provider: string,
+  credentialKey: string,
+  apiPath: string,
+  configured: boolean,
+  options: { catalog?: "present" | "missing"; catalogDriverId?: string } = {}
+) {
   const tempRoot = await mkdtemp(path.join(tmpdir(), `miracle-provider-${provider}-`));
   const workspace = path.join(tempRoot, ".miracle");
   await cp(fixtureWorkspace, workspace, { recursive: true });
@@ -55,7 +61,18 @@ async function executeProvider(provider: string, credentialKey: string, apiPath:
   const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as { profile: Record<string, unknown> };
   catalog.profile.base_url = fakeProviderBaseUrl;
   catalog.profile.api_path = apiPath;
+  if (options.catalogDriverId) (catalog as { driver_id?: string }).driver_id = options.catalogDriverId;
   await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`, "utf8");
+  if (options.catalog === "missing") {
+    await rm(catalogPath);
+    const manifestPath = path.join(workspace, "adapters", "model-api.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { provider_profiles: Array<Record<string, unknown>> };
+    const profile = manifest.provider_profiles.find((candidate) => candidate.provider === provider);
+    if (!profile) throw new Error(`Missing manifest profile for ${provider}`);
+    profile.base_url = fakeProviderBaseUrl;
+    profile.api_path = apiPath;
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  }
 
   const workflow: WorkflowSpec = {
     id: `provider-selection-${provider}`,
@@ -131,11 +148,12 @@ beforeAll(async () => {
   fakeProvider = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
-    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { model?: string };
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { model?: string; stream?: unknown };
     receivedRequests.push({
       path: new URL(request.url ?? "/", "http://127.0.0.1").pathname,
       authorization: request.headers.authorization,
-      model: body.model
+      model: body.model,
+      stream: body.stream
     });
     response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
     response.end(JSON.stringify({
@@ -175,6 +193,25 @@ describe("provider-scoped Model API execution", () => {
         status: "failed",
         error: { code: "credential_missing", recoverable: false }
       }
+    });
+    expect(result.requestCount).toBe(0);
+  });
+
+  it("uses the DeepSeek-specific Driver when the DeepSeek Catalog entry is missing", async () => {
+    const result = await executeProvider("deepseek", "DEEPSEEK_API_KEY", "/chat/completions", true, { catalog: "missing" });
+
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ adapter_result: { status: "succeeded" } });
+    expect(result.requestCount).toBe(1);
+    expect(receivedRequests.at(-1)).toMatchObject({ stream: false });
+  });
+
+  it("fails closed without calling fetch when a Catalog Driver is bound to another provider", async () => {
+    const result = await executeProvider("deepseek", "DEEPSEEK_API_KEY", "/chat/completions", true, { catalogDriverId: "minimax" });
+
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      adapter_result: { status: "failed", error: { code: "provider_driver_unregistered", recoverable: false } }
     });
     expect(result.requestCount).toBe(0);
   });

@@ -254,7 +254,7 @@ export interface ProviderProfile {
 
 export interface ProviderCatalogCredential {
   key: string;
-  source: AdapterCredentialSource;
+  source: "env";
 }
 
 export interface ProviderCatalogDocumentation {

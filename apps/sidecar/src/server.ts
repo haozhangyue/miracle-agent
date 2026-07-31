@@ -1713,7 +1713,7 @@ async function executeSidecarAdapter(input: {
       });
     }
     const driver = providerDriverRegistry.resolve({
-      driver_id: catalogEntry?.driver_id ?? input.adapter.runtime.entrypoint,
+      driver_id: catalogEntry?.driver_id,
       provider: profile.provider
     });
     if (!driver) {
@@ -3997,7 +3997,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   if (req.method === "GET" && url.pathname === "/api/v0/providers") {
     const providers = buildProviderHealthProjection(await readProviderCatalogEntries(), {
       credentialKeys: availableCredentialKeys(),
-      registeredDriverIds: providerDriverRegistry.registeredDriverIds()
+      driverProviderBindings: providerDriverRegistry.registeredDriverBindings()
     });
     return sendJson(res, 200, { providers });
   }

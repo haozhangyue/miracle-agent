@@ -410,4 +410,31 @@ describe("Model API Sidecar integration", () => {
     expect(response.status).toBe(500);
     expect(JSON.stringify(body)).not.toContain("sk-live-actual-secret");
   });
+
+  it.each(["keychain", "workspace-secret"])("rejects an unsupported %s Catalog source without returning a suspected secret", async (source) => {
+    const suspectedSecret = `sk-live-${source}-actual-secret`;
+    await writeProviderCatalog({
+      id: "fixture-compatible",
+      display_name: "Fixture Compatible",
+      driver_id: "openai-compatible",
+      profile: {
+        id: "fixture-compatible-default",
+        provider: "fixture-compatible",
+        model: "fixture-chat",
+        base_url: providerBaseUrl,
+        credential_ref: suspectedSecret,
+        verification_status: "configured_unverified"
+      },
+      credential: { key: suspectedSecret, source },
+      documentation: { official_url: "https://example.invalid/provider-docs", verified_at: "2026-07-31T00:00:00.000Z" },
+      capabilities: ["model.call"],
+      cancellation: "http_abort"
+    });
+
+    const response = await fetch(`${baseUrl}/api/v0/providers`);
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(body)).not.toContain(suspectedSecret);
+  });
 });

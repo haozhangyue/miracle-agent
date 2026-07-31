@@ -36,7 +36,10 @@ attempt/time/cost 预算创建新 NodeAttempt；
 取消、响应大小、JSON、usage、receipt 与稳定错误映射；ProviderProfile 只保存
 `credential_ref`。三家 Driver 已接入，但 `DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`、
 `MINIMAX_API_KEY` 均未配置，本轮未执行真实 smoke，三家保持 `configured_unverified`，
-不得视为 healthy。Provider fallback 属于 P7-08，且 P7 不接入 OpenAI SDK 或官方 API。
+不得视为 healthy。Provider Catalog 仅接受 env 引用，smoke 与正式执行共用 manifest 的
+Provider scope 授权；默认 smoke Artifact 写入仓库外的系统临时 workspace，显式设置
+`MIRACLE_WORKSPACE_DIR` 时才写入用户指定目录。Provider fallback 属于 P7-08，且 P7 不接入
+OpenAI SDK 或官方 API。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 

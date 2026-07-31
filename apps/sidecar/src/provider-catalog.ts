@@ -36,24 +36,28 @@ export async function readProviderCatalog(workspace: string): Promise<ProviderCa
 
 export function buildProviderHealthProjection(
   entries: readonly ProviderCatalogEntry[],
-  input: { credentialKeys: readonly string[]; registeredDriverIds: readonly string[] }
+  input: {
+    credentialKeys: readonly string[];
+    driverProviderBindings: readonly { driver_id: string; provider: string }[];
+  }
 ): ProviderHealthProjection[] {
   const credentials = new Set(input.credentialKeys);
-  const drivers = new Set(input.registeredDriverIds);
+  const driverProviderBindings = new Set(input.driverProviderBindings.map((binding) => `${binding.driver_id}\0${binding.provider}`));
   return entries.map((entry) => {
-    const configured = entry.credential.source === "env" && credentials.has(entry.credential.key);
+    const configured = credentials.has(entry.credential.key);
+    const driverRegistered = driverProviderBindings.has(`${entry.driver_id}\0${entry.profile.provider}`);
     return {
       id: entry.id,
       display_name: entry.display_name,
       driver_id: entry.driver_id,
-      driver_registered: drivers.has(entry.driver_id),
+      driver_registered: driverRegistered,
       profile: entry.profile,
       credential: { ...entry.credential, configured },
       documentation: entry.documentation,
       capabilities: entry.capabilities,
       cancellation: entry.cancellation,
       verification_status: entry.profile.verification_status,
-      health_status: !drivers.has(entry.driver_id)
+      health_status: !driverRegistered
         ? "driver_unregistered"
         : configured
           ? entry.profile.verification_status

@@ -15,6 +15,11 @@ describe("ProviderDriverRegistry", () => {
     expect(registry.resolveByProvider("not-registered")).toBeUndefined();
   });
 
+  it("rejects an explicitly selected Driver that is not bound to the provider", () => {
+    const registry = createProviderDriverRegistry();
+    expect(registry.resolve({ provider: "deepseek", driver_id: "minimax" })).toBeUndefined();
+  });
+
   it.each([
     ["deepseek", "deepseek"],
     ["kimi", "kimi"],

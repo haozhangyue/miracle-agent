@@ -46,4 +46,13 @@ describe("provider catalog contract", () => {
       credential: { key: "sk-live-actual-secret", source: "env" }
     })).toThrow(/environment variable/i);
   });
+
+  it.each(["keychain", "workspace-secret"])("rejects %s credentials even when the key and profile reference match", (source) => {
+    const suspiciousReference = "sk-live-actual-secret";
+    expect(() => providerCatalogEntrySchema.parse({
+      ...entry,
+      profile: { ...entry.profile, credential_ref: suspiciousReference },
+      credential: { key: suspiciousReference, source }
+    })).toThrow();
+  });
 });

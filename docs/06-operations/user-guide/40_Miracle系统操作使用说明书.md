@@ -385,9 +385,14 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
    MIRACLE_ENABLE_MODEL_API=1 MIRACLE_SMOKE_PROVIDER=deepseek npm run smoke:provider
    ```
 
-   可将 `deepseek` 替换为 `kimi` 或 `minimax`。smoke Artifact 仅写入
-   `<MIRACLE_WORKSPACE_DIR>/smoke-artifacts/`，目录与文件名有安全校验；输出、日志和回执
-   不得含 API Key 或敏感正文。
+   可将 `deepseek` 替换为 `kimi` 或 `minimax`。Catalog 只接受合法 env 引用；smoke 在构造
+   请求前严格解析 workspace 的 Model API manifest，并按 credential requirement 与 Provider
+   scope 授权，跨 Provider 引用和 Driver 错配均零请求失败。
+
+   显式设置 `MIRACLE_WORKSPACE_DIR` 时，Artifact 写入该目录的 `smoke-artifacts/`；未设置时，
+   配置从内置 fixture workspace 读取，Artifact 写入系统临时目录安全创建的
+   `miracle-provider-smoke-*` workspace，命令返回完整路径且不会污染 Git。目录、文件名和单次
+   写入均有安全校验；输出、日志和回执不得含 API Key 或敏感正文。
 4. 只有完成真实 health probe 与脱敏 completion 后，对应 Provider 才可标记 `healthy`。
    凭证存在、Profile 已配置或 fake-server 测试通过都不能替代该验证。Provider fallback 尚未
    实现，属于 P7-08。

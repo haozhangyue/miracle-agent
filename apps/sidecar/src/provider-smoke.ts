@@ -1,14 +1,34 @@
-import type { AdapterInvocation, ProviderCatalogEntry } from "@miracle/core";
+import { adapterManifestSchema, type AdapterInvocation, type AdapterManifest, type ProviderCatalogEntry } from "@miracle/core";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ModelApiAdapter } from "./model-api-adapter";
+import { authorizeProviderCredential } from "./model-api-authorization";
 import { readProviderCatalog } from "./provider-catalog";
 import { createProviderDriverRegistry, type ProviderDriverRegistry } from "./provider-driver-registry";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+
+async function readModelApiManifest(workspaceDir: string) {
+  let entries;
+  try {
+    entries = await readdir(path.join(workspaceDir, "adapters"), { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("Provider smoke Model API manifest is missing.");
+    }
+    throw error;
+  }
+  const manifests = await Promise.all(entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map(async (entry) => adapterManifestSchema.parse(JSON.parse(await readFile(path.join(workspaceDir, "adapters", entry.name), "utf8")) as unknown)));
+  const modelApiManifests = manifests.filter((manifest) => manifest.kind === "model-api");
+  if (modelApiManifests.length !== 1) throw new Error("Provider smoke requires exactly one Model API manifest.");
+  return modelApiManifests[0]!;
+}
 
 function isPathInside(parent: string, candidate: string) {
   const relative = path.relative(parent, candidate);
@@ -328,24 +348,32 @@ export async function runProviderSmoke(input: {
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
   catalog?: ProviderCatalogEntry[];
+  manifest?: AdapterManifest;
   driverRegistry?: ProviderDriverRegistry;
   beforeArtifactWrite?: () => Promise<void> | void;
 } = {}): Promise<ProviderSmokeResult> {
   const env = input.env ?? process.env;
-  const workspaceDir = input.workspaceDir ?? env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
+  const configuredWorkspaceDir = input.workspaceDir ?? env.MIRACLE_WORKSPACE_DIR;
+  const configurationWorkspaceDir = configuredWorkspaceDir ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
   const providerId = env.MIRACLE_SMOKE_PROVIDER;
   if (env.MIRACLE_ENABLE_MODEL_API !== "1") assertProviderSmokeEnabled({ enabled: env.MIRACLE_ENABLE_MODEL_API, provider: providerId });
-  const catalog = input.catalog ?? await readProviderCatalog(workspaceDir);
+  const catalog = input.catalog ?? await readProviderCatalog(configurationWorkspaceDir);
   const entry = catalog.find((candidate) => candidate.id === providerId || candidate.profile.provider === providerId);
   if (!entry) throw new Error("MIRACLE_SMOKE_PROVIDER does not match a configured provider catalog entry.");
   if (entry.credential.source !== "env") throw new Error("Provider smoke only supports an env credential source in this local Sidecar phase.");
+  const manifest = input.manifest ?? await readModelApiManifest(configurationWorkspaceDir);
+  if (!authorizeProviderCredential(manifest, entry.profile).authorized) {
+    throw new Error("Provider credential_ref is not authorized for this Model API Adapter.");
+  }
   const credential = env[entry.credential.key];
   assertProviderSmokeEnabled({ enabled: env.MIRACLE_ENABLE_MODEL_API, provider: providerId, credential });
   if (!credential) throw new Error("Provider credential is missing; no request was constructed.");
   const registry = input.driverRegistry ?? createProviderDriverRegistry();
   const driver = registry.resolve({ driver_id: entry.driver_id, provider: entry.profile.provider });
   if (!driver) throw new Error("Provider Driver is not registered; no request was constructed.");
-  const artifactDestination = await prepareSmokeArtifactDestination(workspaceDir, entry.id);
+  const artifactWorkspaceDir = configuredWorkspaceDir
+    ?? await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-"));
+  const artifactDestination = await prepareSmokeArtifactDestination(artifactWorkspaceDir, entry.id);
 
   let outputText: string | undefined;
   const result = await new ModelApiAdapter({

@@ -1,11 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ProviderCatalogEntry, ProviderDriver } from "@miracle/core";
+import type { AdapterManifest, ProviderCatalogEntry, ProviderDriver } from "@miracle/core";
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, rmdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { assertProviderSmokeEnabled, runProviderSmoke } from "../src/provider-smoke";
 import { createProviderDriverRegistry, ProviderDriverRegistry } from "../src/provider-driver-registry";
+
+const execFileAsync = promisify(execFile);
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+
+function isPathInside(parent: string, candidate: string) {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+}
 
 const catalogEntry = {
   id: "fixture-compatible",
@@ -24,6 +35,28 @@ const catalogEntry = {
   capabilities: ["model.call"],
   cancellation: "http_abort"
 } satisfies ProviderCatalogEntry;
+
+const adapterManifest = {
+  id: "model-api-compatible-adapter",
+  kind: "model-api",
+  display_name: "Model API Compatible Adapter",
+  version: "0.1.0",
+  status: "experimental",
+  description: "Provider smoke test manifest",
+  execution_mode: "external",
+  capabilities: ["model.call"],
+  supported_providers: ["fixture-compatible"],
+  default_provider: "fixture-compatible",
+  required_credentials: [{
+    key: "MODEL_API_FIXTURE_CREDENTIAL",
+    label: "Fixture credential",
+    source: "env",
+    required: true,
+    providers: ["fixture-compatible"]
+  }],
+  provider_profiles: [catalogEntry.profile],
+  runtime: { local_executor: "external-api", can_execute: true, entrypoint: "openai-compatible" }
+} satisfies AdapterManifest;
 
 describe("provider smoke safety gate", () => {
   it("blocks the smoke before driver request construction when opt-in is disabled", () => {
@@ -58,6 +91,176 @@ describe("provider smoke safety gate", () => {
     expect(builtRequest).toBe(false);
   });
 
+  it("rejects a cross-provider credential reference before constructing a Driver request", async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-scope-"));
+    let builtRequest = false;
+    const registry = new ProviderDriverRegistry().register({
+      driver: {
+        id: "deepseek",
+        buildRequest: () => {
+          builtRequest = true;
+          return { url: "http://127.0.0.1:1/should-not-run", init: {} };
+        },
+        parseResponse: () => ({ output_text: "unused" }),
+        mapError: () => ({ code: "unused", message: "unused", recoverable: false })
+      },
+      providers: ["deepseek"]
+    });
+    const deepSeekWithMoonshotCredential = {
+      ...catalogEntry,
+      id: "deepseek",
+      driver_id: "deepseek",
+      profile: {
+        ...catalogEntry.profile,
+        id: "deepseek-default",
+        provider: "deepseek",
+        credential_ref: "MOONSHOT_API_KEY"
+      },
+      credential: { key: "MOONSHOT_API_KEY", source: "env" as const }
+    };
+    const manifest = {
+      ...adapterManifest,
+      supported_providers: ["deepseek", "kimi"],
+      required_credentials: [{
+        key: "MOONSHOT_API_KEY",
+        label: "Kimi credential",
+        source: "env" as const,
+        required: true,
+        providers: ["kimi"]
+      }]
+    };
+
+    try {
+      await expect(runProviderSmoke({
+        workspaceDir: workspace,
+        catalog: [deepSeekWithMoonshotCredential],
+        manifest,
+        driverRegistry: registry,
+        env: {
+          MIRACLE_ENABLE_MODEL_API: "1",
+          MIRACLE_SMOKE_PROVIDER: "deepseek",
+          MOONSHOT_API_KEY: "moonshot-secret"
+        }
+      })).rejects.toThrow(/credential.*authorized|authorized.*credential/i);
+      expect(builtRequest).toBe(false);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed before constructing a Driver request when the workspace manifest is missing", async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-manifest-"));
+    let builtRequest = false;
+    const registry = new ProviderDriverRegistry().register({
+      driver: {
+        id: "fixture-driver",
+        buildRequest: () => {
+          builtRequest = true;
+          return { url: "http://127.0.0.1:1/should-not-run", init: {} };
+        },
+        parseResponse: () => ({ output_text: "unused" }),
+        mapError: () => ({ code: "unused", message: "unused", recoverable: false })
+      },
+      providers: ["fixture-compatible"]
+    });
+
+    try {
+      await expect(runProviderSmoke({
+        workspaceDir: workspace,
+        catalog: [catalogEntry],
+        driverRegistry: registry,
+        env: {
+          MIRACLE_ENABLE_MODEL_API: "1",
+          MIRACLE_SMOKE_PROVIDER: "fixture-compatible",
+          MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret"
+        }
+      })).rejects.toThrow(/manifest/i);
+      expect(builtRequest).toBe(false);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("strictly rejects an invalid workspace manifest before constructing a Driver request", async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-invalid-manifest-"));
+    let builtRequest = false;
+    const registry = new ProviderDriverRegistry().register({
+      driver: {
+        id: "fixture-driver",
+        buildRequest: () => {
+          builtRequest = true;
+          return { url: "http://127.0.0.1:1/should-not-run", init: {} };
+        },
+        parseResponse: () => ({ output_text: "unused" }),
+        mapError: () => ({ code: "unused", message: "unused", recoverable: false })
+      },
+      providers: ["fixture-compatible"]
+    });
+
+    try {
+      await mkdir(path.join(workspace, "adapters"));
+      await writeFile(path.join(workspace, "adapters", "model-api.json"), JSON.stringify({
+        ...adapterManifest,
+        required_credentials: [{
+          key: "MODEL_API_FIXTURE_CREDENTIAL",
+          label: "Fixture credential",
+          source: "workspace-secret",
+          required: true
+        }]
+      }), "utf8");
+      await expect(runProviderSmoke({
+        workspaceDir: workspace,
+        catalog: [catalogEntry],
+        driverRegistry: registry,
+        env: {
+          MIRACLE_ENABLE_MODEL_API: "1",
+          MIRACLE_SMOKE_PROVIDER: "fixture-compatible",
+          MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret"
+        }
+      })).rejects.toThrow();
+      expect(builtRequest).toBe(false);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("writes the default smoke artifact outside the repository without changing git status", async () => {
+    const statusBefore = (await execFileAsync("git", ["status", "--short", "--untracked-files=all"], { cwd: repoRoot })).stdout;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      id: "default-smoke-receipt",
+      choices: [{ message: { content: "safe response" } }]
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    let artifactPath: string | undefined;
+
+    try {
+      const result = await runProviderSmoke({
+        catalog: [{ ...catalogEntry, driver_id: "openai-compatible" }],
+        manifest: adapterManifest,
+        driverRegistry: createProviderDriverRegistry(),
+        env: {
+          MIRACLE_ENABLE_MODEL_API: "1",
+          MIRACLE_SMOKE_PROVIDER: "fixture-compatible",
+          MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret"
+        }
+      });
+      artifactPath = result.artifact_path;
+
+      expect(isPathInside(repoRoot, artifactPath)).toBe(false);
+      expect(isPathInside(path.join(repoRoot, "fixtures"), artifactPath)).toBe(false);
+      expect((await execFileAsync("git", ["status", "--short", "--untracked-files=all"], { cwd: repoRoot })).stdout).toBe(statusBefore);
+    } finally {
+      vi.unstubAllGlobals();
+      if (artifactPath) {
+        if (isPathInside(repoRoot, artifactPath)) {
+          await rm(artifactPath, { force: true });
+          await rmdir(path.dirname(artifactPath)).catch(() => undefined);
+        } else {
+          await rm(path.dirname(path.dirname(artifactPath)), { recursive: true, force: true });
+        }
+      }
+    }
+  });
+
   it("rejects a symlinked workspace before constructing a Driver request", async () => {
     const canonicalWorkspace = await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-workspace-"));
     const linkedWorkspace = `${canonicalWorkspace}-link`;
@@ -76,6 +279,7 @@ describe("provider smoke safety gate", () => {
       await expect(runProviderSmoke({
         workspaceDir: linkedWorkspace,
         catalog: [catalogEntry],
+        manifest: adapterManifest,
         driverRegistry: registry,
         env: { MIRACLE_ENABLE_MODEL_API: "1", MIRACLE_SMOKE_PROVIDER: "fixture-compatible", MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret" }
       })).rejects.toThrow(/workspace.*canonical|symlink/i);
@@ -104,6 +308,7 @@ describe("provider smoke safety gate", () => {
       await expect(runProviderSmoke({
         workspaceDir: workspace,
         catalog: [catalogEntry],
+        manifest: adapterManifest,
         driverRegistry: registry,
         env: { MIRACLE_ENABLE_MODEL_API: "1", MIRACLE_SMOKE_PROVIDER: "fixture-compatible", MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret" }
       })).rejects.toThrow(/artifact root.*unsafe|artifact root.*canonical/i);
@@ -135,6 +340,7 @@ describe("provider smoke safety gate", () => {
       await expect(runProviderSmoke({
         workspaceDir: workspace,
         catalog: [catalogEntry],
+        manifest: adapterManifest,
         driverRegistry: registry,
         env: { MIRACLE_ENABLE_MODEL_API: "1", MIRACLE_SMOKE_PROVIDER: "fixture-compatible", MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret" }
       })).rejects.toThrow(/target.*unsafe|target.*already exists/i);
@@ -166,6 +372,7 @@ describe("provider smoke safety gate", () => {
           driver_id: "openai-compatible",
           profile: { ...catalogEntry.profile, base_url: `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}` }
         }],
+        manifest: adapterManifest,
         driverRegistry: createProviderDriverRegistry(),
         env: {
           MIRACLE_ENABLE_MODEL_API: "1",
@@ -204,6 +411,7 @@ describe("provider smoke safety gate", () => {
           driver_id: "openai-compatible",
           profile: { ...catalogEntry.profile, base_url: `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}` }
         }],
+        manifest: adapterManifest,
         driverRegistry: createProviderDriverRegistry(),
         env: {
           MIRACLE_ENABLE_MODEL_API: "1",

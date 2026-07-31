@@ -273,7 +273,7 @@ export const providerCatalogEntrySchema: z.ZodType<ProviderCatalogEntry> = z.obj
   profile: providerProfileSchema,
   credential: z.object({
     key: z.string().min(1),
-    source: z.enum(["env", "keychain", "workspace-secret"])
+    source: z.literal("env")
   }).strict(),
   documentation: z.object({
     official_url: z.string().url(),
@@ -289,10 +289,10 @@ export const providerCatalogEntrySchema: z.ZodType<ProviderCatalogEntry> = z.obj
       message: "catalog credential key must match profile credential_ref"
     });
   }
-  if (entry.credential.source === "env" && (
+  if (
     !isEnvironmentVariableIdentifier(entry.credential.key)
     || !isEnvironmentVariableIdentifier(entry.profile.credential_ref)
-  )) {
+  ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["credential", "key"],

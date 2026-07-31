@@ -143,6 +143,10 @@
 - 修复/固化 Provider 错误与安全合同：无凭证返回 `missing_credential` 且不发送网络请求；
   未知 Driver 不 fallback；MiniMax 仅接受 `base_resp.status_code === 0` 的最小兼容响应；
   Key 不持久化、不写入 receipt、日志、错误或 smoke Artifact。
+- P7-07 最终审查修复：smoke 与正式执行共用严格解析的 Model API manifest 凭证和 Provider
+  scope 授权；Driver ID 与 Provider 采用双重绑定，Catalog 缺失时按 Provider 选择专用 Driver。
+  Provider Catalog 收窄为 env-only，拒绝 `keychain`、`workspace-secret` 与疑似明文密钥；默认
+  smoke Artifact 改写仓库外系统临时 workspace，显式 workspace 行为保持不变。
 - 本轮 `DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`、`MINIMAX_API_KEY` 均缺失，未运行真实外部
   smoke；三家保持 `configured_unverified`，不得声明 healthy，也不伪造真实 Artifact 或 receipt。
 - 同步 README、文档导航、用户手册、路线图和 task-baseline：`P7-07` 标记完成，

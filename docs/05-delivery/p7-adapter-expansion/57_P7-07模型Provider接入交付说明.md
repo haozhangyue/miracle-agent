@@ -47,7 +47,9 @@ MiniMax 的 `base_resp` 检查只是最小兼容限制，不表示其所有业�
 Miracle 覆盖。
 
 fake-server 契约验收覆盖三家 Driver 的请求差异、success/error/usage/timeout 和错误合同。未知
-Driver 一律拒绝，不会 fallback 到其他 Driver。真实 Provider smoke 不在本轮验收范围内。
+Driver、Driver ID 与 Provider 错配一律拒绝，不会 fallback 到其他 Driver；单个 Catalog 缺失时
+按 Provider 解析专用 Driver，不使用 manifest `runtime.entrypoint` 绕过厂商校验。真实 Provider
+smoke 不在本轮验收范围内。
 
 ## 4. 配置与检查模型 Provider
 
@@ -75,10 +77,15 @@ Driver 一律拒绝，不会 fallback 到其他 Driver。真实 Provider smoke �
    MIRACLE_ENABLE_MODEL_API=1 MIRACLE_SMOKE_PROVIDER=deepseek npm run smoke:provider
    ```
 
-   将 `deepseek` 替换为 `kimi` 或 `minimax` 可验证对应 Provider。smoke 只允许写入安全的
-   `<MIRACLE_WORKSPACE_DIR>/smoke-artifacts/`，输出为脱敏 Markdown Artifact；文件名受限、目录
-   必须为 canonical 非 symlink 路径，写入采用单次安全创建。Artifact、日志和回执只保留
-   Provider、usage、latency 与非敏感元数据，禁止包含 API Key、Authorization 值或原始敏感输入。
+   将 `deepseek` 替换为 `kimi` 或 `minimax` 可验证对应 Provider。smoke 会严格解析 workspace
+   中唯一的 Model API manifest，并在构造 Driver request 前复用 Sidecar 的
+   `credential_ref -> manifest requirement -> provider scope` 授权。Catalog 凭证只允许合法 env
+   引用；跨 Provider 引用、非 env source、未知或错配 Driver 均在网络请求前 fail closed。
+
+   设置 `MIRACLE_WORKSPACE_DIR` 时，Artifact 写入该 workspace 的 `smoke-artifacts/`。未设置时，
+   Provider/Catalog 配置从内置 fixture workspace 读取，Artifact 则写入操作系统临时目录下由
+   `mkdtemp` 安全创建的独立 `miracle-provider-smoke-*` workspace，返回值包含完整路径，不污染
+   Git 工作树。两种模式都要求 canonical 非 symlink 目录，并以单次安全创建写入脱敏 Markdown。
 
 ## 5. 状态语义与本轮真实 smoke 结果
 
@@ -98,11 +105,13 @@ Driver 一律拒绝，不会 fallback 到其他 Driver。真实 Provider smoke �
 
 ## 6. 安全与后续边界
 
-- Key 仅以环境变量引用使用，不持久化、不写入回执、日志、错误、测试快照或 Git。
+- Catalog Key 仅支持合法环境变量引用；`keychain`、`workspace-secret` 和疑似明文密钥解析失败，
+  不持久化、不写入 API、回执、日志、错误、测试快照或 Git。
 - Provider 路由尚未实现；P7-08 才处理同类 Provider fallback、成本/capability 策略和
   Codex/Model API 的人工确认边界。
 - Provider health 不能由凭证存在、fake-server 通过或 HTTP transport 初始化推断。
-- smoke 路径有 canonical 目录、symlink、文件名和单次写入保护，避免路径逃逸和覆盖既有文件。
+- smoke 路径有 canonical 目录、symlink、文件名和单次写入保护；默认 Artifact 位于仓库外的
+  系统临时 workspace，避免路径逃逸、覆盖既有文件和 Git 污染。
 
 ## 7. 验收与下一步
 

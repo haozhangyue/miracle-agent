@@ -28,12 +28,21 @@ export class ProviderDriverRegistry {
   }
 
   resolve(input: { driver_id?: string; provider: string }) {
-    if (input.driver_id) return this.resolveByDriverId(input.driver_id);
+    if (input.driver_id) {
+      const driver = this.resolveByDriverId(input.driver_id);
+      return driver && this.resolveByProvider(input.provider) === driver ? driver : undefined;
+    }
     return this.resolveByProvider(input.provider);
   }
 
   registeredDriverIds() {
     return Array.from(this.byDriverId.keys()).sort();
+  }
+
+  registeredDriverBindings() {
+    return Array.from(this.byProvider.entries())
+      .map(([provider, driver]) => ({ driver_id: driver.id, provider }))
+      .sort((left, right) => left.provider.localeCompare(right.provider));
   }
 }
 

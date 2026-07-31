@@ -7,6 +7,8 @@ export type ProviderCredentialAuthorization =
 export function authorizeProviderCredential(manifest: AdapterManifest, profile: ProviderProfile): ProviderCredentialAuthorization {
   const credential = manifest.required_credentials.find((candidate) => candidate.key === profile.credential_ref);
   if (
+    !manifest.supported_providers.includes(profile.provider)
+    ||
     !credential
     || credential.source !== "env"
     || (credential.providers !== undefined && !credential.providers.includes(profile.provider))
