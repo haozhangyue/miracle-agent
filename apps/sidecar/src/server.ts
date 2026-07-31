@@ -1877,7 +1877,8 @@ async function reconcileRetryState(runId: string) {
             policy: retryPolicyForNode(nodeSpec),
             error: latest.error,
             attempts: operationAttempts,
-            now
+            now,
+            mode: "consume"
           });
           if (currentDecision.action !== "schedule_retry") {
             await persistRetryDecisionForAttempt({ runId, nodeRun, nodeSpec, attempt: latest, attempts, now });
@@ -2010,7 +2011,8 @@ async function authorizeRetryConsumption(input: {
     policy: retryPolicyForNode(input.nodeSpec),
     error: latest.error,
     attempts: operationAttempts,
-    now: input.now
+    now: input.now,
+    mode: "consume"
   });
   if (decision.action === "schedule_retry" && decision.next_attempt_number === input.schedule.attempt_number) {
     return {

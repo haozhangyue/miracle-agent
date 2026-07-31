@@ -143,6 +143,46 @@ describe("RetryPolicy", () => {
     });
   });
 
+  it("does not charge backoff twice when consuming an existing schedule", () => {
+    const policy = { ...basePolicy, total_time_budget_ms: 1_500 };
+    const attempts = [failedAttempt({
+      attemptNumber: 1,
+      dispatchedAt: "2026-07-31T00:00:00.000Z",
+      createdAt: "2026-07-31T00:00:00.000Z"
+    })];
+
+    expect(decideRetry({
+      policy,
+      error: rateLimitError,
+      attempts,
+      now: "2026-07-31T00:00:00.000Z"
+    })).toMatchObject({
+      action: "schedule_retry",
+      next_attempt_number: 2,
+      scheduled_for: "2026-07-31T00:00:01.000Z"
+    });
+    expect(decideRetry({
+      policy,
+      error: rateLimitError,
+      attempts,
+      now: "2026-07-31T00:00:01.000Z",
+      mode: "consume"
+    })).toMatchObject({
+      action: "schedule_retry",
+      next_attempt_number: 2
+    });
+    expect(decideRetry({
+      policy,
+      error: rateLimitError,
+      attempts,
+      now: "2026-07-31T00:00:01.501Z",
+      mode: "consume"
+    })).toMatchObject({
+      action: "require_attention",
+      reason_code: "time_budget_exhausted"
+    });
+  });
+
   it("rejects a RetryPolicy without a finite cost budget", () => {
     const { cost_budget: _costBudget, ...withoutCostBudget } = basePolicy;
     expect(() => retryPolicySchema.parse(withoutCostBudget)).toThrow();

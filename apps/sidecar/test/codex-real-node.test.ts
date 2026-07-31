@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { WorkflowSpec } from "@miracle/core";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -303,7 +303,9 @@ let sidecar: ChildProcessWithoutNullStreams | undefined;
 let baseUrl = "";
 let sidecarOutput = "";
 let fakeCodexMarker = "";
+let fakeCodexWrapper = "";
 let staleStartupLock = "";
+let sidecarPort = 0;
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl}${url}`, {
@@ -326,6 +328,50 @@ async function waitForHealth() {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Sidecar did not become healthy.\n${sidecarOutput}`);
+}
+
+async function startSidecar() {
+  sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      MIRACLE_WORKSPACE_DIR: tempWorkspace,
+      MIRACLE_WORKFLOW_REGISTRY_DIR: path.join(tempWorkspace, "workflows"),
+      MIRACLE_RUNTIME_WORKSPACE_DIR: runtimeWorkspace,
+      MIRACLE_SIDECAR_PORT: String(sidecarPort),
+      MIRACLE_CODEX_CLI_PATH: process.execPath,
+      MIRACLE_CODEX_CLI_ARGUMENT_PREFIX: fakeCodexWrapper,
+      MIRACLE_ENABLE_REAL_CODEX: "1",
+      FAKE_CODEX_EXEC_MARKER: fakeCodexMarker,
+      npm_config_cache: path.join(repoRoot, ".npm-cache")
+    }
+  });
+  sidecar.stdout.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
+  sidecar.stderr.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
+  await waitForHealth();
+}
+
+async function stopSidecar() {
+  const active = sidecar;
+  if (!active) return;
+  sidecar = undefined;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Sidecar did not stop")), 10_000);
+    active.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    active.kill("SIGTERM");
+  });
+}
+
+async function fakeCodexDispatchCount() {
+  try {
+    return (await readFile(fakeCodexMarker, "utf8")).split("\n").filter(Boolean).length;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
 }
 
 async function runStartupProbe(workspace: string, runtime: string) {
@@ -390,6 +436,12 @@ describe("P6-07 Codex real single-node execution", () => {
     tempWorkspace = path.join(tempRoot, "workspace", ".miracle");
     runtimeWorkspace = path.join(tempRoot, "runtime");
     fakeCodexMarker = path.join(tempRoot, "fake-codex-exec.jsonl");
+    fakeCodexWrapper = path.join(tempRoot, "fake-codex-with-counter.mjs");
+    await writeFile(
+      fakeCodexWrapper,
+      `process.env.FAKE_CODEX_EXEC_MARKER = ${JSON.stringify(fakeCodexMarker)};\nawait import(${JSON.stringify(pathToFileURL(fakeCodex).href)});\n`,
+      "utf8"
+    );
     await cp(fixtureWorkspace, tempWorkspace, { recursive: true });
     await writeFile(path.join(tempWorkspace, "workflows", `${workflow.id}.json`), `${JSON.stringify(workflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${multiOutputWorkflow.id}.json`), `${JSON.stringify(multiOutputWorkflow, null, 2)}\n`, "utf8");
@@ -410,31 +462,13 @@ describe("P6-07 Codex real single-node execution", () => {
       `${JSON.stringify({ instance_id: "dead-sidecar", owner_token: "stale", pid: 2_147_483_647, created_at: "2020-01-01T00:00:00.000Z" })}\n`,
       "utf8"
     );
-    const port = 5600 + Math.floor(Math.random() * 300);
-    baseUrl = `http://127.0.0.1:${port}`;
-    sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        MIRACLE_WORKSPACE_DIR: tempWorkspace,
-        MIRACLE_WORKFLOW_REGISTRY_DIR: path.join(tempWorkspace, "workflows"),
-        MIRACLE_RUNTIME_WORKSPACE_DIR: runtimeWorkspace,
-        MIRACLE_SIDECAR_PORT: String(port),
-        MIRACLE_CODEX_CLI_PATH: process.execPath,
-        MIRACLE_CODEX_CLI_ARGUMENT_PREFIX: fakeCodex,
-        MIRACLE_ENABLE_REAL_CODEX: "1",
-        FAKE_CODEX_EXEC_MARKER: fakeCodexMarker,
-        npm_config_cache: path.join(repoRoot, ".npm-cache")
-      }
-    });
-    sidecar.stdout.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
-    sidecar.stderr.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
-    await waitForHealth();
+    sidecarPort = 5600 + Math.floor(Math.random() * 300);
+    baseUrl = `http://127.0.0.1:${sidecarPort}`;
+    await startSidecar();
   }, 20_000);
 
   afterAll(async () => {
-    sidecar?.kill("SIGTERM");
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await stopSidecar();
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
   });
 
@@ -698,6 +732,7 @@ describe("P6-07 Codex real single-node execution", () => {
   });
 
   it("recovers a partial fact commit from the node journal without rerunning Codex", async () => {
+    const dispatchCountBefore = await fakeCodexDispatchCount();
     const launched = await launchConfirmedRun(workflow.id, { force_slow_output: true });
     const dispatchesDir = path.join(tempWorkspace, "runs", launched.run_id, "dispatches");
     const transactionsDir = path.join(tempWorkspace, "runs", launched.run_id, "transactions");
@@ -728,8 +763,12 @@ describe("P6-07 Codex real single-node execution", () => {
     const firstResponse = await firstRequest;
     const beforeRecoveryEvents = await fetchJson<{ events: Array<{ type: string }> }>(`/api/v0/runs/${launched.run_id}/events`);
     const attemptsAfterFailure = await readdir(path.join(runtimeWorkspace, "runtime", "attempts"));
+    const dispatchCountAfterFailure = await fakeCodexDispatchCount();
+    expect(dispatchCountAfterFailure).toBe(dispatchCountBefore + 1);
     expect((await readdir(transactionsDir)).filter((name) => name.endsWith(".json"))).toHaveLength(1);
     await rm(intentPath, { recursive: true, force: true });
+    await stopSidecar();
+    await startSidecar();
 
     const second = await fetchJson<{ summary: { failures: number; nodes_executed: number } }>(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
       method: "POST",
@@ -748,6 +787,64 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(events.events.filter((event) => event.type === "node_inputs_resolved")).toHaveLength(1);
     expect(new Set(events.events.filter((event) => event.type === "node_inputs_resolved").map((event) => event.event_id)).size).toBe(1);
     expect((await readdir(transactionsDir)).filter((name) => name.endsWith(".json"))).toEqual([]);
+    expect(await fakeCodexDispatchCount()).toBe(dispatchCountAfterFailure);
+  });
+
+  it("does not redispatch Codex after restarting with a dispatched_unknown intent", async () => {
+    const launched = await launchConfirmedRun(workflow.id, { force_slow_output: true });
+    const before = await fetchJson<{
+      nodes: Array<{ node_run_id: string }>;
+      attempts: unknown[];
+      artifacts: unknown[];
+      gates: unknown[];
+    }>(`/api/v0/runs/${launched.run_id}`);
+    const nodeRunId = before.nodes[0]!.node_run_id;
+    const dispatchCountBefore = await fakeCodexDispatchCount();
+    const runDir = path.join(tempWorkspace, "runs", launched.run_id);
+    const intentPath = path.join(runDir, "dispatches", `${nodeRunId.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 48)}_${createHash("sha256").update(nodeRunId).digest("hex").slice(0, 16)}.json`);
+    const execution = fetchJson<{ accepted: boolean }>(`/api/v0/runs/${launched.run_id}/nodes/${nodeRunId}/execute`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    let capturedIntent: (Record<string, unknown> & { invocation: { dispatched_at: string } }) | undefined;
+    for (let index = 0; index < 100; index += 1) {
+      try {
+        capturedIntent = JSON.parse(await readFile(intentPath, "utf8")) as typeof capturedIntent;
+        if (capturedIntent?.state === "dispatched_unknown") break;
+      } catch {
+        // The Adapter has not reached the dispatch window yet.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(capturedIntent?.state).toBe("dispatched_unknown");
+    await execution;
+    expect(await fakeCodexDispatchCount()).toBe(dispatchCountBefore + 1);
+
+    await writeFile(path.join(runDir, "nodes.json"), `${JSON.stringify(before.nodes, null, 2)}\n`, "utf8");
+    await writeFile(path.join(runDir, "attempts.json"), `${JSON.stringify(before.attempts, null, 2)}\n`, "utf8");
+    await writeFile(path.join(runDir, "artifacts.json"), `${JSON.stringify(before.artifacts, null, 2)}\n`, "utf8");
+    await writeFile(path.join(runDir, "gates.json"), `${JSON.stringify(before.gates, null, 2)}\n`, "utf8");
+    await mkdir(path.dirname(intentPath), { recursive: true });
+    await writeFile(intentPath, `${JSON.stringify({
+      ...capturedIntent,
+      state: "dispatched_unknown",
+      dispatched_at: capturedIntent!.invocation.dispatched_at
+    }, null, 2)}\n`, "utf8");
+
+    await stopSidecar();
+    await startSidecar();
+    const dispatchCountBeforeRecovery = await fakeCodexDispatchCount();
+    const response = await fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/nodes/${nodeRunId}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    const responseBody = await response.json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(409);
+    expect(responseBody).toMatchObject({
+      error: { code: "node_dispatch_unknown", reason_code: "dispatch_result_unknown" }
+    });
+    expect(await fakeCodexDispatchCount()).toBe(dispatchCountBeforeRecovery);
   });
 
   it("does not steal another Sidecar instance mutation lock while requests are active", async () => {

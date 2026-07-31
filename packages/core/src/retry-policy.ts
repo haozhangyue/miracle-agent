@@ -75,6 +75,7 @@ export function decideRetry(input: {
   error: RetryError;
   attempts: NodeAttempt[];
   now: string;
+  mode?: "schedule" | "consume";
 }): RetryDecision {
   const policy = retryPolicySchema.parse(input.policy);
   const nowMs = timestamp(input.now, "now");
@@ -138,7 +139,8 @@ export function decideRetry(input: {
 
   const nextAttemptNumber = attemptsUsed + 1;
   const delayMs = backoffDelay(policy, nextAttemptNumber);
-  if (elapsedMs + delayMs > policy.total_time_budget_ms) {
+  const projectedElapsedMs = input.mode === "consume" ? elapsedMs : elapsedMs + delayMs;
+  if (projectedElapsedMs > policy.total_time_budget_ms) {
     return decision({
       action: "require_attention",
       reasonCode: "time_budget_exhausted",
