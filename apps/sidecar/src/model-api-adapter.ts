@@ -3,6 +3,7 @@ import type { AdapterError, AdapterInvocation, AdapterResult, ProviderDriver, Pr
 export interface ModelApiAdapterOptions {
   driver: ProviderDriver;
   max_response_bytes?: number;
+  onNormalizedResponse?: (response: { output_text?: string; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number } }) => void;
 }
 
 export interface ModelApiExecutionInput {
@@ -107,10 +108,12 @@ function validateDriverRequestUrl(requestUrl: string, baseUrl: string) {
 export class ModelApiAdapter {
   private readonly driver: ProviderDriver;
   private readonly maxResponseBytes: number;
+  private readonly onNormalizedResponse?: ModelApiAdapterOptions["onNormalizedResponse"];
 
   constructor(options: ModelApiAdapterOptions) {
     this.driver = options.driver;
     this.maxResponseBytes = options.max_response_bytes ?? defaultMaxResponseBytes;
+    this.onNormalizedResponse = options.onNormalizedResponse;
     if (!Number.isSafeInteger(this.maxResponseBytes) || this.maxResponseBytes < 1) throw new Error("max_response_bytes must be a positive integer");
   }
 
@@ -158,6 +161,7 @@ export class ModelApiAdapter {
       } catch {
         return failure("failed", { code: "provider_response_invalid", message: "Provider response did not satisfy the compatible contract.", recoverable: false });
       }
+      this.onNormalizedResponse?.(normalized);
       return {
         operation_id: input.invocation.operation_id,
         attempt_id: input.invocation.attempt_id,

@@ -68,7 +68,8 @@ import { NodeOutputContractError, buildNodeOutputContract } from "./node-output-
 import { codexPreflightFailure, startCodexOperation } from "./codex-real-adapter";
 import { ModelApiAdapter } from "./model-api-adapter";
 import { authorizeProviderCredential } from "./model-api-authorization";
-import { openAiCompatibleDriver } from "./provider-drivers/openai-compatible";
+import { buildProviderHealthProjection, readProviderCatalog } from "./provider-catalog";
+import { createProviderDriverRegistry } from "./provider-driver-registry";
 import {
   RetryScheduleStore,
   RetryStateStore,
@@ -79,6 +80,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
 const serverInstanceId = randomUUID();
 const eventWriteQueues = new Map<string, Promise<void>>();
+const providerDriverRegistry = createProviderDriverRegistry();
 const modelApiOperations = new Map<string, {
   operation_id: string;
   attempt_id: string;
@@ -870,6 +872,10 @@ async function readAdapterManifests(): Promise<AdapterManifest[]> {
 
 async function readAdapterRegistry(): Promise<AdapterRegistryEntry[]> {
   return buildAdapterRegistry({ manifests: await readAdapterManifests(), availableCredentials: availableCredentialKeys() });
+}
+
+async function readProviderCatalogEntries() {
+  return readProviderCatalog(workspaceDir);
 }
 
 type RunViewMeta = {
@@ -1664,7 +1670,8 @@ async function executeSidecarAdapter(input: {
     return { ...result, provider_receipt: { ...result.provider_receipt, operation_id: "op_mismatched" } };
   }
   if (input.adapter.kind === "model-api") {
-    const profile = input.adapter.provider_profiles?.find((candidate) => candidate.provider === input.invocation.provider);
+    const catalogEntry = (await readProviderCatalogEntries()).find((candidate) => candidate.profile.provider === input.invocation.provider);
+    const profile = catalogEntry?.profile ?? input.adapter.provider_profiles?.find((candidate) => candidate.provider === input.invocation.provider);
     if (!profile) {
       return buildAdapterUnavailableResult({
         invocation: input.invocation,
@@ -1679,6 +1686,19 @@ async function executeSidecarAdapter(input: {
         invocation: input.invocation,
         message: "Provider credential_ref is not authorized for this Model API Adapter.",
         errorCode: "credential_not_authorized",
+        recoverable: false,
+        receivedAt
+      });
+    }
+    const driver = providerDriverRegistry.resolve({
+      driver_id: catalogEntry?.driver_id ?? input.adapter.runtime.entrypoint,
+      provider: profile.provider
+    });
+    if (!driver) {
+      return buildAdapterUnavailableResult({
+        invocation: input.invocation,
+        message: `No registered ProviderDriver is available for provider ${profile.provider}.`,
+        errorCode: "provider_driver_unregistered",
         recoverable: false,
         receivedAt
       });
@@ -1718,7 +1738,7 @@ async function executeSidecarAdapter(input: {
     });
     let result: AdapterResult | undefined;
     try {
-      result = await new ModelApiAdapter({ driver: openAiCompatibleDriver }).execute({
+      result = await new ModelApiAdapter({ driver }).execute({
         invocation: input.invocation,
         profile,
         credential,
@@ -3941,6 +3961,14 @@ async function route(req: IncomingMessage, res: ServerResponse) {
         missing_credentials: projectedAdapters.flatMap((adapter) => adapter.credential_status.filter((credential) => credential.required && !credential.configured).map((credential) => credential.key))
       }
     });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/v0/providers") {
+    const providers = buildProviderHealthProjection(await readProviderCatalogEntries(), {
+      credentialKeys: availableCredentialKeys(),
+      registeredDriverIds: providerDriverRegistry.registeredDriverIds()
+    });
+    return sendJson(res, 200, { providers });
   }
 
   if (req.method === "POST" && url.pathname === "/api/v0/run-drafts") {

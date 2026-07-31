@@ -10,6 +10,7 @@ import type {
   RetryPolicy,
   RetryScheduleRecord,
   RetryStateRecord,
+  ProviderCatalogEntry,
   ProviderProfile
 } from "./types";
 
@@ -246,8 +247,42 @@ export const providerProfileSchema: z.ZodType<ProviderProfile> = z.object({
   }, "base_url must be an http/https URL without credentials"),
   api_path: z.string().refine(isOriginRelativeApiPath, "api_path must be an origin-relative path with one leading slash").optional(),
   credential_ref: z.string().min(1),
-  verification_status: z.enum(["configured_unverified", "healthy", "degraded", "unavailable"])
+  verification_status: z.enum(["configured_unverified", "healthy", "degraded", "unavailable"]),
+  verified_at: z.string().datetime().optional(),
+  docs_url: z.string().url().optional()
 }).strict();
+
+export const providerCatalogEntrySchema: z.ZodType<ProviderCatalogEntry> = z.object({
+  id: z.string().min(1),
+  display_name: z.string().min(1),
+  driver_id: z.string().min(1),
+  profile: providerProfileSchema,
+  credential: z.object({
+    key: z.string().min(1),
+    source: z.enum(["env", "keychain", "workspace-secret"])
+  }).strict(),
+  documentation: z.object({
+    official_url: z.string().url(),
+    verified_at: z.string().datetime()
+  }).strict(),
+  capabilities: z.array(z.string().min(1)),
+  cancellation: z.literal("http_abort")
+}).strict().superRefine((entry, context) => {
+  if (entry.credential.key !== entry.profile.credential_ref) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["credential", "key"],
+      message: "catalog credential key must match profile credential_ref"
+    });
+  }
+  if (entry.profile.docs_url && entry.profile.docs_url !== entry.documentation.official_url) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["profile", "docs_url"],
+      message: "profile docs_url must match catalog documentation official_url"
+    });
+  }
+});
 
 const adapterManifestSchemaBase = z.object({
   id: z.string(),

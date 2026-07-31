@@ -73,6 +73,12 @@ async function writeProviderScopeMismatchModelProfile() {
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
+async function writeProviderCatalog(entry: Record<string, unknown>) {
+  const directory = path.join(workspace, "providers");
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, "fixture-compatible.json"), `${JSON.stringify(entry, null, 2)}\n`, "utf8");
+}
+
 async function createModelRun(provider = "fixture-compatible") {
   const workflow: WorkflowSpec = {
     id: "model-api-cancel-v0",
@@ -285,5 +291,55 @@ describe("Model API Sidecar integration", () => {
     expect(body).toMatchObject({ adapter_result: { error: { code: "operation_receipt_unavailable" } } });
     expect(providerOutput).toBe(outputBefore);
     expect(await readdir(outside)).toEqual([]);
+  });
+
+  it("projects provider verification, credential, and driver registration through the provider endpoint", async () => {
+    await writeProviderCatalog({
+      id: "fixture-compatible",
+      display_name: "Fixture Compatible",
+      driver_id: "not-registered",
+      profile: {
+        id: "fixture-compatible-default",
+        provider: "fixture-compatible",
+        model: "fixture-chat",
+        base_url: providerBaseUrl,
+        credential_ref: "MODEL_API_FIXTURE_CREDENTIAL",
+        verification_status: "configured_unverified"
+      },
+      credential: { key: "MODEL_API_FIXTURE_CREDENTIAL", source: "env" },
+      documentation: { official_url: "https://example.invalid/provider-docs", verified_at: "2026-07-31T00:00:00.000Z" },
+      capabilities: ["model.call"],
+      cancellation: "http_abort"
+    });
+
+    const response = await fetch(`${baseUrl}/api/v0/providers`);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      providers: [expect.objectContaining({
+        id: "fixture-compatible",
+        profile: expect.objectContaining({ provider: "fixture-compatible" }),
+        driver_registered: false,
+        credential: expect.objectContaining({ configured: true }),
+        verification_status: "configured_unverified",
+        health_status: "configured_unverified"
+      })]
+    });
+    expect(JSON.stringify(body)).not.toContain("fixture-secret");
+  });
+
+  it("rejects an unregistered catalog Driver before sending a network request", async () => {
+    await writeModelProfile("record-authorization");
+    const before = providerOutput;
+    const { runId, nodeRunId } = await createModelRun();
+
+    const response = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ adapter_result: { error: { code: "provider_driver_unregistered", recoverable: false } } });
+    expect(providerOutput).toBe(before);
+    expect(JSON.stringify(body)).not.toContain("fixture-secret");
   });
 });

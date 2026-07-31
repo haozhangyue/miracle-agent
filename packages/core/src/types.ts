@@ -248,6 +248,29 @@ export interface ProviderProfile {
   api_path?: string;
   credential_ref: string;
   verification_status: ProviderVerificationStatus;
+  verified_at?: string;
+  docs_url?: string;
+}
+
+export interface ProviderCatalogCredential {
+  key: string;
+  source: AdapterCredentialSource;
+}
+
+export interface ProviderCatalogDocumentation {
+  official_url: string;
+  verified_at: string;
+}
+
+export interface ProviderCatalogEntry {
+  id: string;
+  display_name: string;
+  driver_id: string;
+  profile: ProviderProfile;
+  credential: ProviderCatalogCredential;
+  documentation: ProviderCatalogDocumentation;
+  capabilities: string[];
+  cancellation: "http_abort";
 }
 
 export interface AdapterError {

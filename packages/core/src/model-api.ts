@@ -4,6 +4,9 @@ export type {
   ModelApiUsage,
   NormalizedModelResponse,
   ProviderDriver,
+  ProviderCatalogCredential,
+  ProviderCatalogDocumentation,
+  ProviderCatalogEntry,
   ProviderProfile,
   ProviderVerificationStatus
 } from "./types";
