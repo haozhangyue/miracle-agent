@@ -32,6 +32,21 @@ describe("provider catalog contract", () => {
     expect(JSON.stringify(parsed)).not.toContain("fixture-secret");
   });
 
+  it("accepts qualitative routing metadata without embedding mutable provider pricing", () => {
+    const parsed = providerCatalogEntrySchema.parse({
+      ...entry,
+      routing: { user_priority: 10, cost_tier: 1 }
+    });
+    expect(parsed.routing).toEqual({ user_priority: 10, cost_tier: 1 });
+  });
+
+  it("rejects an invalid estimated routing cost interval", () => {
+    expect(() => providerCatalogEntrySchema.parse({
+      ...entry,
+      routing: { user_priority: 10, cost_tier: 1, estimated_cost: { currency: "USD", min: 2, max: 1 } }
+    })).toThrow(/estimated cost/i);
+  });
+
   it("rejects a catalog entry whose credential key does not match its profile reference", () => {
     expect(() => providerCatalogEntrySchema.parse({
       ...entry,

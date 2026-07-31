@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.8.0` |
 | 版本名称 | 真实工作流工程接入基线 |
-| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-07 已完成，当前任务为 `P7-08` Provider fallback 与灵活路由 |
+| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-08 已完成，当前任务为 `P7-09` 多运行时 UI 与可观测性 |
 | 基线提交 | P6-08 收口提交（见 Git HEAD） |
 | 基线日期 | 2026-07-16 |
 | 最终评审 | 通过 |
@@ -154,6 +154,21 @@
   smoke；三家保持 `configured_unverified`，不得声明 healthy，也不伪造真实 Artifact 或 receipt。
 - 同步 README、文档导航、用户手册、路线图和 task-baseline：`P7-07` 标记完成，
   `current_node_id` 推进到 `p7-08`。本次不升级 `v0.8.0`；P7-10 再做版本收口。
+- 完成 P7-08 Provider Router 与 fallback：Core 新增可审计 `ProviderRoutingDecision`，按能力、
+  可执行性、凭证、健康、用户优先级、成本等级和 Profile ID 进行确定性筛选，并为所有未选
+  候选记录拒绝原因。
+- Sidecar 在现有 retry schedule 和 Run mutation lock 内执行同类 Model API fallback；429、
+  临时 5xx、网络错误和已确认终止的超时可新建 Attempt，复用 operation ID 并记录
+  `provider_fallback_started/completed`。401/403、内容策略、输入错误、unknown、cancelled、
+  aborted 不会自动切换。
+- 新增 Run 路由历史查询和跨 kind fallback 确认 API；确认同时核对 operation、当前 Adapter
+  kind、目标 Profile 和最新 Decision，陈旧或错配请求返回 409。Router 保持纯决策，
+  Orchestrator 继续作为 Event、Attempt 和 Confirmation 的唯一写入者。
+- Provider Catalog 新增可选定性 routing metadata；内置 DeepSeek/Kimi/MiniMax 仍为
+  `configured_unverified`，本轮只使用本地 fake Provider 验证 429 -> fallback，不执行真实
+  外部请求，也不接 OpenAI 官方 API/SDK。
+- 同步 README、文档导航、用户手册、路线图和 task-baseline：`P7-08` 标记完成，
+  `current_node_id` 推进到 `p7-09`。本次仍保持 `v0.8.0`，P7-10 再统一评估版本号。
 
 ## 4. v0.8.0 发布记录
 

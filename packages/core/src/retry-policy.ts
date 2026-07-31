@@ -9,6 +9,7 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   retryable_error_codes: [
     "network_error",
     "rate_limit",
+    "provider_temporary_5xx",
     "adapter_process_error",
     "adapter_timeout",
     "adapter_output_invalid",

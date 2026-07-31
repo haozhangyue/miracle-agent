@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AdapterInvocation, ProviderDriver } from "@miracle/core";
+import type { AdapterInvocation, AdapterResult, ProviderDriver } from "@miracle/core";
 
 const fixtureServer = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures/provider-server.mjs");
 let providerServer: ChildProcessWithoutNullStreams | undefined;
@@ -242,5 +242,60 @@ describe("ModelApiAdapter", () => {
   it.each(["//provider.example/v1/chat", "//user@provider.example/v1/chat", "https://provider.example/v1/chat"])("rejects unsafe api_path in the driver: %s", async (apiPath) => {
     const { openAiCompatibleDriver } = await import("../src/provider-drivers/openai-compatible");
     expect(() => openAiCompatibleDriver.buildRequest({ invocation, profile: { ...profile(), api_path: apiPath }, credential: "fixture-secret" })).toThrow(/api_path/i);
+  });
+});
+
+describe("Model API fallback classification", () => {
+  function failedResult(status: AdapterResult["status"], code: string): AdapterResult {
+    return {
+      operation_id: invocation.operation_id,
+      attempt_id: invocation.attempt_id,
+      node_run_id: invocation.node_run_id,
+      status,
+      provider_receipt: {
+        provider: invocation.provider,
+        adapter_kind: invocation.adapter_kind,
+        adapter_id: invocation.adapter_id,
+        operation_id: invocation.operation_id
+      },
+      artifact_descriptors: [],
+      error: { code, message: code, recoverable: true },
+      received_at: "2026-08-01T00:00:00.000Z"
+    };
+  }
+
+  it.each([
+    ["failed", "provider_rate_limited", "rate_limit"],
+    ["failed", "provider_unavailable", "provider_temporary_5xx"],
+    ["failed", "provider_network_error", "network_error"],
+    ["failed", "provider_timeout", "adapter_timeout"],
+    ["failed", "rate_limit", "rate_limit"],
+    ["failed", "provider_temporary_5xx", "provider_temporary_5xx"],
+    ["failed", "network_error", "network_error"],
+    ["failed", "adapter_timeout", "adapter_timeout"],
+    ["timed_out", "process_timeout", "adapter_timeout"]
+  ] as const)("maps %s/%s to the recoverable fallback reason %s", async (status, code, errorCode) => {
+    const { modelApiFallbackFailure } = await import("../src/model-api-adapter");
+    expect(modelApiFallbackFailure(failedResult(status, code))).toEqual({ status, error_code: errorCode });
+  });
+
+  it.each([
+    ["failed", "authentication_failed"],
+    ["failed", "permission_denied"],
+    ["failed", "content_policy"],
+    ["failed", "provider_request_invalid"],
+    ["unknown", "provider_network_error"],
+    ["cancelled", "provider_rate_limited"],
+    ["aborted", "provider_unavailable"]
+  ] as const)("does not classify %s/%s for automatic fallback", async (status, code) => {
+    const { modelApiFallbackFailure } = await import("../src/model-api-adapter");
+    expect(modelApiFallbackFailure(failedResult(status, code))).toBeUndefined();
+  });
+
+  it("does not fallback when a nominally retryable Provider error is marked non-recoverable", async () => {
+    const result = failedResult("failed", "rate_limit");
+    result.error!.recoverable = false;
+    const { modelApiFallbackFailure } = await import("../src/model-api-adapter");
+    expect(modelApiFallbackFailure(result)).toBeUndefined();
   });
 });

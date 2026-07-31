@@ -1,10 +1,10 @@
 # P7-07 模型 Provider 接入交付说明
 
-> 文档状态：`CURRENT / P7-07 工程接入交付说明`
+> 文档状态：`ACTIVE / P7-07 工程接入交付说明`
 >
 > 前置基线：`55_P7多节点真实执行与模型Adapter扩展总体设计.md`、`56_P7工程实施计划与任务拆解.md`
 >
-> 任务状态：P7-07 工程接入完成；P7-08 Provider fallback 与灵活路由为当前任务。
+> 任务状态：P7-07 工程接入完成；P7-08 已完成，当前结果见 `58_P7-08Provider路由与Fallback交付说明.md`。
 
 ## 1. 交付结论与边界
 
@@ -18,8 +18,8 @@
 因此三家 Provider 均保持 `configured_unverified`，不得表述为 `healthy`。用户提供凭证后，
 需完成真实 health probe 和脱敏 completion，才可将对应 Provider 标记为 `healthy`。
 
-P7 不接 OpenAI 官方 API 或 SDK；P7-08 前不提供 Provider fallback，也不会把凭证存在等同于
-真实健康状态。
+P7 不接 OpenAI 官方 API 或 SDK；本文交付时尚未提供 Provider fallback，后续 P7-08 已补齐，
+但仍不会把凭证存在等同于真实健康状态。
 
 ## 2. Provider Profile
 
@@ -107,8 +107,8 @@ smoke 不在本轮验收范围内。
 
 - Catalog Key 仅支持合法环境变量引用；`keychain`、`workspace-secret` 和疑似明文密钥解析失败，
   不持久化、不写入 API、回执、日志、错误、测试快照或 Git。
-- Provider 路由尚未实现；P7-08 才处理同类 Provider fallback、成本/capability 策略和
-  Codex/Model API 的人工确认边界。
+- Provider 路由在后续 P7-08 实现；同类 Provider fallback、成本/capability 策略和
+  Codex/Model API 人工确认边界见 58 号交付说明。
 - Provider health 不能由凭证存在、fake-server 通过或 HTTP transport 初始化推断。
 - smoke 路径有 canonical 目录、symlink、文件名和单次写入保护；默认 Artifact 位于仓库外的
   系统临时 workspace；若 `TMPDIR` 等环境配置使临时目录解析到仓库内，系统会清理并在联网前
@@ -127,4 +127,4 @@ npm run test
 
 本轮 fake-server 契约验收已运行 2 个测试文件、104 项测试通过；该数量仅覆盖
 `provider-drivers.test.ts` 和 `model-api-adapter.test.ts` 的本地契约，不替代真实外部 smoke。
-下一步 `P7-08` 只处理 Provider Router 与 fallback，不应倒推把任何未验证 Provider 标记为健康。
+后续 `P7-08` 只处理 Provider Router 与 fallback，且没有倒推把任何未验证 Provider 标记为健康。

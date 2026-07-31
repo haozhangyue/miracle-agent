@@ -33,8 +33,12 @@ describe("Adapter outcome classifier", () => {
   it.each([
     ["process_exit_nonzero", "adapter_process_error"],
     ["process_spawn_failed", "adapter_process_error"],
-    ["invalid_adapter_output", "adapter_output_invalid"]
-  ] as const)("normalizes failed Codex %s as configurable retry error %s", (code, normalizedCode) => {
+    ["invalid_adapter_output", "adapter_output_invalid"],
+    ["provider_rate_limited", "rate_limit"],
+    ["provider_unavailable", "provider_temporary_5xx"],
+    ["provider_network_error", "network_error"],
+    ["provider_timeout", "adapter_timeout"]
+  ] as const)("normalizes failed adapter error %s as configurable retry error %s", (code, normalizedCode) => {
     const adapterResult = result({ status: "failed", code });
     expect(classifyAdapterOutcome(adapterResult)).toMatchObject({
       category: "retryable_failure",

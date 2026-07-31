@@ -26,6 +26,26 @@ type AbortKind = "timeout" | "cancelled";
 class ProviderResponseTooLargeError extends Error {}
 class ProviderResponseInvalidError extends Error {}
 
+const fallbackErrorCodes = new Map<string, string>([
+  ["provider_rate_limited", "rate_limit"],
+  ["provider_unavailable", "provider_temporary_5xx"],
+  ["provider_network_error", "network_error"],
+  ["provider_timeout", "adapter_timeout"],
+  ["rate_limit", "rate_limit"],
+  ["provider_temporary_5xx", "provider_temporary_5xx"],
+  ["network_error", "network_error"],
+  ["adapter_timeout", "adapter_timeout"]
+]);
+
+export function modelApiFallbackFailure(result: Pick<AdapterResult, "status" | "error">): { error_code: string; status: "failed" | "timed_out" } | undefined {
+  if (result.status === "timed_out" && result.error?.code === "process_timeout") {
+    return { error_code: "adapter_timeout", status: "timed_out" };
+  }
+  if (result.status !== "failed" || !result.error || result.error.recoverable !== true) return undefined;
+  const errorCode = fallbackErrorCodes.get(result.error.code);
+  return errorCode ? { error_code: errorCode, status: "failed" } : undefined;
+}
+
 function abortSignals(input: { signal: AbortSignal; timeout_ms: number }) {
   const controller = new AbortController();
   let kind: AbortKind | undefined;

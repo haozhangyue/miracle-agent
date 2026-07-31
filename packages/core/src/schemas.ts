@@ -11,7 +11,10 @@ import type {
   RetryScheduleRecord,
   RetryStateRecord,
   ProviderCatalogEntry,
-  ProviderProfile
+  ProviderProfile,
+  ProviderRoutingCandidate,
+  ProviderRoutingDecision,
+  ProviderRoutingInput
 } from "./types";
 
 const credentialScopeSchema = z.object({
@@ -40,6 +43,10 @@ export const nodeSpecSchema = z.object({
   inputs: z.array(nodePortSchema),
   outputs: z.array(nodePortSchema),
   review_gate_ref: z.string().optional(),
+  runtime_policy: z.object({
+    allowed_adapter_kinds: z.array(z.enum(["codex", "model-api"])).min(1),
+    automatic_cross_kind_fallback: z.boolean()
+  }).strict().optional(),
   failure_policy: z.object({
     retry: z.number().int().min(0),
     cost_budget: z.number().finite().min(0).optional(),
@@ -280,7 +287,16 @@ export const providerCatalogEntrySchema: z.ZodType<ProviderCatalogEntry> = z.obj
     verified_at: z.string().datetime()
   }).strict(),
   capabilities: z.array(z.string().min(1)),
-  cancellation: z.literal("http_abort")
+  cancellation: z.literal("http_abort"),
+  routing: z.object({
+    user_priority: z.number().finite(),
+    cost_tier: z.number().finite().min(0),
+    estimated_cost: z.object({
+      currency: z.string().min(1),
+      min: z.number().finite().min(0),
+      max: z.number().finite().min(0)
+    }).strict().refine((cost) => cost.max >= cost.min, "estimated cost max must be greater than or equal to min").optional()
+  }).strict().optional()
 }).strict().superRefine((entry, context) => {
   if (entry.credential.key !== entry.profile.credential_ref) {
     context.addIssue({
@@ -307,6 +323,56 @@ export const providerCatalogEntrySchema: z.ZodType<ProviderCatalogEntry> = z.obj
     });
   }
 });
+
+const providerRoutingCostSchema = z.object({
+  currency: z.string().min(1),
+  min: z.number().finite().min(0),
+  max: z.number().finite().min(0)
+}).strict().refine((cost) => cost.max >= cost.min, "estimated cost max must be greater than or equal to min");
+
+export const providerRoutingCandidateSchema: z.ZodType<ProviderRoutingCandidate> = z.object({
+  id: z.string().min(1),
+  provider: z.string().min(1),
+  adapter_kind: z.enum(["codex", "model-api"]),
+  capabilities: z.array(z.string().min(1)),
+  executable: z.boolean(),
+  credential_available: z.boolean(),
+  health_status: z.enum(["missing_credential", "driver_unregistered", "configured_unverified", "healthy", "degraded", "unavailable"]),
+  user_priority: z.number().finite(),
+  cost_tier: z.number().finite().min(0),
+  estimated_cost: providerRoutingCostSchema.optional()
+}).strict();
+
+export const providerRoutingInputSchema: z.ZodType<ProviderRoutingInput> = z.object({
+  operation_id: z.string().min(1),
+  capability_requirements: z.array(z.string().min(1)),
+  allowed_adapter_kinds: z.array(z.enum(["codex", "model-api"])).min(1),
+  current_adapter_kind: z.enum(["codex", "model-api"]).optional(),
+  failed_profile_id: z.string().min(1).optional(),
+  failure: z.object({ error_code: z.string().min(1), status: z.enum(["succeeded", "failed", "timed_out", "cancelled", "aborted", "unknown"]) }).strict().optional(),
+  profiles: z.array(providerRoutingCandidateSchema),
+  budget: z.object({
+    attempts_used: z.number().finite().int().min(0),
+    max_attempts: z.number().finite().int().min(1).max(3),
+    elapsed_ms: z.number().finite().min(0),
+    total_time_budget_ms: z.number().finite().positive(),
+    cost_used: z.number().finite().min(0),
+    cost_budget: z.number().finite().min(0)
+  }).strict(),
+  decided_at: z.string().datetime()
+}).strict();
+
+export const providerRoutingDecisionSchema: z.ZodType<ProviderRoutingDecision> = z.object({
+  operation_id: z.string().min(1),
+  selected_adapter_kind: z.enum(["codex", "model-api"]).optional(),
+  selected_provider_profile_id: z.string().min(1).optional(),
+  candidate_profile_ids: z.array(z.string().min(1)),
+  rejected_candidates: z.array(z.object({ profile_id: z.string().min(1), reason_code: z.string().min(1) }).strict()),
+  reason_codes: z.array(z.string().min(1)),
+  estimated_cost: providerRoutingCostSchema.optional(),
+  requires_confirmation: z.boolean(),
+  decided_at: z.string().datetime()
+}).strict();
 
 const adapterManifestSchemaBase = z.object({
   id: z.string(),

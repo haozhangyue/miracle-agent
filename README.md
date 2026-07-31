@@ -26,7 +26,8 @@ Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与
 真实工作流工程接入基线。`P7-01` 总体设计、`P7-02` 多节点 ExecutionPlan 与输入解析和
 `P7-03` Codex 多节点 Artifact 真实交接、`P7-04` Scheduler 连续执行、`P7-05`
 Retry 与故障恢复、`P7-06` 通用 Model API Adapter 和 `P7-07` DeepSeek/Kimi/MiniMax
-Provider Driver 工程接入已完成，当前主线推进到 `P7-08` Provider fallback 与灵活路由：
+Provider Driver 工程接入和 `P7-08` Provider fallback 与灵活路由已完成，当前主线推进到
+`P7-09` 多运行时 UI 与可观测性：
 Codex CLI 已可按 ExecutionPlan 连续执行、在 Gate 暂停后批准恢复，并对明确 failed 或
 已确认终止的 timed_out AdapterResult 按节点策略、fixed/exponential 退避和
 attempt/time/cost 预算创建新 NodeAttempt；
@@ -39,8 +40,9 @@ attempt/time/cost 预算创建新 NodeAttempt；
 不得视为 healthy。Provider Catalog 仅接受 env 引用，smoke 与正式执行共用 manifest 的
 Provider scope 授权；显式选择只按 `profile.provider` 匹配，不接受 Catalog ID 别名。
 默认 smoke Artifact 写入仓库外的系统临时 workspace；若临时目录解析到仓库内，会在联网前
-清理并拒绝。显式设置 `MIRACLE_WORKSPACE_DIR` 时才写入用户指定目录。Provider fallback 属于 P7-08，且 P7 不接入
-OpenAI SDK 或官方 API。
+清理并拒绝。显式设置 `MIRACLE_WORKSPACE_DIR` 时才写入用户指定目录。P7-08 已支持确定性
+ProviderRoutingDecision、同类 Model API fallback 和跨 kind 人工确认；只有真实 `healthy`
+Provider 才可执行，内置三家仍不会被自动选中。P7 不接入 OpenAI SDK 或官方 API。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 

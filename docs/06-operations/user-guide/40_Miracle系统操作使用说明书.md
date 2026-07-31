@@ -32,8 +32,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 |---|---|
 | 当前产品版本 | `v0.8.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
-| 当前阶段 | P7-02 至 P7-07 已完成，已接入三家 Provider Driver；真实连通尚未验证 |
-| 当前任务焦点 | `P7-08` Provider fallback 与灵活路由 |
+| 当前阶段 | P7-02 至 P7-08 已完成，已具备 Provider Driver、确定性路由和受控 fallback；真实连通尚未验证 |
+| 当前任务焦点 | `P7-09` 多运行时 UI 与可观测性 |
 | 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
 | P6 验收基线 | `54_P6回归验收与版本收口报告.md` |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
@@ -328,7 +328,8 @@ Run 节点详情取消活跃 operation。Attempt 页面只显示非敏感元数�
 7. 查看下游 NodeAttempt、ArtifactManifest 和事件审计，确认交接使用的是精确版本和 hash。
 
 reject GateDecision 不会推进下游；Scheduler 返回 `paused_for_gate`，直到人工创建并审核返工产物。
-Provider fallback 仍属于 P7-08，当前 Scheduler 不会自动切换 Provider。
+同类 Model API fallback 已在 P7-08 接入当前 Scheduler/retry 链路；Codex 切换 Model API
+仍必须通过人工确认，未确认或未验证 Provider 不会自动执行。
 
 ### 5.13 查看和处置 Retry
 
@@ -396,8 +397,38 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
    `profile.provider` 匹配，不接受 Catalog ID 别名。目录、文件名和单次写入均有安全校验；
    输出、日志和回执不得含 API Key 或敏感正文。
 4. 只有完成真实 health probe 与脱敏 completion 后，对应 Provider 才可标记 `healthy`。
-   凭证存在、Profile 已配置或 fake-server 测试通过都不能替代该验证。Provider fallback 尚未
-   实现，属于 P7-08。
+   凭证存在、Profile 已配置或 fake-server 测试通过都不能替代该验证。未达到 `healthy` 的
+   Provider 不会被 P7-08 Router 选为执行目标。
+
+### 5.15 查看 Provider 路由并确认跨 kind fallback
+
+1. 查询某个 Run 的路由历史：
+
+   ```bash
+   curl http://127.0.0.1:4317/api/v0/runs/<runId>/routing-decisions
+   ```
+
+   `routing_decisions` 展示候选 Profile、未选原因、成本区间、目标 Adapter kind 和是否需要确认；
+   `fallback_confirmations` 展示人工确认历史。响应不包含 API Key 和输入正文。
+2. 同类 Model API 节点遇到 429、临时 5xx、网络错误或已确认终止的超时时，下一次到期 Attempt
+   可自动选择另一个 healthy Profile。新 Attempt 复用原 `operation_id`，并继续受次数、时间和
+   成本预算约束。
+3. Codex 节点准备切换为 Model API 时，先核对当前 Decision、Attempt 和目标 Profile，再提交：
+
+   ```bash
+   curl -X POST http://127.0.0.1:4317/api/v0/runs/<runId>/nodes/<nodeRunId>/fallback-confirmation \
+     -H 'content-type: application/json' \
+     -d '{
+       "operation_id":"op_...",
+       "expected_current_adapter_kind":"codex",
+       "target_provider_profile_id":"kimi-default",
+       "actor":"operator"
+     }'
+   ```
+
+   operation、当前 kind 或目标 Profile 任一不匹配时返回
+   `409 routing_decision_not_current`。确认不会修改历史 Attempt，也不会把未验证 Provider
+   自动升级为 healthy。
 
 ## 6. 当前版本新增能力
 
@@ -408,6 +439,7 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 | Retry 与恢复 | 到期排期、重启幂等、Attempt 历史、三类预算和根因 Attention | 用户能确认何时自动重试、预算为何停止，以及如何安全恢复 |
 | P7-06 通用 Model API Adapter | 兼容协议 transport、ProviderProfile、usage/receipt、timeout/取消/大小/JSON 错误边界和 fake provider 契约 | 为三家已接入 Driver 提供共享调用层；不使用 OpenAI SDK 或官方 API |
 | P7-07 Provider 接入 | DeepSeek/Kimi/MiniMax Driver、`GET /api/v0/providers`、显式 smoke 与安全路径 | 用户可检查凭证与验证状态；三家凭证均缺失、真实 smoke 未执行，均为 `configured_unverified`，不是 healthy |
+| P7-08 Provider 路由与 fallback | 确定性候选排序、同类 Model API fallback、跨 kind 人工确认、Run 级路由审计 | 用户可查询“为什么选它/为什么拒绝”，恢复型失败可换 Provider，Codex 降级必须显式确认；未验证三家仍不会自动执行 |
 | Gate 审核 | approve/reject/request_changes、返工版本、决策投影 | 用户能处理审核、创建返工版本，并保留审计证据 |
 | Attention | 根因聚合和关联对象展开 | 用户能从异常直接定位 Agent、Node、Artifact、Gate |
 | Artifact Board | Artifact detail 和本地预览 | 用户能查看产物版本、审核状态和预览内容 |

@@ -12,3 +12,4 @@ export * from "./execution-plan";
 export * from "./retry-policy";
 export * from "./adapter-outcome";
 export * from "./model-api";
+export * from "./provider-routing";

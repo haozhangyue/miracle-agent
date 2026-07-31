@@ -21,6 +21,7 @@ import {
   parseAdapterResultForInvocation,
   resolveNodeRetryPolicy,
   selectAdapterManifest,
+  selectProviderRoute,
   type AdapterManifest,
   type AdapterRegistryEntry,
   validateWorkflowSpec,
@@ -43,6 +44,7 @@ import {
   type RetryPolicy,
   type RetryScheduleRecord,
   type RetryStateRecord,
+  type ProviderRoutingDecision,
   type ValidationResult,
   type WorkflowSpec
 } from "@miracle/core";
@@ -66,7 +68,7 @@ import { CodexCliAdapter, CodexCliAdapterError, type CodexCliHealth } from "./co
 import { assertUniqueArtifactTargetPaths, resolveArtifactInputFiles } from "./artifact-input-resolver";
 import { NodeOutputContractError, buildNodeOutputContract } from "./node-output-contract";
 import { codexPreflightFailure, startCodexOperation } from "./codex-real-adapter";
-import { ModelApiAdapter } from "./model-api-adapter";
+import { ModelApiAdapter, modelApiFallbackFailure } from "./model-api-adapter";
 import { authorizeProviderCredential } from "./model-api-authorization";
 import { buildProviderHealthProjection, readProviderCatalog } from "./provider-catalog";
 import { createProviderDriverRegistry } from "./provider-driver-registry";
@@ -170,6 +172,33 @@ type SchedulerFailure = {
   retry_decision?: RetryDecision;
 };
 type CanvasObject = CanvasLayout["objects"][number];
+type RunRoutingDecision = ProviderRoutingDecision & {
+  node_run_id: string;
+  current_adapter_kind?: "codex" | "model-api";
+  target_attempt_number: number;
+};
+type FallbackConfirmation = {
+  confirmation_id: string;
+  operation_id: string;
+  node_run_id: string;
+  expected_current_adapter_kind: "codex" | "model-api";
+  target_provider_profile_id: string;
+  actor: string;
+  status: "confirmed";
+  confirmed_at: string;
+};
+type ProviderFallbackContext = {
+  decision: RunRoutingDecision;
+  selected_provider: string;
+  started_event: {
+    event_id: string;
+    run_id: string;
+    type: "provider_fallback_started";
+    subject: { type: "NodeRun"; id: string };
+    message: string;
+    created_at: string;
+  };
+};
 type NodeExecutionResult =
   | {
       accepted: false;
@@ -844,6 +873,168 @@ function availableCredentialKeys() {
   return Object.entries(process.env)
     .filter(([, value]) => typeof value === "string" && value.length > 0)
     .map(([key]) => key);
+}
+
+function routingDecisionsPath(runId: string) {
+  return `runs/${runId}/routing_decisions.json`;
+}
+
+function fallbackConfirmationsPath(runId: string) {
+  return `runs/${runId}/fallback_confirmations.json`;
+}
+
+async function readRoutingDecisions(runId: string) {
+  return (await readJsonOptional<RunRoutingDecision[]>(routingDecisionsPath(runId))) ?? [];
+}
+
+async function readFallbackConfirmations(runId: string) {
+  return (await readJsonOptional<FallbackConfirmation[]>(fallbackConfirmationsPath(runId))) ?? [];
+}
+
+async function persistRoutingDecision(runId: string, decision: RunRoutingDecision) {
+  const current = await readRoutingDecisions(runId);
+  const identity = (item: RunRoutingDecision) => `${item.operation_id}\0${item.node_run_id}\0${item.target_attempt_number}`;
+  const next = [...current.filter((item) => identity(item) !== identity(decision)), decision];
+  await writeJsonAtomically(routingDecisionsPath(runId), next);
+}
+
+function adapterKindFromAttempt(attempt: NodeAttempt): "codex" | "model-api" | undefined {
+  const kind = attempt.provider_receipt?.adapter_kind;
+  return kind === "codex" || kind === "model-api" ? kind : undefined;
+}
+
+function providerFromAttempt(attempt: NodeAttempt) {
+  const provider = attempt.provider_receipt?.provider;
+  return typeof provider === "string" && provider.length > 0 ? provider : undefined;
+}
+
+function providerCostFromAttempt(attempt: NodeAttempt) {
+  const receipt = attempt.provider_receipt;
+  if (!receipt || typeof receipt !== "object") return 0;
+  const direct = receipt.cost;
+  if (typeof direct === "number" && Number.isFinite(direct) && direct >= 0) return direct;
+  if (direct && typeof direct === "object" && !Array.isArray(direct)) {
+    const amount = (direct as Record<string, unknown>).amount;
+    if (typeof amount === "number" && Number.isFinite(amount) && amount >= 0) return amount;
+  }
+  return 0;
+}
+
+function fallbackFailureForAttempt(attempt: NodeAttempt) {
+  const modelApiFailure = modelApiFallbackFailure(attempt);
+  if (modelApiFailure) return modelApiFailure;
+  if (
+    adapterKindFromAttempt(attempt) === "codex"
+    && attempt.status === "failed"
+    && attempt.error?.recoverable === true
+  ) {
+    return { error_code: "adapter_process_error", status: "failed" as const };
+  }
+  return undefined;
+}
+
+async function buildProviderFallbackContext(input: {
+  runId: string;
+  nodeRun: NodeRun;
+  nodeSpec: NodeSpec;
+  runSpec: RunSpec;
+  attempts: NodeAttempt[];
+  activeRetry: RetryScheduleRecord;
+  decidedAt: string;
+}): Promise<{ context?: ProviderFallbackContext; confirmation_required: boolean }> {
+  const operationAttempts = input.attempts
+    .filter((attempt) => attempt.operation_id === input.activeRetry.operation_id)
+    .sort((left, right) => (left.attempt_number ?? 1) - (right.attempt_number ?? 1));
+  const latestAttempt = operationAttempts.at(-1);
+  if (!latestAttempt) return { confirmation_required: false };
+  const currentAdapterKind = adapterKindFromAttempt(latestAttempt);
+  const failure = fallbackFailureForAttempt(latestAttempt);
+  if (!currentAdapterKind || !failure) return { confirmation_required: false };
+
+  const catalog = await readProviderCatalogEntries();
+  const availableCredentials = availableCredentialKeys();
+  const health = buildProviderHealthProjection(catalog, {
+    credentialKeys: availableCredentials,
+    driverProviderBindings: providerDriverRegistry.registeredDriverBindings()
+  });
+  const healthById = new Map(health.map((item) => [item.profile.id, item]));
+  const fallbackOrder = input.runSpec.resolved_provider_policy.fallback_providers;
+  const allowedProviders = new Set(input.runSpec.resolved_provider_policy.allowed_providers);
+  const allowedAdapterKinds = input.nodeSpec.runtime_policy?.allowed_adapter_kinds
+    ?? (currentAdapterKind === "model-api" ? ["model-api" as const] : ["codex" as const]);
+  const modelApiAllowed = allowedAdapterKinds.includes("model-api");
+  const candidates = modelApiAllowed
+    ? catalog.filter((entry) => allowedProviders.has(entry.profile.provider)).map((entry, index) => {
+        const projection = healthById.get(entry.profile.id);
+        const fallbackIndex = fallbackOrder.indexOf(entry.profile.provider);
+        return {
+          id: entry.profile.id,
+          provider: entry.profile.provider,
+          adapter_kind: "model-api" as const,
+          capabilities: entry.capabilities,
+          executable: Boolean(projection?.driver_registered),
+          credential_available: Boolean(projection?.credential.configured),
+          health_status: projection?.health_status ?? "unavailable" as const,
+          user_priority: entry.routing?.user_priority ?? (fallbackIndex >= 0 ? fallbackIndex : fallbackOrder.length + index + 100),
+          cost_tier: entry.routing?.cost_tier ?? 100,
+          ...(entry.routing?.estimated_cost ? { estimated_cost: entry.routing.estimated_cost } : {})
+        };
+      })
+    : [];
+  const failedProvider = providerFromAttempt(latestAttempt);
+  const failedProfileId = catalog.find((entry) => entry.profile.provider === failedProvider)?.profile.id;
+  const policy = retryPolicyForNode(input.nodeSpec);
+  const firstDispatchedAt = operationAttempts
+    .map((attempt) => attempt.dispatched_at ?? attempt.started_at ?? attempt.created_at)
+    .filter((value): value is string => typeof value === "string")
+    .sort()[0];
+  const elapsedMs = firstDispatchedAt ? Math.max(0, Date.parse(input.decidedAt) - Date.parse(firstDispatchedAt)) : 0;
+  const decision = selectProviderRoute({
+    operation_id: input.activeRetry.operation_id,
+    capability_requirements: input.nodeSpec.capability_requirements,
+    allowed_adapter_kinds: allowedAdapterKinds,
+    current_adapter_kind: currentAdapterKind,
+    ...(failedProfileId ? { failed_profile_id: failedProfileId } : {}),
+    failure,
+    profiles: candidates,
+    budget: {
+      attempts_used: operationAttempts.length,
+      max_attempts: policy.max_attempts,
+      elapsed_ms: elapsedMs,
+      total_time_budget_ms: policy.total_time_budget_ms,
+      cost_used: operationAttempts.reduce((total, attempt) => total + providerCostFromAttempt(attempt), 0),
+      cost_budget: policy.cost_budget
+    },
+    decided_at: input.decidedAt
+  });
+  const record: RunRoutingDecision = {
+    ...decision,
+    node_run_id: input.nodeRun.node_run_id,
+    current_adapter_kind: currentAdapterKind,
+    target_attempt_number: input.activeRetry.attempt_number
+  };
+  await persistRoutingDecision(input.runId, record);
+  if (!decision.selected_provider_profile_id) return { confirmation_required: false };
+  const selectedEntry = catalog.find((entry) => entry.profile.id === decision.selected_provider_profile_id);
+  if (!selectedEntry) return { confirmation_required: false };
+  const startedEvent = {
+    event_id: `evt_${safeId(decision.operation_id)}_fallback_${input.activeRetry.attempt_number}_started`,
+    run_id: input.runId,
+    type: "provider_fallback_started" as const,
+    subject: { type: "NodeRun" as const, id: input.nodeRun.node_run_id },
+    message: `Provider fallback started: ${failedProvider ?? currentAdapterKind} -> ${selectedEntry.profile.provider}`,
+    created_at: input.decidedAt
+  };
+  const context = { decision: record, selected_provider: selectedEntry.profile.provider, started_event: startedEvent };
+  if (!decision.requires_confirmation) return { context, confirmation_required: false };
+  const confirmed = (await readFallbackConfirmations(input.runId)).some((confirmation) =>
+    confirmation.operation_id === decision.operation_id
+    && confirmation.node_run_id === input.nodeRun.node_run_id
+    && confirmation.expected_current_adapter_kind === currentAdapterKind
+    && confirmation.target_provider_profile_id === decision.selected_provider_profile_id
+    && confirmation.status === "confirmed"
+  );
+  return { context, confirmation_required: !confirmed };
 }
 
 function createRunDraftId() {
@@ -2862,21 +3053,51 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       };
     }
     const resolvedInputs = decision.resolved_inputs;
-    const provider = targetNodeRun.provider ?? runSpec.resolved_provider_policy.default_provider;
+    let fallbackContext: ProviderFallbackContext | undefined;
+    if (activeRetry) {
+      const routed = await buildProviderFallbackContext({
+        runId,
+        nodeRun: targetNodeRun,
+        nodeSpec,
+        runSpec,
+        attempts: lockedBundle.attempts as NodeAttempt[],
+        activeRetry,
+        decidedAt: dispatchedAt
+      });
+      if (routed.confirmation_required && routed.context) {
+        return {
+          accepted: false,
+          status_code: 409,
+          error: {
+            code: "fallback_confirmation_required",
+            message: "Cross-kind Provider fallback requires a current operator confirmation.",
+            reason_code: "cross_kind_fallback_requires_confirmation"
+          }
+        };
+      }
+      fallbackContext = routed.context;
+      if (fallbackContext) {
+        targetNodeRun.provider = fallbackContext.selected_provider;
+        await appendEventIfMissing(runId, fallbackContext.started_event);
+      }
+    }
+    const provider = fallbackContext?.selected_provider ?? targetNodeRun.provider ?? runSpec.resolved_provider_policy.default_provider;
     const manifests = await readAdapterManifests();
     const availableCredentials = availableCredentialKeys();
-    const codexHealth = realCodexEnabled(runSpec) ? await codexCliAdapter.refreshHealth() : undefined;
+    const routeUsesRealCodex = realCodexEnabled(runSpec)
+      && fallbackContext?.decision.selected_adapter_kind !== "model-api";
+    const codexHealth = routeUsesRealCodex ? await codexCliAdapter.refreshHealth() : undefined;
     const useRealCodex = Boolean(
       codexHealth?.status === "healthy"
       && nodeSpec.capability_requirements.every((capability) => codexCliRealAdapterManifest.capabilities.includes(capability))
     );
-    const adapter = realCodexEnabled(runSpec)
+    const adapter = routeUsesRealCodex
       ? (useRealCodex ? codexRealAdapterEntry() : undefined)
       : selectAdapterForNode({ manifests, node: nodeSpec, provider, availableCredentials });
-    const missingProviderCredential = !adapter && !realCodexEnabled(runSpec)
+    const missingProviderCredential = !adapter && !routeUsesRealCodex
       ? missingModelApiCredential({ manifests, node: nodeSpec, provider, availableCredentials })
       : undefined;
-    const invocationAdapter = realCodexEnabled(runSpec) ? codexRealAdapterEntry() : adapter;
+    const invocationAdapter = routeUsesRealCodex ? codexRealAdapterEntry() : adapter;
     let existingIntent = await readNodeDispatchIntent(dispatchIntentPath, {
       runId,
       nodeRunId,
@@ -2967,12 +3188,12 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       rawResult = adapter
         ? await executeSidecarAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, adapter, receivedAt: new Date().toISOString() })
         : (() => {
-          const blockedHealth = realCodexEnabled(runSpec) ? blockedCodexHealthError(codexHealth) : undefined;
+          const blockedHealth = routeUsesRealCodex ? blockedCodexHealthError(codexHealth) : undefined;
           return buildAdapterUnavailableResult({
             invocation,
             message: missingProviderCredential
               ? `Credential reference ${missingProviderCredential} is not configured.`
-              : realCodexEnabled(runSpec) && codexHealth?.status !== "healthy"
+              : routeUsesRealCodex && codexHealth?.status !== "healthy"
                 ? `Codex CLI is not healthy: ${codexHealth?.reasons.join(", ") ?? "health unavailable"}`
                 : `No executable adapter supports NodeSpec ${targetNodeRun.node_id} capabilities: ${nodeSpec?.capability_requirements.join(", ") ?? "unknown"}`,
             ...(missingProviderCredential
@@ -3048,7 +3269,15 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
         message: `GateInstance ${gate.gate_instance_id} pending review`,
         created_at: result.received_at
       }));
-      const events = [...runnerEvents, ...artifactEvents, ...gateEvents];
+      const fallbackEvents = fallbackContext ? [{
+        event_id: `evt_${safeId(fallbackContext.decision.operation_id)}_fallback_${fallbackContext.decision.target_attempt_number}_completed`,
+        run_id: runId,
+        type: "provider_fallback_completed",
+        subject: { type: "NodeRun", id: nodeRunId },
+        message: `Provider fallback completed with ${result.status}: ${fallbackContext.selected_provider}`,
+        created_at: result.received_at
+      }] : [];
+      const events = [...runnerEvents, ...artifactEvents, ...gateEvents, ...fallbackEvents];
       const transaction: NodeCommitTransaction = {
         node_run_id: nodeRunId,
         invocation,
@@ -3063,7 +3292,11 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
           attempt,
           artifacts: createdArtifacts,
           gates: createdGates,
-          created_events: [dispatchIntent.event.event_id, ...events.map((event) => event.event_id)]
+          created_events: [
+            dispatchIntent.event.event_id,
+            ...(fallbackContext ? [fallbackContext.started_event.event_id] : []),
+            ...events.map((event) => event.event_id)
+          ]
         },
         dispatch_intent_relative_path: dispatchIntentPath
       };
@@ -4288,6 +4521,8 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     await writeJson(`runs/${runId}/artifacts.json`, []);
     await writeJson(`runs/${runId}/gates.json`, []);
     await writeJson(`runs/${runId}/attention.json`, []);
+    await writeJson(`runs/${runId}/routing_decisions.json`, []);
+    await writeJson(`runs/${runId}/fallback_confirmations.json`, []);
     await writeFile(path.join(workspaceDir, "runs", runId, "events.jsonl"), created.events.map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
     await writeJson(`runs/${runId}/manifest.json`, {
       run_id: runId,
@@ -4310,12 +4545,94 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const runId = getId(parts, 3);
     if (req.method === "GET" && parts.length === 4) return sendJson(res, 200, await readRunBundle(runId));
     if (req.method === "GET" && parts[4] === "events") return sendJson(res, 200, { events: await readEvents(runId) });
+    if (req.method === "GET" && parts[4] === "routing-decisions") {
+      return sendJson(res, 200, {
+        run_id: runId,
+        routing_decisions: await readRoutingDecisions(runId),
+        fallback_confirmations: await readFallbackConfirmations(runId)
+      });
+    }
     if (req.method === "GET" && parts[4] === "dag") {
       const bundle = await readRunBundle(runId);
       return sendJson(res, 200, { dag: buildDagProjection(bundle.workflow, bundle.nodes as NodeRun[]) });
     }
     if (req.method === "POST" && (await isHistoricalReadOnlyRun(runId))) {
       return sendError(res, 409, "historical_run_read_only", "Historical run is read-only and cannot execute scheduler or node commands.");
+    }
+    if (req.method === "POST" && parts[4] === "nodes" && parts[5] && parts[6] === "fallback-confirmation") {
+      const nodeRunId = getId(parts, 5);
+      const body = await parseBody(req);
+      const operationId = typeof body.operation_id === "string" ? body.operation_id : "";
+      const expectedKind = body.expected_current_adapter_kind === "codex" || body.expected_current_adapter_kind === "model-api"
+        ? body.expected_current_adapter_kind
+        : undefined;
+      const targetProfileId = typeof body.target_provider_profile_id === "string" ? body.target_provider_profile_id : "";
+      const actor = typeof body.actor === "string" ? body.actor.trim() : "";
+      if (!operationId || !expectedKind || !targetProfileId || !actor) {
+        return sendError(res, 400, "fallback_confirmation_invalid", "operation_id, expected_current_adapter_kind, target_provider_profile_id and actor are required.");
+      }
+      const lock = await acquireRunMutationLock(runId);
+      if (!lock) return sendError(res, 409, "operation_in_progress", "Run already has a state mutation in progress.");
+      try {
+        const [nodes, attempts, decisions, confirmations] = await Promise.all([
+          readJson<NodeRun[]>(`runs/${runId}/nodes.json`),
+          readJson<NodeAttempt[]>(`runs/${runId}/attempts.json`),
+          readRoutingDecisions(runId),
+          readFallbackConfirmations(runId)
+        ]);
+        if (!nodes.some((node) => node.node_run_id === nodeRunId)) return sendError(res, 404, "not_found", "NodeRun not found");
+        const currentDecision = decisions
+          .filter((decision) => decision.node_run_id === nodeRunId)
+          .sort((left, right) => Date.parse(left.decided_at) - Date.parse(right.decided_at))
+          .at(-1);
+        const operationAttempts = attempts
+          .filter((attempt) => attempt.node_run_id === nodeRunId && attempt.operation_id === operationId)
+          .sort((left, right) => (left.attempt_number ?? 1) - (right.attempt_number ?? 1));
+        const currentKind = operationAttempts.length > 0 ? adapterKindFromAttempt(operationAttempts.at(-1)!) : undefined;
+        if (
+          !currentDecision
+          || currentDecision.operation_id !== operationId
+          || currentDecision.requires_confirmation !== true
+          || currentDecision.selected_adapter_kind !== "model-api"
+          || currentDecision.current_adapter_kind !== expectedKind
+          || currentKind !== expectedKind
+          || currentDecision.selected_provider_profile_id !== targetProfileId
+        ) {
+          return sendError(res, 409, "routing_decision_not_current", "Fallback confirmation does not match the current routing decision and Attempt facts.");
+        }
+        const existing = confirmations.find((confirmation) =>
+          confirmation.operation_id === operationId
+          && confirmation.node_run_id === nodeRunId
+          && confirmation.expected_current_adapter_kind === expectedKind
+          && confirmation.target_provider_profile_id === targetProfileId
+          && confirmation.status === "confirmed"
+        );
+        if (existing) return sendJson(res, 200, { confirmation: existing, reused: true });
+        const confirmedAt = new Date().toISOString();
+        const confirmation: FallbackConfirmation = {
+          confirmation_id: `fallback_confirmation_${safeId(operationId)}_${Date.now()}`,
+          operation_id: operationId,
+          node_run_id: nodeRunId,
+          expected_current_adapter_kind: expectedKind,
+          target_provider_profile_id: targetProfileId,
+          actor,
+          status: "confirmed",
+          confirmed_at: confirmedAt
+        };
+        await writeJsonAtomically(fallbackConfirmationsPath(runId), [...confirmations, confirmation]);
+        const confirmedEvent = {
+          event_id: `evt_${confirmation.confirmation_id}`,
+          run_id: runId,
+          type: "provider_fallback_confirmed",
+          subject: { type: "NodeRun", id: nodeRunId },
+          message: `Provider fallback confirmed by ${actor} for ${targetProfileId}`,
+          created_at: confirmedAt
+        };
+        await appendEventIfMissing(runId, confirmedEvent);
+        return sendJson(res, 201, { confirmation, reused: false });
+      } finally {
+        await lock.release();
+      }
     }
     if (req.method === "POST" && parts[4] === "scheduler" && parts[5] === "tick") {
       const body = await parseBody(req);

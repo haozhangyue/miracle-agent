@@ -59,6 +59,10 @@ export interface NodeSpec {
   inputs: NodePortSpec[];
   outputs: NodePortSpec[];
   review_gate_ref?: string;
+  runtime_policy?: {
+    allowed_adapter_kinds: Array<"codex" | "model-api">;
+    automatic_cross_kind_fallback: boolean;
+  };
   failure_policy: {
     retry: number;
     cost_budget?: number;
@@ -271,6 +275,70 @@ export interface ProviderCatalogEntry {
   documentation: ProviderCatalogDocumentation;
   capabilities: string[];
   cancellation: "http_abort";
+  routing?: {
+    user_priority: number;
+    cost_tier: number;
+    estimated_cost?: {
+      currency: string;
+      min: number;
+      max: number;
+    };
+  };
+}
+
+export type ProviderRoutingHealthStatus = "missing_credential" | "driver_unregistered" | ProviderVerificationStatus;
+
+export interface ProviderRoutingCandidate {
+  id: string;
+  provider: string;
+  adapter_kind: "codex" | "model-api";
+  capabilities: string[];
+  executable: boolean;
+  credential_available: boolean;
+  health_status: ProviderRoutingHealthStatus;
+  user_priority: number;
+  cost_tier: number;
+  estimated_cost?: {
+    currency: string;
+    min: number;
+    max: number;
+  };
+}
+
+export interface ProviderRoutingBudget {
+  attempts_used: number;
+  max_attempts: number;
+  elapsed_ms: number;
+  total_time_budget_ms: number;
+  cost_used: number;
+  cost_budget: number;
+}
+
+export interface ProviderRoutingInput {
+  operation_id: string;
+  capability_requirements: string[];
+  allowed_adapter_kinds: Array<"codex" | "model-api">;
+  current_adapter_kind?: "codex" | "model-api";
+  failed_profile_id?: string;
+  failure?: {
+    error_code: string;
+    status: AttemptStatus;
+  };
+  profiles: ProviderRoutingCandidate[];
+  budget: ProviderRoutingBudget;
+  decided_at: string;
+}
+
+export interface ProviderRoutingDecision {
+  operation_id: string;
+  selected_adapter_kind?: "codex" | "model-api";
+  selected_provider_profile_id?: string;
+  candidate_profile_ids: string[];
+  rejected_candidates: Array<{ profile_id: string; reason_code: string }>;
+  reason_codes: string[];
+  estimated_cost?: { currency: string; min: number; max: number };
+  requires_confirmation: boolean;
+  decided_at: string;
 }
 
 export interface AdapterError {

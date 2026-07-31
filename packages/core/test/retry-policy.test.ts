@@ -119,7 +119,8 @@ describe("RetryPolicy", () => {
     }))).toMatchObject({
       max_attempts: 2,
       cost_budget: 2,
-      attempt_timeout_ms: 1_800_000
+      attempt_timeout_ms: 1_800_000,
+      retryable_error_codes: expect.arrayContaining(["rate_limit", "provider_temporary_5xx", "network_error", "adapter_timeout"])
     });
 
     const override = {

@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p7-08",
+  "current_node_id": "p7-09",
   "generated_from": [
     "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
     "docs/04-engineering/p3-detailed-design/23_P3MVP任务拆解与验收计划.md",
@@ -19,6 +19,7 @@
     "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md",
     "docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md",
     "docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md",
+    "docs/05-delivery/p7-adapter-expansion/58_P7-08Provider路由与Fallback交付说明.md",
     "docs/06-operations/release/35_P4_MVP回归验收与版本收口报告.md",
     "docs/05-delivery/p5-real-workflow/36_P5真实工作流接入详细计划与任务拆解.md",
     "docs/05-delivery/p5-real-workflow/37_P5-01真实工作区盘点报告.md",
@@ -232,6 +233,7 @@
         "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md",
         "docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md",
         "docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md",
+        "docs/05-delivery/p7-adapter-expansion/58_P7-08Provider路由与Fallback交付说明.md",
         "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
         "plans/mvp-task-baseline/roadmap.json"
       ]
@@ -810,7 +812,7 @@
       "id": "p7-08",
       "day": "P7-08",
       "title": "Provider fallback 与灵活路由",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p7-vertical-closure",
       "parallel_group": "p7-mainline",
       "depends_on": ["p7-05", "p7-07"],
@@ -822,7 +824,7 @@
       "id": "p7-09",
       "day": "P7-09",
       "title": "多运行时 UI 与可观测性",
-      "status": "planned",
+      "status": "current",
       "serial_group": "p7-vertical-closure",
       "parallel_group": "p7-mainline",
       "depends_on": ["p7-08"],

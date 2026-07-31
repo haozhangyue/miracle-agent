@@ -20,7 +20,11 @@ export interface AdapterOutcomeClassification {
 const retryCodeAliases = new Map<string, string>([
   ["process_exit_nonzero", "adapter_process_error"],
   ["process_spawn_failed", "adapter_process_error"],
-  ["invalid_adapter_output", "adapter_output_invalid"]
+  ["invalid_adapter_output", "adapter_output_invalid"],
+  ["provider_rate_limited", "rate_limit"],
+  ["provider_unavailable", "provider_temporary_5xx"],
+  ["provider_network_error", "network_error"],
+  ["provider_timeout", "adapter_timeout"]
 ]);
 
 const blockedCodes = new Set([
