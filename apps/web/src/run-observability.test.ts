@@ -76,6 +76,13 @@ describe("run observability view model", () => {
     }])).toMatchObject({ estimated: 0.02 });
   });
 
+  it("counts a targeted routing estimate once across a fallback operation", () => {
+    expect(costSummary([
+      { attempt_number: 1 },
+      { attempt_number: 2, estimated_cost: { currency: "USD", min: 0.01, max: 0.02 } }
+    ])).toMatchObject({ estimated: 0.02 });
+  });
+
   it("only labels recovery actions backed by an available API", () => {
     expect(recoveryActionLabel("inspect_retry_budget")).toBe("查看 retry budget");
     expect(recoveryActionLabel("stop_auto_retry")).toBe("停止自动重试");

@@ -3931,13 +3931,19 @@ async function buildRunObservabilityProjection(runId: string) {
   const bundle = await readRunBundle(runId);
   const attempts = bundle.attempts as NodeAttempt[];
   const routingDecisions = await readRoutingDecisions(runId);
-  const routingByOperation = new Map(routingDecisions.map((decision) => [decision.operation_id, decision]));
+  const routingByOperationAttempt = new Map(routingDecisions.map((decision) => [
+    `${decision.operation_id}\0${decision.target_attempt_number}`,
+    decision
+  ]));
   const operations = Array.from(new Set(attempts.map((attempt) => attempt.operation_id))).map((operationId) => ({
     operation_id: operationId,
     attempts: attempts
       .filter((attempt) => attempt.operation_id === operationId)
       .sort((left, right) => (left.attempt_number ?? 1) - (right.attempt_number ?? 1))
-      .map((attempt) => observabilityAttempt(attempt, routingByOperation.get(operationId)?.estimated_cost))
+      .map((attempt) => observabilityAttempt(
+        attempt,
+        routingByOperationAttempt.get(`${attempt.operation_id}\0${attempt.attempt_number ?? 1}`)?.estimated_cost
+      ))
   }));
   const schedulerPlan = await calculateRetryAwareSchedulerPlan(runId, bundle, Math.max(1, (bundle.nodes as NodeRun[]).length));
   const events = await readEvents(runId);

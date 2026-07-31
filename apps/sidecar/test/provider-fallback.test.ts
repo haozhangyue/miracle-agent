@@ -264,7 +264,18 @@ describe("provider fallback orchestration", () => {
     const response = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/observability`);
     expect(response.status).toBe(200);
     const body = await response.json() as {
-      operations: Array<{ operation_id: string; attempts: Array<{ provider: string; provider_profile_id?: string; model?: string }> }>;
+      operations: Array<{ operation_id: string; attempts: Array<{
+        attempt_number: number;
+        provider: string;
+        provider_profile_id?: string;
+        model?: string;
+        estimated_cost?: { currency: string; min: number; max: number };
+      }> }>;
+      routing_decisions: Array<{
+        operation_id: string;
+        target_attempt_number: number;
+        estimated_cost?: { currency: string; min: number; max: number };
+      }>;
       scheduler: { next_suggested_actions: string[] };
     };
     expect(body.operations).toEqual([
@@ -275,6 +286,18 @@ describe("provider fallback orchestration", () => {
         ]
       })
     ]);
+    expect(body.routing_decisions).toEqual([
+      expect.objectContaining({
+        operation_id: body.operations[0]!.operation_id,
+        target_attempt_number: 2,
+        estimated_cost: { currency: "USD", min: 0.01, max: 0.02 }
+      })
+    ]);
+    expect(body.operations[0]!.attempts[0]).not.toHaveProperty("estimated_cost");
+    expect(body.operations[0]!.attempts[1]).toMatchObject({
+      attempt_number: 2,
+      estimated_cost: { currency: "USD", min: 0.01, max: 0.02 }
+    });
     expect(body.scheduler.next_suggested_actions).toEqual(expect.any(Array));
     expect(JSON.stringify(body)).not.toContain("fixture-key");
     expect(JSON.stringify(body)).not.toContain("prompt_path");
