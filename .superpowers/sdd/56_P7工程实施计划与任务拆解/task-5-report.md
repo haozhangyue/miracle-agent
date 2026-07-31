@@ -232,3 +232,39 @@ P7-06 已完成。功能提交：`dc4195d7f91721f44f11a12e4f4de0b5f2d281b3`（`�
 
 - `MIRACLE_MODEL_API_RECEIPT_WRITE_DELAY_MS` 仅作为集成测试使用的可控 receipt 写入延迟，以稳定覆盖完成-取消窗口；默认 `0`，不改变正常运行。
 - Node.js 不提供跨平台 `openat` dirfd 写入 API；实现以 canonical path、`lstat`/`realpath`、目录 `O_NOFOLLOW` 打开和写入前复核来拒绝预置或检测到的替换。P7-06 未扩展到真实厂商 Driver、ProviderRouter 或 fallback，未引入 OpenAI SDK/官方服务。
+
+## 全局审查第五轮修复（2026-07-31）
+
+功能修复提交：`fbed3a4914c76b50aeec92b2357505c15b04751e`（`收紧Model API路由与授权测试`）。报告提交：待提交。
+
+### RED
+
+1. `npm run test -w apps/sidecar -- model-api-authorization.test.ts`
+   - 结果：失败，模块不存在；说明授权规则尚未可独立验证。
+2. `npm run test -w apps/sidecar -- api.test.ts`
+   - 结果：失败；`source: "keychain"` 的不可执行 Model API manifest 在 dry-run 中仍被标记为 `executable: true` 并被选中。
+3. `npm run test -w apps/sidecar -- model-api-server.test.ts`
+   - 结果：失败；初版 root 替换用例使用快速 fixture，operation 在轮询前结束而超时。改为既有 `slow` fixture 后，通过 receipt write delay 稳定覆盖 terminal 后、写盘前的窗口。
+
+### GREEN 与验证
+
+1. `npm run test -w apps/sidecar -- api.test.ts model-api-authorization.test.ts model-api-server.test.ts`
+   - 结果：通过，3 files、44 tests。dry-run 分别覆盖 keychain、缺失 env credential 与 blocked adapter；纯函数覆盖 missing key、非 env source、provider scope 拒绝和合法 env scope。
+2. `npm run test`
+   - 结果：通过；Sidecar 13 files、220 tests，Web 3 files、9 tests，Core 8 files、125 tests。
+3. `npm run typecheck`
+   - 结果：通过；Core、Sidecar、Web 均通过。
+4. `npm run build`
+   - 结果：通过；Core、Sidecar、Web production build 均通过。
+5. `git diff --check`
+   - 结果：通过。
+
+### 修复说明
+
+- `selectAdapterForNode` 撤回 `executable: false` 的 Model API 兜底，正式执行和 workflow dry-run 重新仅使用 `selectAdapterManifest` 返回的真正 executable adapter。不可执行的 keychain、缺凭证或 blocked manifest 不会误报路由可执行。
+- 新增 `apps/sidecar/src/model-api-authorization.ts` 的纯函数 `authorizeProviderCredential(manifest, profile)`。它只授权已声明、`env` source 且 provider scope（若存在）包含 profile.provider 的 credential；`executeSidecarAdapter` 使用它作为环境读取前的第二道防御。
+- receipt write delay 集成测试在 terminal tombstone 已可见、execution 尚未结束时将安全 root 替换为外部 symlink；二次 root 校验使执行安全失败，外部目录保持为空。预置 root symlink 测试继续保留。
+
+### 范围确认
+
+- 本轮没有重新放宽 adapter 选择，也未实现真实厂商 Driver、ProviderRouter/fallback、OpenAI SDK 或 OpenAI 官方服务。
