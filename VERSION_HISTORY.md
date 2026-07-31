@@ -125,7 +125,8 @@
   `attention_required` 和非 Gate 根因恢复动作，Node detail 仍保留 Gate 返工入口。legacy
   RetryState 在迁移锁竞争时稳定返回 `409 operation_in_progress`，不会继续严格解析旧结构；
   旧 retry dispatch intent 缺少 deadline 时按首个 Attempt 总预算原子补齐，重复
-  `dispatched_unknown` 请求保持稳定 409 且不重复派发。
+  `dispatched_unknown` 请求保持稳定 409 且不重复派发。真实派发的 NodeRun running/rollback
+  状态改为原子 replace，避免并发读取 Run Bundle 时短暂读到空 JSON。
 
 ## 4. v0.8.0 发布记录
 

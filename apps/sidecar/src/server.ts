@@ -2686,7 +2686,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     targetNodeRun.status = "running";
     targetNodeRun.started_at = targetNodeRun.started_at ?? dispatchedAt;
     targetNodeRun.updated_at = dispatchedAt;
-    await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
+    await writeJsonAtomically(`runs/${runId}/nodes.json`, nodeRuns);
     let rawResult: AdapterResult;
     if (adapter?.id === "codex-cli-real") {
       const executed = await executeRealCodexAdapter({
@@ -2717,7 +2717,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       result = parseAdapterResultForInvocation(invocation, rawResult);
     } catch (error) {
       Object.assign(targetNodeRun, previousNodeRun);
-      await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
+      await writeJsonAtomically(`runs/${runId}/nodes.json`, nodeRuns);
       await writeJsonAtomically(dispatchIntentPath, {
         ...dispatchIntent,
         state: "invalid_result",
