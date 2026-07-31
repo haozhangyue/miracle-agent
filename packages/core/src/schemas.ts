@@ -1,5 +1,13 @@
 import { z } from "zod";
-import type { AdapterInvocation, AdapterResult, ExecutionPlan, NodeExecutionDecision, ResolvedNodeInput } from "./types";
+import type {
+  AdapterInvocation,
+  AdapterResult,
+  ExecutionPlan,
+  NodeExecutionDecision,
+  ResolvedNodeInput,
+  RetryPolicy,
+  RetryScheduleRecord
+} from "./types";
 
 const credentialScopeSchema = z.object({
   credential_ref: z.string(),
@@ -254,6 +262,7 @@ export const adapterRuntimeControlSchema = z.object({
 export const adapterInvocationSchema = z.object({
   operation_id: z.string().min(1),
   attempt_id: z.string().min(1),
+  attempt_number: z.number().int().positive().default(1),
   run_id: z.string().min(1),
   node_run_id: z.string().min(1),
   node_id: z.string().min(1),
@@ -337,6 +346,54 @@ export const adapterResultSchema = z.object({
       message: "provider_receipt.operation_id must match AdapterResult.operation_id"
     });
   }
+});
+
+const finiteNonNegativeNumber = z.number().finite().min(0);
+const finitePositiveNumber = z.number().finite().positive();
+
+export const retryPolicySchema: z.ZodType<RetryPolicy> = z.object({
+  max_attempts: z.number().finite().int().min(1).max(3),
+  backoff: z.enum(["fixed", "exponential"]),
+  initial_delay_ms: finiteNonNegativeNumber,
+  max_delay_ms: finiteNonNegativeNumber,
+  retryable_error_codes: z.array(z.string().min(1)),
+  attempt_timeout_ms: finitePositiveNumber,
+  total_time_budget_ms: finitePositiveNumber,
+  cost_budget: finiteNonNegativeNumber.optional(),
+  manual_confirmation_after: z.number().finite().int().min(1).max(3).optional()
+}).superRefine((policy, context) => {
+  if (policy.max_delay_ms < policy.initial_delay_ms) {
+    context.addIssue({
+      code: "custom",
+      path: ["max_delay_ms"],
+      message: "max_delay_ms must be greater than or equal to initial_delay_ms"
+    });
+  }
+  if (policy.manual_confirmation_after !== undefined && policy.manual_confirmation_after > policy.max_attempts) {
+    context.addIssue({
+      code: "custom",
+      path: ["manual_confirmation_after"],
+      message: "manual_confirmation_after must not exceed max_attempts"
+    });
+  }
+});
+
+export const retryBudgetSnapshotSchema = z.object({
+  attempts_used: z.number().int().nonnegative(),
+  elapsed_ms: finiteNonNegativeNumber,
+  cost_used: finiteNonNegativeNumber,
+  max_attempts: z.number().int().min(1).max(3),
+  total_time_budget_ms: finitePositiveNumber,
+  cost_budget: finiteNonNegativeNumber.optional()
+});
+
+export const retryScheduleRecordSchema: z.ZodType<RetryScheduleRecord> = z.object({
+  operation_id: z.string().min(1),
+  node_run_id: z.string().min(1),
+  attempt_number: z.number().int().min(2),
+  reason_code: z.string().min(1),
+  scheduled_for: z.string().datetime(),
+  budget_snapshot: retryBudgetSnapshotSchema
 });
 
 export function parseAdapterResultForInvocation(invocation: AdapterInvocation, result: AdapterResult): AdapterResult {

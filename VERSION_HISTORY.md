@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.8.0` |
 | 版本名称 | 真实工作流工程接入基线 |
-| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-03 已完成，当前任务为 `P7-04` Codex Scheduler 连续执行闭环 |
+| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-05 已完成，当前任务为 `P7-06` 通用 Model API Adapter |
 | 基线提交 | P6-08 收口提交（见 Git HEAD） |
 | 基线日期 | 2026-07-16 |
 | 最终评审 | 通过 |
@@ -99,6 +99,16 @@
   Scheduler 最终响应统一投影最终 ExecutionPlan。节点在 Adapter 启动前持久化可恢复、幂等的
   `NodeDispatchIntent` 与脱敏输入审计，未知派发结果保留审计状态且不自动创建新 Attempt；只有 optional
   入边的节点由 Planner 决定等待或执行。
+- 完成 P7-05 Retry 与故障恢复：Core 新增错误分类、fixed/exponential 退避和
+  attempt/time/cost 三类预算；策略拒绝负数、NaN、Infinity、超过 3 次和无界配置。
+- Sidecar 仅对明确 `AdapterResult.failed` 自动 retry，复用 operation ID 并追加递增
+  `attempt_number` 的 NodeAttempt；`dispatched_unknown`、无效回执和外部状态未知保持人工处置。
+- `retry_schedule.json` 使用 temp + rename 原子更新，同 operation 最多一个 active schedule；
+  未到期不派发，到期和进程重启后按 attempt 历史幂等恢复且不重复 dispatch。
+- 新增 `retry_scheduled`、`retry_exhausted`、Node detail `retry_decision` 和 Web retry
+  预算展示；预算耗尽按 root cause 聚合单一 Attention，并提供检查根因、调整预算和人工重试动作。
+- 同步 task-baseline：`P7-05` 标记完成，`current_node_id` 推进到 `p7-06`；Provider fallback
+  保持 P7-08 范围，本轮不接真实第三方 API。
 
 ## 4. v0.8.0 发布记录
 

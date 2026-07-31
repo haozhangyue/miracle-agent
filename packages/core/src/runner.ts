@@ -57,17 +57,22 @@ export function createAdapterInvocation(input: {
   adapterKind?: AdapterInvocation["adapter_kind"];
   adapterId?: string;
   resolvedInputs?: ResolvedNodeInput[];
+  operationId?: string;
+  attemptNumber?: number;
 }): AdapterInvocation {
   const nodeSpec = input.workflow.nodes.find((node) => node.id === input.nodeRun.node_id);
   if (!nodeSpec) throw new Error(`NodeSpec not found: ${input.nodeRun.node_id}`);
   const dispatchedAt = input.createdAt ?? new Date().toISOString();
-  const operationId = `op_${normalizeId(input.nodeRun.node_run_id)}_${Date.parse(dispatchedAt)}`;
-  const attemptId = `attempt_${operationId}`;
+  const operationId = input.operationId ?? `op_${normalizeId(input.nodeRun.node_run_id)}_${Date.parse(dispatchedAt)}`;
+  const attemptNumber = input.attemptNumber ?? 1;
+  if (!Number.isSafeInteger(attemptNumber) || attemptNumber < 1) throw new Error("attemptNumber must be a positive integer");
+  const attemptId = attemptNumber === 1 ? `attempt_${operationId}` : `attempt_${operationId}_${attemptNumber}`;
   const adapterKind = input.adapterKind ?? "mock-local";
   const attemptWorkspace = `runtime/${input.runSpec.run_id}/${input.nodeRun.node_run_id}/${attemptId}`;
   return {
     operation_id: operationId,
     attempt_id: attemptId,
+    attempt_number: attemptNumber,
     run_id: input.runSpec.run_id,
     node_run_id: input.nodeRun.node_run_id,
     node_id: input.nodeRun.node_id,
@@ -157,12 +162,14 @@ export function executeMockAdapter(input: {
   });
 }
 
-export function createNodeAttemptFromAdapterResult(result: AdapterResult): NodeAttempt {
+export function createNodeAttemptFromAdapterResult(result: AdapterResult, attemptNumber = 1): NodeAttempt {
   const parsedResult = adapterResultSchema.parse(result);
+  if (!Number.isSafeInteger(attemptNumber) || attemptNumber < 1) throw new Error("attemptNumber must be a positive integer");
   return {
     attempt_id: parsedResult.attempt_id,
     node_run_id: parsedResult.node_run_id,
     operation_id: parsedResult.operation_id,
+    attempt_number: attemptNumber,
     attempt_kind: "execute",
     status: parsedResult.status,
     provider_receipt: parsedResult.provider_receipt,
@@ -200,9 +207,12 @@ export function createRunnerTraceEvents(input: {
   result: AdapterResult;
   committedNodeStatus: NodeRun["status"];
 }): TraceEvent[] {
+  const eventScope = (input.invocation.attempt_number ?? 1) === 1
+    ? input.invocation.operation_id
+    : input.invocation.attempt_id;
   return [
     {
-      event_id: `evt_${input.invocation.operation_id}_dispatched`,
+      event_id: `evt_${eventScope}_dispatched`,
       run_id: input.invocation.run_id,
       type: "runner_operation_dispatched",
       subject: { type: "NodeRun", id: input.invocation.node_run_id },
@@ -210,7 +220,7 @@ export function createRunnerTraceEvents(input: {
       created_at: input.invocation.dispatched_at
     },
     {
-      event_id: `evt_${input.invocation.operation_id}_received`,
+      event_id: `evt_${eventScope}_received`,
       run_id: input.invocation.run_id,
       type: "adapter_result_received",
       subject: { type: "NodeRun", id: input.invocation.node_run_id },
@@ -218,7 +228,7 @@ export function createRunnerTraceEvents(input: {
       created_at: input.result.received_at
     },
     {
-      event_id: `evt_${input.invocation.operation_id}_committed`,
+      event_id: `evt_${eventScope}_committed`,
       run_id: input.invocation.run_id,
       type: "node_run_committed",
       subject: { type: "NodeRun", id: input.invocation.node_run_id },

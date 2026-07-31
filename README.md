@@ -24,9 +24,13 @@ UI 展示验收方案、`P5-07` 半自动新 Run 草案设计、`P5-08` 首个�
 Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与 Projection 和
 `P6-04` 至 `P6-08` 已完成并通过工程、API、页面、安全与真实性验收，形成 `v0.8.0`
 真实工作流工程接入基线。`P7-01` 总体设计、`P7-02` 多节点 ExecutionPlan 与输入解析和
-`P7-03` Codex 多节点 Artifact 真实交接与 `P7-04` Scheduler 连续执行闭环已完成，当前主线推进到 `P7-05` retry/fallback：
-Codex CLI 已可按 ExecutionPlan 连续执行、在 Gate 暂停后批准恢复，并以可恢复派发意图写入脱敏计划/输入审计；未知派发结果不自动重试，下一步再完成 retry/fallback，再通过
-通用 Model API Adapter 接入 DeepSeek、Kimi 和 MiniMax；P7 不接入 OpenAI 官方 API。
+`P7-03` Codex 多节点 Artifact 真实交接、`P7-04` Scheduler 连续执行和 `P7-05`
+Retry 与故障恢复已完成，当前主线推进到 `P7-06` 通用 Model API Adapter：
+Codex CLI 已可按 ExecutionPlan 连续执行、在 Gate 暂停后批准恢复，并对明确 failed 的
+AdapterResult 按 fixed/exponential 退避和 attempt/time/cost 预算创建新 NodeAttempt；
+同 operation 的 retry 复用 operation ID，原子 schedule 可在进程重启后幂等恢复。
+未知派发结果和无效回执不会自动重派。Provider fallback 仍属于 P7-08；P7 不接入
+OpenAI 官方 API。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 

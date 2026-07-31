@@ -198,7 +198,7 @@ docs/
 | 原文件 | 目标目录（中文对照） | 状态 | 概念设计与原因 |
 |---|---|---|---|
 | `55_P7多节点真实执行与模型Adapter扩展总体设计.md` | `05-delivery/p7-adapter-expansion/`（交付/P7 Adapter 扩展） | ACTIVE | 已评审的 P7 总体设计：先定义 Codex 多节点纵向闭环、Artifact 交接和 retry/fallback，再以通用 Model API Adapter 接入 DeepSeek、Kimi 和 MiniMax。 |
-| `56_P7工程实施计划与任务拆解.md` | `05-delivery/p7-adapter-expansion/`（交付/P7 实施计划） | CURRENT | 将 P7-02 至 P7-10 拆成逐文件 TDD 步骤、依赖、提交点和验收命令，使总体设计可直接进入工程实施。 |
+| `56_P7工程实施计划与任务拆解.md` | `05-delivery/p7-adapter-expansion/`（交付/P7 实施计划） | CURRENT | P7-02 至 P7-05 已完成；当前按逐文件 TDD 步骤进入 P7-06 通用 Model API Adapter。 |
 
 ### 4.10 操作、发布和仓库级资产
 

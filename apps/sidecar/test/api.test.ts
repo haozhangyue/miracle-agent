@@ -1109,7 +1109,7 @@ describe("sidecar api", () => {
     expect(scheduled.ticks.at(-1)?.paused?.some((item) => item.node_id === "G_distribution" && item.decision === "pause_for_gate")).toBe(true);
   });
 
-  it("opens an Attention item when scheduler execution fails", async () => {
+  it("schedules a retry before opening Attention for a retryable scheduler failure", async () => {
     const created = await fetchJson<{
       run_id: string;
       initial_node_runs: string[];
@@ -1128,7 +1128,10 @@ describe("sidecar api", () => {
     const scheduled = await fetchJson<{
       stop_reason: string;
       summary: { nodes_executed: number; failures: number; attention_items_created: number };
-      ticks: Array<{ failed?: Array<{ error: { code: string } }>; attention_items?: Array<{ root_cause_key: string }> }>;
+      ticks: Array<{
+        failed?: Array<{ error: { code: string }; retry_decision?: { action: string } }>;
+        attention_items?: Array<{ root_cause_key: string }>;
+      }>;
     }>(`/api/v0/runs/${created.run_id}/scheduler/run`, {
       method: "POST",
       body: JSON.stringify({ max_ticks: 3, max_nodes_per_tick: 1 })
@@ -1137,14 +1140,16 @@ describe("sidecar api", () => {
     expect(scheduled.stop_reason).toBe("execution_failed");
     expect(scheduled.summary.nodes_executed).toBe(1);
     expect(scheduled.summary.failures).toBe(1);
-    expect(scheduled.summary.attention_items_created).toBe(1);
+    expect(scheduled.summary.attention_items_created).toBe(0);
     expect(scheduled.ticks[0]?.failed?.[0]?.error.code).toBe("mock_failure");
-    expect(scheduled.ticks[0]?.attention_items?.[0]?.root_cause_key).toContain(created.initial_node_runs[0]);
+    expect(scheduled.ticks[0]?.failed?.[0]?.retry_decision).toMatchObject({ action: "schedule_retry" });
+    expect(scheduled.ticks[0]?.attention_items).toEqual([]);
 
     const attention = await fetchJson<{ attention: Array<{ root_cause_key: string; status: string; safe_actions: string[] }> }>(`/api/v0/attention?run_id=${created.run_id}`);
-    expect(attention.attention.some((item) => item.root_cause_key === `node:${created.initial_node_runs[0]}:execution_failed` && item.status === "open")).toBe(true);
+    expect(attention.attention).toEqual([]);
     const events = await fetchJson<{ events: Array<{ type: string }> }>(`/api/v0/runs/${created.run_id}/events`);
-    expect(events.events.map((event) => event.type)).toContain("attention_item_created");
+    expect(events.events.map((event) => event.type)).toContain("retry_scheduled");
+    expect(events.events.map((event) => event.type)).not.toContain("attention_item_created");
   });
 
   it("does not queue downstream optional media nodes when the artifact selector is not qualified", async () => {

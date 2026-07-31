@@ -1,0 +1,142 @@
+import { retryPolicySchema } from "./schemas";
+import type { NodeAttempt, RetryBudgetSnapshot, RetryDecision, RetryPolicy } from "./types";
+
+export const DEFAULT_RETRY_POLICY: RetryPolicy = {
+  max_attempts: 3,
+  backoff: "fixed",
+  initial_delay_ms: 1_000,
+  max_delay_ms: 30_000,
+  retryable_error_codes: [
+    "network_error",
+    "rate_limit",
+    "codex_process_error",
+    "node_timeout",
+    "mock_failure"
+  ],
+  attempt_timeout_ms: 1_800_000,
+  total_time_budget_ms: 3_600_000
+};
+
+type RetryError = {
+  code: string;
+  message: string;
+  recoverable: boolean;
+};
+
+function timestamp(value: string | undefined, field: string) {
+  const parsed = Date.parse(value ?? "");
+  if (!Number.isFinite(parsed)) throw new Error(`${field} must be a valid timestamp`);
+  return parsed;
+}
+
+function receiptCost(attempt: NodeAttempt) {
+  const cost = attempt.provider_receipt?.cost;
+  return typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : 0;
+}
+
+function backoffDelay(policy: RetryPolicy, nextAttemptNumber: number) {
+  if (policy.backoff === "fixed") return Math.min(policy.initial_delay_ms, policy.max_delay_ms);
+  const exponent = Math.max(0, nextAttemptNumber - 2);
+  return Math.min(policy.initial_delay_ms * (2 ** exponent), policy.max_delay_ms);
+}
+
+function decision(input: {
+  action: RetryDecision["action"];
+  reasonCode: string;
+  operationId: string;
+  budgetSnapshot: RetryBudgetSnapshot;
+}): RetryDecision {
+  return {
+    action: input.action,
+    reason_code: input.reasonCode,
+    operation_id: input.operationId,
+    budget_snapshot: input.budgetSnapshot
+  };
+}
+
+export function decideRetry(input: {
+  policy: RetryPolicy;
+  error: RetryError;
+  attempts: NodeAttempt[];
+  now: string;
+}): RetryDecision {
+  const policy = retryPolicySchema.parse(input.policy);
+  const nowMs = timestamp(input.now, "now");
+  if (input.attempts.length === 0) throw new Error("decideRetry requires an explicit failed NodeAttempt");
+  const operationId = input.attempts[0]?.operation_id;
+  if (!operationId || input.attempts.some((attempt) => attempt.operation_id !== operationId)) {
+    throw new Error("Retry attempts must belong to one operation_id");
+  }
+  const latestAttempt = input.attempts.reduce((latest, attempt) => {
+    const latestNumber = latest.attempt_number ?? 1;
+    const attemptNumber = attempt.attempt_number ?? 1;
+    return attemptNumber > latestNumber ? attempt : latest;
+  });
+  if (latestAttempt.status !== "failed") throw new Error("Only an explicit failed NodeAttempt may be retried");
+
+  const attemptsUsed = Math.max(...input.attempts.map((attempt) => attempt.attempt_number ?? 1));
+  const firstAttemptAt = Math.min(...input.attempts.map((attempt) => timestamp(attempt.created_at, "attempt.created_at")));
+  const elapsedMs = Math.max(0, nowMs - firstAttemptAt);
+  const costUsed = input.attempts.reduce((total, attempt) => total + receiptCost(attempt), 0);
+  const budgetSnapshot: RetryBudgetSnapshot = {
+    attempts_used: attemptsUsed,
+    elapsed_ms: elapsedMs,
+    cost_used: costUsed,
+    max_attempts: policy.max_attempts,
+    total_time_budget_ms: policy.total_time_budget_ms,
+    ...(policy.cost_budget === undefined ? {} : { cost_budget: policy.cost_budget })
+  };
+
+  if (!input.error.recoverable || !policy.retryable_error_codes.includes(input.error.code)) {
+    return decision({
+      action: "fail_terminal",
+      reasonCode: "error_not_retryable",
+      operationId,
+      budgetSnapshot
+    });
+  }
+  if (attemptsUsed >= policy.max_attempts) {
+    return decision({
+      action: "require_attention",
+      reasonCode: "attempt_budget_exhausted",
+      operationId,
+      budgetSnapshot
+    });
+  }
+  if (policy.cost_budget !== undefined && costUsed >= policy.cost_budget) {
+    return decision({
+      action: "require_attention",
+      reasonCode: "cost_budget_exhausted",
+      operationId,
+      budgetSnapshot
+    });
+  }
+  if (policy.manual_confirmation_after !== undefined && attemptsUsed >= policy.manual_confirmation_after) {
+    return decision({
+      action: "require_attention",
+      reasonCode: "manual_confirmation_required",
+      operationId,
+      budgetSnapshot
+    });
+  }
+
+  const nextAttemptNumber = attemptsUsed + 1;
+  const delayMs = backoffDelay(policy, nextAttemptNumber);
+  if (elapsedMs + delayMs > policy.total_time_budget_ms) {
+    return decision({
+      action: "require_attention",
+      reasonCode: "time_budget_exhausted",
+      operationId,
+      budgetSnapshot
+    });
+  }
+  return {
+    action: "schedule_retry",
+    reason_code: "retryable_error",
+    operation_id: operationId,
+    next_attempt_number: nextAttemptNumber,
+    delay_ms: delayMs,
+    scheduled_for: new Date(nowMs + delayMs).toISOString(),
+    budget_snapshot: budgetSnapshot
+  };
+}

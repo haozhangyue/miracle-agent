@@ -197,6 +197,7 @@ export interface NodeAttempt {
   attempt_id: string;
   node_run_id: string;
   operation_id: string;
+  attempt_number?: number;
   attempt_kind?: "execute" | "rework";
   status: AttemptStatus;
   provider_receipt?: Record<string, unknown>;
@@ -211,6 +212,7 @@ export interface NodeAttempt {
 export interface AdapterInvocation {
   operation_id: string;
   attempt_id: string;
+  attempt_number?: number;
   run_id: string;
   node_run_id: string;
   node_id: string;
@@ -316,6 +318,46 @@ export interface AdapterResult {
     recoverable: boolean;
   };
   received_at: string;
+}
+
+export interface RetryPolicy {
+  max_attempts: number;
+  backoff: "fixed" | "exponential";
+  initial_delay_ms: number;
+  max_delay_ms: number;
+  retryable_error_codes: string[];
+  attempt_timeout_ms: number;
+  total_time_budget_ms: number;
+  cost_budget?: number;
+  manual_confirmation_after?: number;
+}
+
+export interface RetryBudgetSnapshot {
+  attempts_used: number;
+  elapsed_ms: number;
+  cost_used: number;
+  max_attempts: number;
+  total_time_budget_ms: number;
+  cost_budget?: number;
+}
+
+export interface RetryDecision {
+  action: "schedule_retry" | "require_attention" | "fail_terminal";
+  reason_code: string;
+  operation_id: string;
+  next_attempt_number?: number;
+  delay_ms?: number;
+  scheduled_for?: string;
+  budget_snapshot: RetryBudgetSnapshot;
+}
+
+export interface RetryScheduleRecord {
+  operation_id: string;
+  node_run_id: string;
+  attempt_number: number;
+  reason_code: string;
+  scheduled_for: string;
+  budget_snapshot: RetryBudgetSnapshot;
 }
 
 export interface TraceEvent {

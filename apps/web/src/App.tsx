@@ -92,6 +92,8 @@ function eventAuditMeta(type: string) {
     scheduler_tick_completed: { label: "Scheduler 完成", className: "runner" },
     scheduler_run_started: { label: "Scheduler 连续推进", className: "runner" },
     scheduler_run_completed: { label: "Scheduler 停止", className: "runner" },
+    retry_scheduled: { label: "Retry 已排期", className: "warn" },
+    retry_exhausted: { label: "Retry 已停止", className: "danger" },
     attention_item_created: { label: "Attention 创建", className: "danger" },
     node_blocked: { label: "节点阻塞", className: "danger" },
     node_done: { label: "节点完成", className: "ok" },
@@ -744,6 +746,14 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
                   <small>{activeOperation.operation_id}</small>
                 </div>
               )}
+              {node.data?.retry_decision && (
+                <div className="operationCard">
+                  <div><strong>Retry 决策</strong><Pill value={node.data.retry_decision.action} /></div>
+                  <span>{node.data.retry_decision.reason_code} · attempt {node.data.retry_decision.next_attempt_number ?? "-"}</span>
+                  <small>{node.data.retry_decision.operation_id}{node.data.retry_decision.scheduled_for ? ` · ${node.data.retry_decision.scheduled_for}` : ""}</small>
+                  <small>budget · attempts {node.data.retry_decision.budget_snapshot?.attempts_used ?? "-"} / {node.data.retry_decision.budget_snapshot?.max_attempts ?? "-"} · cost {node.data.retry_decision.budget_snapshot?.cost_used ?? "-"}</small>
+                </div>
+              )}
               {selectedGateForNode && (
                 <div className="gateInline">
                   <strong>{selectedGateForNode.gate_spec_id}</strong>
@@ -764,7 +774,7 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
                     <div key={attempt.attempt_id}>
                       <strong>{attempt.attempt_id}</strong>
                       <Pill value={attempt.status} />
-                      <span>{attempt.provider_receipt?.adapter_id ?? "-"} · {attempt.provider_receipt?.provider ?? "-"}</span>
+                      <span>attempt {attempt.attempt_number ?? 1} · {attempt.provider_receipt?.adapter_id ?? "-"} · {attempt.provider_receipt?.provider ?? "-"}</span>
                       <small>{attempt.operation_id} · {attempt.provider_receipt?.latency_ms ?? 0} ms · cost {attempt.provider_receipt?.cost ?? "-"}</small>
                       <small>隔离工作区元数据：{attempt.attempt_id}（不显示外部 runtime 绝对路径）</small>
                     </div>

@@ -32,8 +32,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 |---|---|
 | 当前产品版本 | `v0.8.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
-| 当前阶段 | P7-02 ExecutionPlan、P7-03 Codex 多节点 Artifact 真实交接与 P7-04 Scheduler 连续执行已完成 |
-| 当前任务焦点 | `P7-05` Retry 与故障恢复 |
+| 当前阶段 | P7-02 ExecutionPlan、P7-03 Artifact 交接、P7-04 Scheduler 与 P7-05 Retry 已完成 |
+| 当前任务焦点 | `P7-06` 通用 Model API Adapter |
 | 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
 | P6 验收基线 | `54_P6回归验收与版本收口报告.md` |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
@@ -321,7 +321,26 @@ Run 节点详情取消活跃 operation。Attempt 页面只显示非敏感元数�
 7. 查看下游 NodeAttempt、ArtifactManifest 和事件审计，确认交接使用的是精确版本和 hash。
 
 reject GateDecision 不会推进下游；Scheduler 返回 `paused_for_gate`，直到人工创建并审核返工产物。
-retry/fallback 仍属于 P7-05，当前 Scheduler 不会自动重试或切换 Provider。
+Provider fallback 仍属于 P7-08，当前 Scheduler 不会自动切换 Provider。
+
+### 5.13 查看和处置 Retry
+
+1. 当 Adapter 返回明确 `failed` 且 error code 在节点 RetryPolicy 允许列表内时，查看节点详情中的
+   “Retry 决策”；界面会显示 operation、下一个 attempt、到期时间和预算快照。
+2. `schedule_retry` 表示已排期。未到 `scheduled_for` 时再次运行 Scheduler 不会派发；
+   到期后运行“调度一次”或“自动推进”会创建递增 `attempt_number` 的新 NodeAttempt。
+3. 自动 retry 复用原 `operation_id`，每次 Attempt 都追加保留。可在 Attempt 列表和
+   `retry_scheduled` / `retry_exhausted` 事件中核对完整历史。
+4. Sidecar 重启后无需手工重建 schedule；Scheduler 会从 `retry_schedule.json` 和
+   `attempts.json` 恢复，到期 Attempt 已提交时不会重复 dispatch。
+5. `require_attention` 表示 attempt、time 或 cost 预算耗尽。进入 Attention，按
+   `inspect_node_attempt`、`fix_root_cause`、`increase_retry_budget` 或 `retry_manually`
+   处理；同一 root cause 只保留一张卡。
+6. 若错误状态是 `dispatched_unknown`、AdapterResult 无效或外部状态未知，系统不会自动
+   重派。先检查 dispatch intent 和外部回执，再决定人工恢复。
+
+默认自动 Attempt 总数不超过 3。策略只允许 fixed/exponential 退避，并拒绝负数、NaN、
+Infinity 和无上限配置。当前版本不实现 Provider fallback，也不调用真实第三方模型 API。
 
 ## 6. 当前版本新增能力
 
@@ -329,6 +348,7 @@ retry/fallback 仍属于 P7-05，当前 Scheduler 不会自动重试或切换 Pr
 |---|---|---|
 | P4 本地 MVP | Web、Sidecar、core、fixture workspace 形成可运行基线 | 用户可以本地启动并走通首页、Dry-run、Run、Attention、Agent、Artifact、Gate、Canvas |
 | Run 工作区 | DAG、Node Detail、Attempt、Scheduler、事件审计 | 用户能看清任务执行到哪个节点、为何暂停、如何继续 |
+| Retry 与恢复 | 到期排期、重启幂等、Attempt 历史、三类预算和根因 Attention | 用户能确认何时自动重试、预算为何停止，以及如何安全恢复 |
 | Gate 审核 | approve/reject/request_changes、返工版本、决策投影 | 用户能处理审核、创建返工版本，并保留审计证据 |
 | Attention | 根因聚合和关联对象展开 | 用户能从异常直接定位 Agent、Node、Artifact、Gate |
 | Artifact Board | Artifact detail 和本地预览 | 用户能查看产物版本、审核状态和预览内容 |
@@ -409,6 +429,9 @@ retry/fallback 仍属于 P7-05，当前 Scheduler 不会自动重试或切换 Pr
 | 工作区有未提交修改 | task-baseline 显示 dirty | 执行 `git status --short`，确认是否为本轮预期变更 |
 | Dry-run 提示凭证缺失 | 风险或 adapter routing 显示 missing credential | 设置对应环境变量，或在当前 MVP 中保留为 blocked/风险演示 |
 | Scheduler 不继续推进 | Run 停在 pending_review Gate 或失败节点 | 先处理 Gate 审核或 Attention 根因，再重新调度 |
+| Retry 未立即执行 | Node detail 显示 `schedule_retry` 且 `scheduled_for` 尚未到期 | 等待到期后再次调度；不要删除 Attempt 或重复创建 operation |
+| Retry 停止并出现 Attention | Node detail 显示 attempt/time/cost budget exhausted | 检查失败 Attempt 和根因，按安全动作调整预算或人工重试 |
+| 派发状态未知 | dispatch intent 为 `dispatched_unknown` 或 `invalid_result` | 先核对外部回执和 intent；系统按设计不会自动重派 |
 | Gate 不能创建返工 | 按钮不可用或接口返回冲突 | 只有已 `reject` 或 `request_changes` 的 Gate 可以创建返工 |
 | Artifact 不可预览 | 预览区域显示 missing、binary 或路径拒绝 | 检查 ArtifactManifest 路径、文件是否存在、是否在 workspace 内 |
 | 真实工作流没有进入 UI | 检查首页“继续运行”是否出现 `content-production-real-v0` | 确认 Sidecar 使用同一个包含 historical Run 的 runtime workspace，并刷新页面；W24/W23 页面应显示 `Historical · Read-only` |
@@ -421,8 +444,8 @@ retry/fallback 仍属于 P7-05，当前 Scheduler 不会自动重试或切换 Pr
 
 1. 真实“热点工具更新”历史 Run importer 已实现 Sidecar API，Web 已支持 W24/W23 historical Run
    只读展示，但仍需使用仓库外 runtime workspace 才能看到真实导入数据。
-2. Codex CLI 已开放按 ExecutionPlan 的多节点连续调度、Gate 暂停和批准恢复；retry/fallback、
-   Hermes、OpenClaw 和模型 API 尚未开放。
+2. Codex CLI 已开放按 ExecutionPlan 的多节点连续调度、Gate 暂停/批准恢复和显式 failed
+   的限次 retry；Provider fallback、Hermes、OpenClaw 和模型 API 尚未开放。
 3. 没有云端控制平面、多租户、账号、权限、计费和团队协作。
 4. 没有移动端或 APP 适配，本阶段只面向 Web 工作台。
 5. Infinite Canvas 仍是草稿态，不是完整自由画布产品。

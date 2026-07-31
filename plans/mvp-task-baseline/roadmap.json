@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p7-05",
+  "current_node_id": "p7-06",
   "generated_from": [
     "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
     "docs/04-engineering/p3-detailed-design/23_P3MVP任务拆解与验收计划.md",
@@ -772,7 +772,7 @@
       "id": "p7-05",
       "day": "P7-05",
       "title": "Retry 与故障恢复",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p7-vertical-closure",
       "parallel_group": "p7-mainline",
       "depends_on": ["p7-04"],
@@ -784,7 +784,7 @@
       "id": "p7-06",
       "day": "P7-06",
       "title": "通用 Model API Adapter",
-      "status": "planned",
+      "status": "current",
       "serial_group": "p7-vertical-closure",
       "parallel_group": "p7-mainline",
       "depends_on": ["p7-05"],
