@@ -16,6 +16,8 @@ DONE
 - 修复轮 3 Message: `修复retry统一分类与恢复状态机`
 - 修复轮 4 SHA: `f674aed9bf55f396eb6904a7e2f77553eea23d2d`
 - 修复轮 4 Message: `修复retry终态补偿与统一投影`
+- 修复轮 5 SHA: `84d2a55191c1a9f4f413315b4846c861c39b2d7d`
+- 修复轮 5 Message: `修复retry运行时截止与兼容迁移`
 - Branch: `codex/p7-05-retry-recovery`
 
 ## 变更文件
@@ -35,6 +37,9 @@ DONE
 
 - `apps/sidecar/src/retry-store.ts`
 - `apps/sidecar/src/server.ts`
+- `apps/sidecar/src/codex-cli-adapter.ts`
+- `apps/sidecar/src/codex-real-adapter.ts`
+- `apps/sidecar/test/codex-cli-adapter.test.ts`
 - `apps/sidecar/test/codex-real-node.test.ts`
 - `apps/sidecar/test/retry-recovery.test.ts`
 - `apps/sidecar/test/api.test.ts`
@@ -109,10 +114,25 @@ DONE
     tombstone，再删除 schedule，所有 projection 忽略 completed。
 18. prepared dispatch intent 使用首 Attempt deadline 与 intent 内持久化 dispatch time/timeout
     验证身份，不按恢复时墙钟重建。当前预算仍在实际派发前权威复核；仅 prepared intent 可原子
-    缩短 timeout，operation/attempt/input identity 不变，dispatched_unknown 不更新、不重派。
+    推进，operation/attempt/input/deadline/timeout identity 不变，dispatched_unknown 不更新、不重派。
 19. Scheduler 对 due retry 仅把对应 failed NodeRun 映射为 queued 后重算 ExecutionPlan，
     Gate/input 决策优先于 retry execute 覆盖。waiting/exhausted/blocked 再叠加，并统一重算
     decisions、ready/paused/blocked、terminal、stop_reason 与 Node detail/Web 恢复动作。
+20. 真实 Codex dispatch 每次强制刷新 CLI health；health/spawn 的 EACCES、EPERM 和 fake
+    shell 126 归入 `permission_denied`，login status 缺凭证与检查失败分别归入
+    `credential_missing`、`authentication_failed`。nonzero 后再次检查实时登录状态，仅在
+    认证已失效时重分类 blocked，普通 nonzero 仍保持可重试。
+21. Retry prepared intent 持久化首次 operation start 加 total time budget 得到的不可变
+    `operation_deadline_at`。恢复身份校验只使用持久化 deadline、prepared time 和 timeout，
+    不按当前墙钟改写 intent；deadline 穿透到真实 Adapter，并在 `spawn` 紧前重新读取 now，
+    deadline 耗尽时返回确认 timed_out 且零 spawn，未耗尽时运行 timeout 取 invocation 与
+    remaining 的较小值。
+22. `required_gate_rejected` 继续投影为 `paused_for_gate`，Scheduler 与 Node detail 均返回
+    `inspect_gate`、`create_rework`，且 Scheduler 首要动作优先选择 rejected gate。
+23. RetryStateStore 显式识别缺少 attempt/error/effects 字段的前一 P7-05 格式；Sidecar
+    reconcile 从同 operation 最新 Attempt 搬运真实身份和 error，并原子回写新格式。
+    无法确定 error 时保留原 legacy 记录到 migration-blocked 文件，阻断 NodeRun 并建立
+    `retry_state_migration_failed` Attention，不静默伪造错误，也不向 API 泄漏 parse 500。
 
 ## TDD 证据
 
@@ -408,14 +428,68 @@ Tests 5 passed
 写入后/schedule 删除前、prepared intent 落盘后推进时钟并重启。Stateful fake Codex
 Attempt 2 外部计数保持精确 2；并发、stale schedule 与重启均未增加。
 
+### 修复轮 5 RED
+
+Codex health、permission、nonzero 重分类与 spawn deadline：
+
+```text
+npm run test -w apps/sidecar -- codex-cli-adapter.test.ts
+exit 1
+Test Files 1 failed
+Tests 5 failed | 43 passed
+关键失败：
+- login status 检查失败仍记为 credential_missing
+- health/spawn EACCES 仍记为 runtime_not_found/process_spawn_failed
+- nonzero 后登录失效仍保留 process_exit_nonzero/recoverable=true
+- deadline 已耗尽仍 spawn 并成功
+- remaining deadline 未裁剪实际进程 timeout
+```
+
+动态失效、prepared intent、Gate action 与 legacy migration：
+
+```text
+npm run test -w apps/sidecar -- codex-real-node.test.ts retry-recovery.test.ts api.test.ts
+exit 1
+Test Files 3 failed
+Tests 8 failed | 76 passed
+关键失败：
+- Sidecar 已缓存 healthy 后，credential/auth/permission 失效仍各新增一次 fake Codex exec
+- prepared retry intent 恢复时 timeout 从 6000 被墙钟改写为 5148
+- required_gate_rejected stop_reason 返回 attention_required
+- legacy waiting/exhausted/unmatched 三类 Node detail 均返回 RetryState schema parse 500
+```
+
+所有失败均由目标生产行为缺失触发；普通 nonzero 保持可重试的保护断言在 RED 阶段已通过。
+
+### 修复轮 5 GREEN
+
+```text
+npm run test -w apps/sidecar -- codex-cli-adapter.test.ts codex-real-node.test.ts retry-recovery.test.ts api.test.ts
+Test Files 4 passed
+Tests 132 passed
+```
+
+deadline regression mutation check 临时移除 Adapter deadline 输入后，两条测试分别因“过期仍成功”
+和“进程 500ms 后仍运行”失败；恢复生产门禁后：
+
+```text
+npm run test -w apps/sidecar -- codex-cli-adapter.test.ts -t deadline
+Test Files 1 passed
+Tests 2 passed | 46 skipped
+```
+
+动态 credential/auth/permission 测试均先缓存 healthy，再无重启改写 fake Codex 状态；blocked
+Attempt 后再次调用 direct execute 返回 409，外部 marker 不增长。legacy waiting、
+exhausted 和无法关联 Attempt 三类 fixture 均覆盖 Node detail、Scheduler 与 direct execute。
+
 ## 完整测试结果
 
 ```text
 npm run test
 Core:    7 files, 114 tests passed
-Sidecar: 10 files, 176 tests passed
+Sidecar: 10 files, 187 tests passed
 Web:     3 files, 9 tests passed
-Total:   20 files, 299 tests passed
+Total:   20 files, 310 tests passed
 ```
 
 ```text
@@ -481,6 +555,14 @@ Roadmap 语义检查：
 - Scheduler 与 Node detail 共用 next-action helper；stop reason 区分
   `waiting_for_retry`、`attention_required`、`paused_for_gate` 和 `no_executable_nodes`，
   waiting/due 的统一 ExecutionPlan 均保持 `terminal=false`。
+- 修复轮 5 确认 dispatch 不永久使用启动时 Codex health；凭证、认证检查和权限在无 Sidecar
+  重启时动态 blocked，并以同 error code 聚合单根因 Attention，外部重试不新增 exec。
+- prepared intent 的 deadline 与 timeout 均按持久化事实校验；墙钟推进不改写身份，最终
+  `spawn` 临界点独立裁剪 timeout。fake clock 与真实悬挂子进程分别覆盖零 spawn 和 min timeout。
+- rejected gate 的 Scheduler stop reason、首要 action 与 Node detail 完全一致，动作直接指向
+  gate 检查与现有 rework API。
+- legacy RetryState 只从真实 Attempt 迁移 error；waiting/exhausted 原子升级并幂等补偿 effects，
+  无法关联时保存原记录、阻断执行并生成 migration Attention，不返回 500。
 
 ## 遗留关注
 
