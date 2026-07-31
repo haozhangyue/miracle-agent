@@ -100,6 +100,60 @@ describe("model API contract", () => {
     expect(() => adapterManifestSchema.parse(manifest)).toThrow(/credential_ref/i);
   });
 
+  it("rejects a provider profile outside its credential providers scope", () => {
+    const manifest = {
+      id: "model-api-compatible-adapter",
+      kind: "model-api",
+      display_name: "Model API Compatible Adapter",
+      version: "0.1.0",
+      status: "experimental",
+      description: "A generic compatible transport contract.",
+      execution_mode: "external",
+      capabilities: ["model.call"],
+      supported_providers: ["provider-b"],
+      default_provider: "provider-b",
+      required_credentials: [{ key: "MODEL_API_FIXTURE_CREDENTIAL", label: "Fixture credential", source: "env", required: true, providers: ["provider-a"] }],
+      provider_profiles: [{
+        id: "provider-b-default",
+        provider: "provider-b",
+        model: "fixture-chat",
+        base_url: "https://provider.example",
+        credential_ref: "MODEL_API_FIXTURE_CREDENTIAL",
+        verification_status: "configured_unverified"
+      }],
+      runtime: { local_executor: "external-api", can_execute: true }
+    };
+
+    expect(() => adapterManifestSchema.parse(manifest)).toThrow(/providers/i);
+  });
+
+  it.each(["blob:https://provider.example/opaque", "ftp://provider.example"])('rejects non-HTTP provider base_url %s', (baseUrl) => {
+    const manifest = {
+      id: "model-api-compatible-adapter",
+      kind: "model-api",
+      display_name: "Model API Compatible Adapter",
+      version: "0.1.0",
+      status: "experimental",
+      description: "A generic compatible transport contract.",
+      execution_mode: "external",
+      capabilities: ["model.call"],
+      supported_providers: ["fixture-compatible"],
+      default_provider: "fixture-compatible",
+      required_credentials: [{ key: "MODEL_API_FIXTURE_CREDENTIAL", label: "Fixture credential", source: "env", required: true }],
+      provider_profiles: [{
+        id: "fixture-compatible-default",
+        provider: "fixture-compatible",
+        model: "fixture-chat",
+        base_url: baseUrl,
+        credential_ref: "MODEL_API_FIXTURE_CREDENTIAL",
+        verification_status: "configured_unverified"
+      }],
+      runtime: { local_executor: "external-api", can_execute: true }
+    };
+
+    expect(() => adapterManifestSchema.parse(manifest)).toThrow(/base_url/i);
+  });
+
   it.each(["//provider.example/v1/chat", "//user@provider.example/v1/chat", "https://provider.example/v1/chat", "v1/chat/completions"])("rejects unsafe provider api_path %s", (apiPath) => {
     const manifest = {
       id: "model-api-compatible-adapter",

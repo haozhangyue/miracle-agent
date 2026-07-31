@@ -242,8 +242,8 @@ export const providerProfileSchema: z.ZodType<ProviderProfile> = z.object({
   model: z.string().min(1),
   base_url: z.string().url().refine((value) => {
     const url = new URL(value);
-    return url.username.length === 0 && url.password.length === 0;
-  }, "base_url must not contain credentials"),
+    return ["http:", "https:"].includes(url.protocol) && url.username.length === 0 && url.password.length === 0;
+  }, "base_url must be an http/https URL without credentials"),
   api_path: z.string().refine(isOriginRelativeApiPath, "api_path must be an origin-relative path with one leading slash").optional(),
   credential_ref: z.string().min(1),
   verification_status: z.enum(["configured_unverified", "healthy", "degraded", "unavailable"])
@@ -270,14 +270,21 @@ const adapterManifestSchemaBase = z.object({
 });
 
 export const adapterManifestSchema: z.ZodType<AdapterManifest> = adapterManifestSchemaBase.superRefine((manifest, context) => {
-  const credentialKeys = new Set(manifest.required_credentials.map((credential) => credential.key));
   for (const [index, profile] of (manifest.provider_profiles ?? []).entries()) {
-    if (credentialKeys.has(profile.credential_ref)) continue;
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["provider_profiles", index, "credential_ref"],
-      message: "provider credential_ref must be declared in required_credentials"
-    });
+    const credential = manifest.required_credentials.find((candidate) => candidate.key === profile.credential_ref);
+    if (!credential) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["provider_profiles", index, "credential_ref"],
+        message: "provider credential_ref must be declared in required_credentials"
+      });
+    } else if (credential.providers && !credential.providers.includes(profile.provider)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["provider_profiles", index, "credential_ref"],
+        message: "provider credential_ref is not authorized for this provider by required_credentials.providers"
+      });
+    }
   }
 });
 

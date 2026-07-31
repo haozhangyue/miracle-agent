@@ -1,5 +1,6 @@
 import {
   buildCanvasDraftFromWorkflow,
+  adapterManifestSchema,
   adapterInvocationSchema,
   buildDagProjection,
   buildGateDecisionProjection,
@@ -17,7 +18,6 @@ import {
   decideRetry,
   defaultAdapterManifests,
   executeMockAdapter,
-  parseAdapterManifests,
   parseAdapterResultForInvocation,
   resolveNodeRetryPolicy,
   selectAdapterManifest,
@@ -100,6 +100,17 @@ const modelApiOperationTombstones = new Map<string, {
   completed_at: string;
 }>();
 const maxModelApiOperationTombstones = 128;
+
+type ModelApiOperationReceipt = {
+  operation_id: string;
+  attempt_id: string;
+  run_id: string;
+  node_run_id: string;
+  adapter_id: string;
+  provider: string;
+  status: AdapterResult["status"];
+  completed_at: string;
+};
 const runtimeWorkspaceDir = process.env.MIRACLE_RUNTIME_WORKSPACE_DIR ?? path.join(homedir(), ".miracle-agent");
 const workflowRegistryDir = process.env.MIRACLE_WORKFLOW_REGISTRY_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle/workflows");
 const port = Number(process.env.MIRACLE_SIDECAR_PORT ?? 4317);
@@ -117,6 +128,14 @@ const codexCliAdapter = new CodexCliAdapter({
   executable_path: process.env.MIRACLE_CODEX_CLI_PATH,
   command_prefix_args: process.env.MIRACLE_CODEX_CLI_ARGUMENT_PREFIX ? [process.env.MIRACLE_CODEX_CLI_ARGUMENT_PREFIX] : []
 });
+
+class ProviderCredentialAuthorizationError extends Error {
+  readonly code = "credential_not_authorized";
+
+  constructor() {
+    super("Provider credential_ref is not authorized for this Model API Adapter.");
+  }
+}
 
 class RetryStateReconciliationBusyError extends Error {
   readonly code = "operation_in_progress";
@@ -481,6 +500,35 @@ async function writeJsonAtomically(relativePath: string, value: unknown) {
   }
 }
 
+function modelApiOperationReceiptRelativePath(operationId: string) {
+  if (!/^[A-Za-z0-9_-]+$/.test(operationId)) return undefined;
+  return `model-api-operations/${operationId}.json`;
+}
+
+function isModelApiOperationReceipt(value: unknown, operationId: string): value is ModelApiOperationReceipt {
+  if (!isRecord(value) || value.operation_id !== operationId) return false;
+  return isNonEmptyString(value.attempt_id)
+    && isNonEmptyString(value.run_id)
+    && isNonEmptyString(value.node_run_id)
+    && isNonEmptyString(value.adapter_id)
+    && isNonEmptyString(value.provider)
+    && ["succeeded", "failed", "timed_out", "cancelled", "aborted", "unknown"].includes(String(value.status))
+    && isTimestamp(value.completed_at);
+}
+
+async function writeModelApiOperationReceipt(receipt: ModelApiOperationReceipt) {
+  const relativePath = modelApiOperationReceiptRelativePath(receipt.operation_id);
+  if (!relativePath) throw new Error("Model API operation_id is unsafe for receipt persistence.");
+  await writeJsonAtomically(relativePath, receipt);
+}
+
+async function readModelApiOperationReceipt(operationId: string) {
+  const relativePath = modelApiOperationReceiptRelativePath(operationId);
+  if (!relativePath) return undefined;
+  const receipt = await readJsonOptional<unknown>(relativePath);
+  return isModelApiOperationReceipt(receipt, operationId) ? receipt : undefined;
+}
+
 async function writeAbsoluteJson(target: string, value: unknown) {
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -746,7 +794,14 @@ function createRunDraftId() {
 async function readAdapterManifests(): Promise<AdapterManifest[]> {
   try {
     const raw = await listJsonFiles<unknown>("adapters");
-    return parseAdapterManifests(raw);
+    return raw.map((manifest) => {
+      const parsed = adapterManifestSchema.safeParse(manifest);
+      if (parsed.success) return parsed.data;
+      if (parsed.error.issues.some((issue) => issue.path[0] === "provider_profiles" && issue.path.at(-1) === "credential_ref")) {
+        throw new ProviderCredentialAuthorizationError();
+      }
+      throw parsed.error;
+    });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return defaultAdapterManifests;
@@ -1562,7 +1617,11 @@ async function executeSidecarAdapter(input: {
       });
     }
     const credentialRequirement = input.adapter.required_credentials.find((candidate) => candidate.key === profile.credential_ref);
-    if (!credentialRequirement || credentialRequirement.source !== "env") {
+    if (
+      !credentialRequirement
+      || credentialRequirement.source !== "env"
+      || (credentialRequirement.providers !== undefined && !credentialRequirement.providers.includes(profile.provider))
+    ) {
       return buildAdapterUnavailableResult({
         invocation: input.invocation,
         message: "Provider credential_ref is not authorized for this Model API Adapter.",
@@ -1603,8 +1662,7 @@ async function executeSidecarAdapter(input: {
       });
       return result;
     } finally {
-      modelApiOperations.delete(input.invocation.operation_id);
-      const tombstone = {
+      const tombstone: ModelApiOperationReceipt = {
         operation_id: input.invocation.operation_id,
         attempt_id: input.invocation.attempt_id,
         run_id: input.invocation.run_id,
@@ -1614,12 +1672,17 @@ async function executeSidecarAdapter(input: {
         status: result?.status ?? "unknown",
         completed_at: new Date().toISOString()
       };
-      modelApiOperationTombstones.delete(tombstone.operation_id);
-      modelApiOperationTombstones.set(tombstone.operation_id, tombstone);
-      while (modelApiOperationTombstones.size > maxModelApiOperationTombstones) {
-        const oldestOperationId = modelApiOperationTombstones.keys().next().value;
-        if (oldestOperationId === undefined) break;
-        modelApiOperationTombstones.delete(oldestOperationId);
+      try {
+        await writeModelApiOperationReceipt(tombstone);
+        modelApiOperationTombstones.delete(tombstone.operation_id);
+        modelApiOperationTombstones.set(tombstone.operation_id, tombstone);
+        while (modelApiOperationTombstones.size > maxModelApiOperationTombstones) {
+          const oldestOperationId = modelApiOperationTombstones.keys().next().value;
+          if (oldestOperationId === undefined) break;
+          modelApiOperationTombstones.delete(oldestOperationId);
+        }
+      } finally {
+        modelApiOperations.delete(input.invocation.operation_id);
       }
     }
   }
@@ -3767,7 +3830,9 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       modelApiOperation.controller.abort();
       return sendJson(res, 200, { operation_id: operationId, status: "cancelled" });
     }
-    if (modelApiOperationTombstones.has(operationId)) return sendJson(res, 200, { operation_id: operationId, status: "already_finished" });
+    if (modelApiOperationTombstones.has(operationId) || await readModelApiOperationReceipt(operationId)) {
+      return sendJson(res, 200, { operation_id: operationId, status: "already_finished" });
+    }
     const result = await codexCliAdapter.cancelOperation(operationId);
     return sendJson(res, 200, { operation_id: operationId, status: result });
   }
@@ -4555,6 +4620,9 @@ const server = createServer((req, res) => {
     }
     if (error instanceof RetryStateReconciliationBusyError) {
       return sendError(res, 409, error.code, error.message);
+    }
+    if (error instanceof ProviderCredentialAuthorizationError) {
+      return sendError(res, 422, error.code, error.message);
     }
     if (error instanceof CodexCliAdapterError) {
       const status = error.code === "operation_not_found"

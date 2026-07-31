@@ -180,6 +180,32 @@ describe("ModelApiAdapter", () => {
     expect(JSON.stringify(result)).not.toContain("fixture-secret");
   });
 
+  it.each([
+    ["ftp://provider.example", "ftp://provider.example/v1/chat/completions"],
+    [`blob:${baseUrl}/opaque`, `${baseUrl}/v1/chat/completions`]
+  ])("rejects a Driver request when profile base_url is unsafe: %s", async (baseUrl, requestUrl) => {
+    const { openAiCompatibleDriver } = await import("../src/provider-drivers/openai-compatible");
+    const adapter = new (await import("../src/model-api-adapter")).ModelApiAdapter({
+      driver: { ...openAiCompatibleDriver, buildRequest: () => ({ url: requestUrl, init: { method: "POST" } }) }
+    });
+
+    const result = await adapter.execute({ invocation, profile: { ...profile(), base_url: baseUrl }, credential: "fixture-secret", signal: new AbortController().signal });
+
+    expect(result).toMatchObject({ status: "failed", error: { code: "provider_request_invalid", recoverable: false } });
+  });
+
+  it("rejects a same-origin Driver request when profile base_url has userinfo", async () => {
+    const { openAiCompatibleDriver } = await import("../src/provider-drivers/openai-compatible");
+    const adapter = new (await import("../src/model-api-adapter")).ModelApiAdapter({
+      driver: { ...openAiCompatibleDriver, buildRequest: () => ({ url: `${baseUrl}/v1/chat/completions`, init: { method: "POST" } }) }
+    });
+    const unsafeBaseUrl = baseUrl.replace("http://", "http://user:pass@");
+
+    const result = await adapter.execute({ invocation, profile: { ...profile(), base_url: unsafeBaseUrl }, credential: "fixture-secret", signal: new AbortController().signal });
+
+    expect(result).toMatchObject({ status: "failed", error: { code: "provider_request_invalid", recoverable: false } });
+  });
+
   it.each(["//provider.example/v1/chat", "//user@provider.example/v1/chat", "https://provider.example/v1/chat"])("rejects unsafe api_path in the driver: %s", async (apiPath) => {
     const { openAiCompatibleDriver } = await import("../src/provider-drivers/openai-compatible");
     expect(() => openAiCompatibleDriver.buildRequest({ invocation, profile: { ...profile(), api_path: apiPath }, credential: "fixture-secret" })).toThrow(/api_path/i);

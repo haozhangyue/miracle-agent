@@ -49,25 +49,31 @@ async function writeModelProfile(mode: string) {
   const manifestPath = path.join(workspace, "adapters", "model-api.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
   const profiles = manifest.provider_profiles as Array<Record<string, unknown>>;
+  manifest.supported_providers = ["fixture-compatible"];
+  manifest.default_provider = "fixture-compatible";
   manifest.required_credentials = [{ key: "MODEL_API_FIXTURE_CREDENTIAL", label: "Model API fixture credential", source: "env", required: true }];
+  profiles[0]!.provider = "fixture-compatible";
   profiles[0]!.base_url = providerBaseUrl;
   profiles[0]!.api_path = `/v1/chat/completions?mode=${mode}`;
   profiles[0]!.credential_ref = "MODEL_API_FIXTURE_CREDENTIAL";
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
-async function writeUnauthorizedModelProfile() {
+async function writeProviderScopeMismatchModelProfile() {
   const manifestPath = path.join(workspace, "adapters", "model-api.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
   const profiles = manifest.provider_profiles as Array<Record<string, unknown>>;
-  manifest.required_credentials = [];
+  manifest.supported_providers = ["provider-b"];
+  manifest.default_provider = "provider-b";
+  manifest.required_credentials = [{ key: "MODEL_API_FIXTURE_CREDENTIAL", label: "Model API fixture credential", source: "env", required: true, providers: ["provider-a"] }];
   profiles[0]!.base_url = providerBaseUrl;
   profiles[0]!.api_path = "/v1/chat/completions?mode=record-authorization";
-  profiles[0]!.credential_ref = "AWS_SECRET_ACCESS_KEY";
+  profiles[0]!.provider = "provider-b";
+  profiles[0]!.credential_ref = "MODEL_API_FIXTURE_CREDENTIAL";
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
-async function createModelRun() {
+async function createModelRun(provider = "fixture-compatible") {
   const workflow: WorkflowSpec = {
     id: "model-api-cancel-v0",
     name: "Model API cancellation test",
@@ -88,7 +94,7 @@ async function createModelRun() {
     edges: [],
     gates: [],
     artifacts: [],
-    provider_policy: { default_provider: "fixture-compatible", allowed_providers: ["fixture-compatible"], required_credentials: ["MODEL_API_FIXTURE_CREDENTIAL"], fallback_providers: [] },
+    provider_policy: { default_provider: provider, allowed_providers: [provider], required_credentials: ["MODEL_API_FIXTURE_CREDENTIAL"], fallback_providers: [] },
     layouts: { dag: { model_call: { x: 0, y: 0 } } },
     registry_meta: { source: "test", status: "experimental" }
   };
@@ -124,7 +130,7 @@ describe("Model API Sidecar integration", () => {
     baseUrl = `http://127.0.0.1:${port}`;
     sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
       cwd: repoRoot,
-      env: { ...process.env, MIRACLE_WORKSPACE_DIR: workspace, MIRACLE_SIDECAR_PORT: String(port), MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret", AWS_SECRET_ACCESS_KEY: "aws-secret-never-send" }
+      env: { ...process.env, MIRACLE_WORKSPACE_DIR: workspace, MIRACLE_SIDECAR_PORT: String(port), MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret" }
     });
     sidecar.stdout.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
     sidecar.stderr.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
@@ -149,14 +155,17 @@ describe("Model API Sidecar integration", () => {
     expect(JSON.stringify([body, persisted, events, sidecarOutput])).not.toContain("fixture-secret");
   });
 
-  it("refuses an undeclared credential_ref without sending its environment secret", async () => {
-    await writeUnauthorizedModelProfile();
-    const { runId, nodeRunId } = await createModelRun();
+  it("refuses a declared credential outside its provider scope without sending it", async () => {
+    await writeProviderScopeMismatchModelProfile();
+    const { runId, nodeRunId } = await createModelRun("provider-b");
     const response = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
     const body = await response.json();
+    const persisted = await readFile(path.join(workspace, "runs", runId, "attempts.json"), "utf8");
+    const events = await readFile(path.join(workspace, "runs", runId, "events.jsonl"), "utf8");
 
-    expect(JSON.stringify([body, sidecarOutput, providerOutput])).not.toContain("aws-secret-never-send");
-    expect(response.status).not.toBe(200);
+    expect(JSON.stringify([body, persisted, events, sidecarOutput, providerOutput])).not.toContain("fixture-secret");
+    expect(providerOutput).not.toContain("provider-authorization:");
+    expect(body).toMatchObject({ error: { code: "credential_not_authorized" } });
   });
 
   it("cancels a registered Model API operation through the existing operation endpoint", async () => {
@@ -176,5 +185,28 @@ describe("Model API Sidecar integration", () => {
 
     const repeatedCancellation = await fetch(`${baseUrl}/api/v0/operations/${operation.operation_id}/cancel`, { method: "POST" });
     expect(await repeatedCancellation.json()).toMatchObject({ operation_id: operation.operation_id, status: "already_finished" });
+  });
+
+  it("returns already_finished from a durable receipt after Sidecar restart", async () => {
+    await writeModelProfile("success");
+    const { runId, nodeRunId } = await createModelRun();
+    const execution = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
+    const body = await execution.json() as { invocation: { operation_id: string } };
+
+    const receipt = await readFile(path.join(workspace, "model-api-operations", `${body.invocation.operation_id}.json`), "utf8");
+    expect(receipt).not.toContain("fixture-secret");
+
+    sidecar?.kill("SIGTERM");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
+      cwd: repoRoot,
+      env: { ...process.env, MIRACLE_WORKSPACE_DIR: workspace, MIRACLE_SIDECAR_PORT: baseUrl.split(":").at(-1)!, MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret" }
+    });
+    sidecar.stdout.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
+    sidecar.stderr.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
+    await waitFor(`${baseUrl}/api/v0/health`);
+
+    const cancellation = await fetch(`${baseUrl}/api/v0/operations/${body.invocation.operation_id}/cancel`, { method: "POST" });
+    expect(await cancellation.json()).toMatchObject({ operation_id: body.invocation.operation_id, status: "already_finished" });
   });
 });

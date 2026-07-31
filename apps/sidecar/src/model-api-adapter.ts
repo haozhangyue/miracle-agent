@@ -88,7 +88,10 @@ function validateDriverRequestUrl(requestUrl: string, baseUrl: string) {
     const request = new URL(requestUrl);
     const profileBase = new URL(baseUrl);
     if (
-      !["http:", "https:"].includes(request.protocol)
+      !["http:", "https:"].includes(profileBase.protocol)
+      || profileBase.username.length > 0
+      || profileBase.password.length > 0
+      || !["http:", "https:"].includes(request.protocol)
       || request.username.length > 0
       || request.password.length > 0
       || request.origin !== profileBase.origin
