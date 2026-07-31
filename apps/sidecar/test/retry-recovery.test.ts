@@ -426,6 +426,48 @@ describe("P7-05 retry recovery", () => {
     expect(direct.status).toBe(200);
   });
 
+  it("returns 409 instead of strict-parsing legacy RetryState while migration lock is busy", async () => {
+    const failure = await failFirstAttempt(policyWorkflow.id);
+    await replaceRetryStateWithLegacyFixture(failure.runId);
+    const lockDir = path.join(
+      tempWorkspace,
+      "runs",
+      failure.runId,
+      "locks",
+      `${failure.runId.replace(/[^a-zA-Z0-9._-]/g, "_")}.mutation.lock`
+    );
+    await mkdir(lockDir, { recursive: true });
+
+    try {
+      for (const request of [
+        fetch(`${baseUrl}/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`),
+        fetch(`${baseUrl}/api/v0/runs/${failure.runId}/scheduler/tick`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+        }),
+        fetch(`${baseUrl}/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}/execute`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({})
+        })
+      ]) {
+        const response = await request;
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({
+          error: { code: "operation_in_progress" }
+        });
+      }
+    } finally {
+      await rm(lockDir, { recursive: true, force: true });
+    }
+
+    const recovered = await fetchJson<{ retry_decision: { phase: string } }>(
+      `/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`
+    );
+    expect(["waiting_for_retry", "due"]).toContain(recovered.retry_decision.phase);
+  });
+
   it("migrates a legacy exhausted RetryState without parse failures or duplicate terminal effects", async () => {
     const failure = await failFirstAttempt(costOverrideWorkflow.id);
     const { fixture } = await replaceRetryStateWithLegacyFixture(failure.runId);

@@ -1109,6 +1109,52 @@ describe("P6-07 Codex real single-node execution", () => {
     expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${launched.run_id}`)).attempts).toHaveLength(2);
   }, 30_000);
 
+  it("migrates a legacy retry deadline and keeps repeated unknown recovery at stable 409", async () => {
+    const markerBefore = await fakeCodexDispatchCount();
+    const launched = await launchConfirmedRun(shortBudgetRetryingWorkflow.id, { force_fail_first_attempt: true });
+    await fetchJson(`/api/v0/runs/${launched.run_id}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ max_nodes: 1 })
+    });
+    const runDir = path.join(tempWorkspace, "runs", launched.run_id);
+    const bundle = await fetchJson<{
+      run: RunSpec;
+      nodes: NodeRun[];
+      attempts: NodeAttempt[];
+    }>(`/api/v0/runs/${launched.run_id}`);
+    const schedule = (JSON.parse(await readFile(path.join(runDir, "retry_schedule.json"), "utf8")) as RetryScheduleRecord[])[0]!;
+    const legacyIntent = preparedRetryIntent({
+      run: bundle.run,
+      node: bundle.nodes[0]!,
+      attempt: bundle.attempts[0]!,
+      schedule,
+      preparedAt: new Date().toISOString()
+    }) as Record<string, unknown>;
+    delete legacyIntent.operation_deadline_at;
+    legacyIntent.state = "dispatched_unknown";
+    legacyIntent.dispatched_at = (legacyIntent.invocation as { dispatched_at: string }).dispatched_at;
+    const intentPath = nodeDispatchIntentPath(launched.run_id, bundle.nodes[0]!.node_run_id);
+    await mkdir(path.dirname(intentPath), { recursive: true });
+    await writeFile(intentPath, `${JSON.stringify(legacyIntent, null, 2)}\n`, "utf8");
+    await writeFile(path.join(runDir, "retry_schedule.json"), "[]\n", "utf8");
+
+    for (let index = 0; index < 2; index += 1) {
+      const response = await fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/nodes/${bundle.nodes[0]!.node_run_id}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        error: { code: "node_dispatch_unknown", reason_code: "dispatch_result_unknown" }
+      });
+    }
+
+    const migratedIntent = JSON.parse(await readFile(intentPath, "utf8")) as { operation_deadline_at?: string };
+    expect(migratedIntent.operation_deadline_at).toBeTruthy();
+    expect(await fakeCodexDispatchCount()).toBe(markerBefore + 1);
+  }, 30_000);
+
   it("does not start a prepared retry process when the authoritative remaining budget is exhausted", async () => {
     const markerBefore = await fakeCodexDispatchCount();
     const launched = await launchConfirmedRun(shortBudgetRetryingWorkflow.id, { force_fail_first_attempt: true });

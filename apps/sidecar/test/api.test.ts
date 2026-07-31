@@ -377,10 +377,42 @@ describe("sidecar api", () => {
       execution_decision: { reason_code: string };
       next_suggested_actions: string[];
     }>(`/api/v0/runs/${created.run_id}/nodes/${rejectedDecision.node_run_id}`);
-    expect(rejectedPlan.stop_reason).toBe("paused_for_gate");
-    expect(rejectedPlan.next_suggested_actions).toEqual(["inspect_gate", "create_rework"]);
+    expect(rejectedPlan.stop_reason).toBe("attention_required");
+    expect(rejectedPlan.next_suggested_actions).toEqual([
+      "inspect_attention",
+      "restore_required_artifact",
+      "rerun_upstream_node",
+      "retry_manually"
+    ]);
     expect(rejectedDetail.execution_decision.reason_code).toBe("required_gate_rejected");
     expect(rejectedDetail.next_suggested_actions).toEqual(["inspect_gate", "create_rework"]);
+
+    const attentionPath = path.join(tempWorkspace, "runs", created.run_id, "attention.json");
+    const gateOnlyAttention = JSON.parse(await readFile(attentionPath, "utf8")) as Array<Record<string, unknown>>;
+    await writeFile(attentionPath, `${JSON.stringify([
+      ...gateOnlyAttention,
+      {
+        attention_id: "att_parallel_runtime_blocker",
+        root_cause_key: `run:${created.run_id}:node:parallel:credential_missing`,
+        title: "并行运行凭证缺失",
+        severity: "P0",
+        status: "open",
+        related_objects: [{ type: "NodeRun", id: "parallel-runtime-node" }],
+        impact: { blocked_nodes: ["parallel-runtime-node"], waiting_agents: [], unaffected_paths: [] },
+        safe_actions: ["configure_credentials"]
+      }
+    ], null, 2)}\n`, "utf8");
+    const mixedBlockers = await fetchJson<{
+      stop_reason: string;
+      next_suggested_actions: string[];
+    }>(`/api/v0/runs/${created.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    expect(mixedBlockers.stop_reason).toBe("attention_required");
+    expect(mixedBlockers.next_suggested_actions).toContain("inspect_attention");
+    expect(mixedBlockers.next_suggested_actions).not.toContain("create_rework");
+    await writeFile(attentionPath, `${JSON.stringify(gateOnlyAttention, null, 2)}\n`, "utf8");
 
     const rework = await fetchJson<{
       accepted: boolean;

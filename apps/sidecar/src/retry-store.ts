@@ -160,6 +160,17 @@ export class RetryStateStore {
     }
   }
 
+  async requiresMigration(runId: string) {
+    try {
+      const value = JSON.parse(await readFile(this.statePath(runId), "utf8")) as unknown;
+      if (!Array.isArray(value)) throw new Error("retry_state.json must contain an array");
+      if (value.some((record) => !retryStateRecordSchema.safeParse(record).success)) return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return (await this.migrationIssues(runId)).length > 0;
+  }
+
   async migrateLegacy(runId: string, attempts: NodeAttempt[]) {
     let rawRecords: unknown[];
     try {

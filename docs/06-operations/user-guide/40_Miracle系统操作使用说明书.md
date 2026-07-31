@@ -346,6 +346,13 @@ Provider fallback 仍属于 P7-08，当前 Scheduler 不会自动切换 Provider
 8. 凭证、权限、必需输入或 Artifact 缺失直接进入 `blocked` + Attention。若状态是
    `cancelled`、`aborted`、`unknown`、`dispatched_unknown` 或 `invalid_result`，系统也
    不会自动重派；先检查 dispatch intent 和外部回执，再决定人工恢复。
+9. Gate 驳回和其他 P0 blocker 同时存在时，以全局 Attention 根因为主恢复路径；
+   Scheduler 不会只显示 Gate 返工而隐藏凭证、输入或运行故障。进入具体 Gate 的 Node detail
+   后仍可查看 `inspect_gate` / `create_rework`。
+10. 旧版本 RetryState 首次读取时会迁移。若同一 Run 正在写入，接口返回
+    `409 operation_in_progress`，等待当前写入完成后重试；不要手工修改 `retry_state.json`。
+    旧 retry intent 缺少总预算 deadline 时由系统按首个 Attempt 自动补齐，unknown 状态仍需
+    人工核对且不会再次派发。
 
 默认自动 Attempt 总数不超过 3。策略只允许 fixed/exponential 退避，并拒绝负数、NaN、
 Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5，模板可显式覆盖。
@@ -415,6 +422,7 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 | P6-07 | Codex 单节点真实执行 | confirmed RunDraft 原子启动、受控 Codex 输出、真实 SHA-256、Operation 取消和 Gate 审计 | 修复非 Git attempt workspace 被 CLI 拒绝、结构化 schema 缺少类型导致真实执行失败、启动事务半成品及发布后崩溃重试产生重复 Run 的风险 | 新增“Codex 单节点 Markdown 母稿”模板和“启动正式 Run”；Run 页面展示真实 Adapter、operation、耗时与 Gate | 是，真实调用需设置 `MIRACLE_ENABLE_REAL_CODEX=1`，runtime 必须位于仓库外 |
 | `v0.8.0` / P6-08 | 真实工作流工程接入基线 | W24/W23 historical、RunDraft、真实 Codex、46 项 API 和多 Domain 完整验收 | 修复长 Run/Node/Artifact ID 导致事件审计文本重叠 | 用户可导入真实历史 Run、创建并确认草案、执行 Codex 单节点并进入人工 Gate；下一步为 P7-01 | 启动命令不变；真实导入和执行仍需显式环境变量 |
 | P7-02 / P7-03 / P7-04 | 多节点计划、Artifact 真实交接与连续调度 | 按端口、版本、hash 和 media type 解析输入；每 tick 重算 ExecutionPlan；Gate 暂停、批准恢复与拒绝阻断均有审计 | 修复路径逃逸、符号链接/硬链接、身份碰撞、部分提交、事件覆盖、运行锁抢占和 Gate 响应后锁残留风险 | 使用一次 Scheduler run 连续推进就绪节点，审核 Gate 后再次调度；审计不显示 Artifact 正文 | 启动命令不变；真实 Codex 仍需显式 opt-in |
+| P7-05 | Retry 与故障恢复 | 错误分类、fixed/exponential 退避、attempt/time/cost 预算、NodeAttempt 历史、重启恢复和 Attention 动作 | 修复混合 Gate/P0 blocker 被 Gate 动作遮蔽、legacy RetryState 锁竞争 500、旧 retry intent 重复 unknown 不稳定 | 在 Node detail 查看 retry 状态和预算；全局混合阻塞先处理 Attention，Gate 返工仍在节点详情可达 | 启动命令不变；`dispatched_unknown` 不会自动重派 |
 
 ### 8.3 提交前同步检查
 
@@ -440,6 +448,7 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 | Scheduler 不继续推进 | Run 停在 pending_review Gate 或失败节点 | 先处理 Gate 审核或 Attention 根因，再重新调度 |
 | Retry 未立即执行 | Node detail 显示 `schedule_retry` 且 `scheduled_for` 尚未到期 | 等待到期后再次调度；不要删除 Attempt 或重复创建 operation |
 | Retry 停止并出现 Attention | Node detail 显示 attempt/time/cost budget exhausted | 检查失败 Attempt 和根因，按安全动作调整预算或人工重试 |
+| RetryState 读取返回 409 | 同一 Run 正在写入，旧 RetryState 等待迁移 | 等待当前操作完成后重试；不要删除 lock 或手工改状态文件 |
 | 派发状态未知 | dispatch intent 为 `dispatched_unknown` 或 `invalid_result` | 先核对外部回执和 intent；系统按设计不会自动重派 |
 | Gate 不能创建返工 | 按钮不可用或接口返回冲突 | 只有已 `reject` 或 `request_changes` 的 Gate 可以创建返工 |
 | Artifact 不可预览 | 预览区域显示 missing、binary 或路径拒绝 | 检查 ArtifactManifest 路径、文件是否存在、是否在 workspace 内 |

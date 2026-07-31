@@ -93,6 +93,15 @@ const codexCliAdapter = new CodexCliAdapter({
   executable_path: process.env.MIRACLE_CODEX_CLI_PATH,
   command_prefix_args: process.env.MIRACLE_CODEX_CLI_ARGUMENT_PREFIX ? [process.env.MIRACLE_CODEX_CLI_ARGUMENT_PREFIX] : []
 });
+
+class RetryStateReconciliationBusyError extends Error {
+  readonly code = "operation_in_progress";
+
+  constructor(runId: string) {
+    super(`Run ${runId} already has a state mutation in progress; retry after the current operation finishes.`);
+    this.name = "RetryStateReconciliationBusyError";
+  }
+}
 void codexCliAdapter.recoverOrphanedOperations();
 
 type JsonValue = Record<string, unknown> | unknown[];
@@ -335,9 +344,10 @@ async function readNodeDispatchIntent(
     retryDeadlineAt?: string;
   }
 ) {
-  const intent = await readJsonOptional<unknown>(relativePath);
-  if (intent === undefined) return undefined;
-  if (!isNodeDispatchIntent(intent)) invalidNodeDispatchIntent(relativePath, "minimal structure is malformed");
+  const rawIntent = await readJsonOptional<unknown>(relativePath);
+  if (rawIntent === undefined) return undefined;
+  if (!isNodeDispatchIntent(rawIntent)) invalidNodeDispatchIntent(relativePath, "minimal structure is malformed");
+  let intent: NodeDispatchIntent = rawIntent;
   const parsedInvocation = adapterInvocationSchema.safeParse(intent.invocation);
   if (!parsedInvocation.success) invalidNodeDispatchIntent(relativePath, "invocation does not satisfy adapterInvocationSchema");
   const invocation = parsedInvocation.data;
@@ -349,7 +359,12 @@ async function readNodeDispatchIntent(
   const resolvedInputIds = invocation.resolved_inputs.map((input) => input.input_id);
   const expectedOutputs = nodeSpecExpectedOutputs(expected.nodeSpec);
   const expectedResolvedInputs = normalizeResolvedInputsForDispatch(expected.decision.resolved_inputs, invocation.dispatched_at);
-  const persistedRetryDeadlineAt = attemptNumber > 1 ? intent.operation_deadline_at : undefined;
+  let persistedRetryDeadlineAt = attemptNumber > 1 ? intent.operation_deadline_at : undefined;
+  if (attemptNumber > 1 && !persistedRetryDeadlineAt && expected.retryDeadlineAt) {
+    persistedRetryDeadlineAt = expected.retryDeadlineAt;
+    intent = { ...intent, operation_deadline_at: persistedRetryDeadlineAt };
+    await writeJsonAtomically(relativePath, intent);
+  }
   if (attemptNumber > 1 && (
     !persistedRetryDeadlineAt
     || !expected.retryDeadlineAt
@@ -2137,7 +2152,10 @@ async function persistRetryDecisionForAttempt(input: {
 
 async function reconcileRetryState(runId: string) {
   const lock = await acquireRunMutationLock(runId);
-  if (!lock) return;
+  if (!lock) {
+    if (await retryStateStore.requiresMigration(runId)) throw new RetryStateReconciliationBusyError(runId);
+    return;
+  }
   try {
     const bundle = await readRunBundle(runId);
     const nodes = bundle.nodes as NodeRun[];
@@ -2468,6 +2486,12 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     }
     const nodeSpec = lockedBundle.workflow.nodes.find((node) => node.id === targetNodeRun.node_id);
     if (!nodeSpec) throw new Error(`NodeSpec not found: ${targetNodeRun.node_id}`);
+    const dispatchIntentPath = nodeDispatchIntentRelativePath(runId, nodeRunId);
+    const persistedIntentCandidate = await readJsonOptional<unknown>(dispatchIntentPath);
+    const recoverableDispatchIntent = isNodeDispatchIntent(persistedIntentCandidate)
+      && persistedIntentCandidate.node_run_id === nodeRunId
+      ? persistedIntentCandidate
+      : undefined;
     const dispatchedAt = new Date().toISOString();
     const activeRetry = (await retryScheduleStore.list(runId)).find((schedule) => schedule.node_run_id === nodeRunId);
     const durableRetryState = (await retryStateStore.list(runId)).find((state) => state.node_run_id === nodeRunId);
@@ -2531,10 +2555,19 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
         ? Date.parse(retryRuntimeDeadlineAt) - Date.parse(dispatchedAt)
         : retryPolicyForNode(nodeSpec).total_time_budget_ms - authorization.decision.budget_snapshot.elapsed_ms;
     }
+    const persistedAttemptNumber = recoverableDispatchIntent?.invocation.attempt_number ?? 1;
+    if (!retryRuntimeDeadlineAt && recoverableDispatchIntent && persistedAttemptNumber > 1) {
+      retryRuntimeDeadlineAt = retryDeadlineAt(
+        retryPolicyForNode(nodeSpec),
+        (lockedBundle.attempts as NodeAttempt[]).filter(
+          (attempt) => attempt.operation_id === recoverableDispatchIntent.invocation.operation_id
+        )
+      );
+    }
     const artifacts = lockedBundle.artifacts as ArtifactManifest[];
     const gates = lockedBundle.gates as GateInstance[];
     const planningNodeRuns = nodeRuns.map((node) =>
-      node.node_run_id === nodeRunId && (activeRetry || executionPlanBlockedReason(node))
+      node.node_run_id === nodeRunId && (activeRetry || recoverableDispatchIntent || executionPlanBlockedReason(node))
         ? { ...node, status: "queued" as const }
         : node
     );
@@ -2548,8 +2581,11 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       calculatedAt: dispatchedAt
     });
     const calculatedDecision = executionPlan.decisions.find((item) => item.node_run_id === targetNodeRun.node_run_id);
-    const decision = calculatedDecision?.decision === "execute" && activeRetry
-      ? { ...calculatedDecision, reason_code: activeRetry.reason_code }
+    const decision = calculatedDecision?.decision === "execute" && (activeRetry || recoverableDispatchIntent)
+      ? {
+          ...calculatedDecision,
+          reason_code: activeRetry?.reason_code ?? recoverableDispatchIntent?.decision.reason_code ?? calculatedDecision.reason_code
+        }
       : calculatedDecision;
     if (!decision || decision.decision !== "execute") {
       return {
@@ -2563,7 +2599,6 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       };
     }
     const resolvedInputs = decision.resolved_inputs;
-    const dispatchIntentPath = nodeDispatchIntentRelativePath(runId, nodeRunId);
     const provider = targetNodeRun.provider ?? runSpec.resolved_provider_policy.default_provider;
     const manifests = await readAdapterManifests();
     const availableCredentials = availableCredentialKeys();
@@ -2908,7 +2943,9 @@ async function calculateRetryAwareSchedulerPlan(
   const executable = decisions.filter((decision) => decision.decision === "execute").slice(0, maxNodes);
   const paused = decisions.filter((decision) => decision.decision === "pause_for_gate");
   const skipped = decisions.filter((decision) => decision.decision !== "execute" && decision.decision !== "pause_for_gate");
-  return { executionPlan: unifiedExecutionPlan, decisions, executable, paused, skipped };
+  const openNonGateAttention = (Array.isArray(bundle.attention) ? bundle.attention as AttentionItem[] : [])
+    .filter((item) => item.status === "open" && !item.root_cause_key.startsWith("gate:"));
+  return { executionPlan: unifiedExecutionPlan, decisions, executable, paused, skipped, openNonGateAttention };
 }
 
 function executionPlanAttentionItem(runId: string, nodeRun: NodeRun, reasonCode: string): AttentionItem {
@@ -3133,10 +3170,27 @@ function schedulerNextActions(plan: Awaited<ReturnType<typeof buildSchedulerPlan
       retryDecision: executable.retry_decision
     });
   }
-  const primary = plan.decisions.find((decision) =>
+  const nonGateBlocker = plan.decisions.find((decision) =>
+    decision.decision === "blocked" && decision.reason_code !== "required_gate_rejected"
+  );
+  if (nonGateBlocker) {
+    const actions = nextActionsForNodeDecision({
+      decision: nonGateBlocker.decision,
+      reasonCode: nonGateBlocker.reason_code,
+      retryDecision: nonGateBlocker.retry_decision
+    });
+    const hasRejectedGate = plan.decisions.some((decision) =>
+      decision.decision === "blocked" && decision.reason_code === "required_gate_rejected"
+    );
+    return hasRejectedGate && plan.openNonGateAttention.length > 0
+      ? Array.from(new Set(["inspect_attention", ...actions]))
+      : actions;
+  }
+  const rejectedGate = plan.decisions.find((decision) =>
     decision.decision === "blocked" && decision.reason_code === "required_gate_rejected"
-  )
-    ?? plan.decisions.find((decision) => decision.decision === "blocked")
+  );
+  if (rejectedGate && plan.openNonGateAttention.length > 0) return ["inspect_attention", "retry_manually"];
+  const primary = rejectedGate
     ?? plan.decisions.find((decision) => decision.retry_decision?.phase === "waiting_for_retry")
     ?? plan.decisions.find((decision) => decision.decision === "pause_for_gate")
     ?? plan.decisions.find((decision) => decision.decision === "wait");
@@ -3149,8 +3203,10 @@ function schedulerNextActions(plan: Awaited<ReturnType<typeof buildSchedulerPlan
 
 function schedulerStopReason(plan: Awaited<ReturnType<typeof buildSchedulerPlan>>): "no_executable_nodes" | "paused_for_gate" | "waiting_for_retry" | "attention_required" {
   const blocked = plan.decisions.filter((decision) => decision.decision === "blocked");
-  if (blocked.some((decision) => decision.reason_code === "required_gate_rejected")) return "paused_for_gate";
   if (blocked.some((decision) => decision.reason_code !== "required_gate_rejected")) return "attention_required";
+  const hasRejectedGate = blocked.some((decision) => decision.reason_code === "required_gate_rejected");
+  if (hasRejectedGate && plan.openNonGateAttention.length > 0) return "attention_required";
+  if (hasRejectedGate) return "paused_for_gate";
   if (plan.decisions.some((decision) => decision.retry_decision?.phase === "waiting_for_retry")) return "waiting_for_retry";
   return plan.paused.length > 0
     ? "paused_for_gate"
@@ -4383,6 +4439,9 @@ const server = createServer((req, res) => {
       return sendError(res, status, error.code, error.message);
     }
     if (error instanceof RunDraftError) {
+      return sendError(res, 409, error.code, error.message);
+    }
+    if (error instanceof RetryStateReconciliationBusyError) {
       return sendError(res, 409, error.code, error.message);
     }
     if (error instanceof CodexCliAdapterError) {
