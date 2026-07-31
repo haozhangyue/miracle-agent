@@ -14,6 +14,8 @@ DONE
 - 修复轮 2 Message: `修复retry排期消费与外部调用幂等`
 - 修复轮 3 SHA: `af92c57cadf0557558381dbe55d260fb1106ac97`
 - 修复轮 3 Message: `修复retry统一分类与恢复状态机`
+- 修复轮 4 SHA: `f674aed9bf55f396eb6904a7e2f77553eea23d2d`
+- 修复轮 4 Message: `修复retry终态补偿与统一投影`
 - Branch: `codex/p7-05-retry-recovery`
 
 ## 变更文件
@@ -98,6 +100,19 @@ DONE
     投影；Web 仅在 due 时允许直接执行，并展示 attempt/time/cost 三类 used/limit。
 15. blocked 结果写单根因 Attention；同 root cause 的后续 Attempt 合并关联对象并 reopen，
     不按 Attempt 重复建卡。
+16. Codex CLI credential/auth/permission health failure 保留真实 Codex invocation 身份，但不启动
+    外部进程；错误以 non-recoverable blocked AdapterResult 落盘，NodeRun、RetryState 和
+    单根因 Attention 同步投影凭证配置与权限修复动作。
+17. `retry_state.json` 的 waiting/exhausted/blocked 记录持久化 operation、node、attempt、
+    reason、decision、error 和 `effects_committed`。reconcile 幂等补写 terminal
+    `retry_exhausted`/Attention 后再标记 effects 完成；成功 Attempt 先写 durable completed
+    tombstone，再删除 schedule，所有 projection 忽略 completed。
+18. prepared dispatch intent 使用首 Attempt deadline 与 intent 内持久化 dispatch time/timeout
+    验证身份，不按恢复时墙钟重建。当前预算仍在实际派发前权威复核；仅 prepared intent 可原子
+    缩短 timeout，operation/attempt/input identity 不变，dispatched_unknown 不更新、不重派。
+19. Scheduler 对 due retry 仅把对应 failed NodeRun 映射为 queued 后重算 ExecutionPlan，
+    Gate/input 决策优先于 retry execute 覆盖。waiting/exhausted/blocked 再叠加，并统一重算
+    decisions、ready/paused/blocked、terminal、stop_reason 与 Node detail/Web 恢复动作。
 
 ## TDD 证据
 
@@ -337,14 +352,70 @@ Stateful fake Codex 首次返回真实 `process_exit_nonzero`，第二次成功�
 Artifact source 删除场景确认 `artifact_missing` -> blocked NodeRun + 单根因 Attention，
 Scheduler 同步投影 terminal failure。
 
+### 修复轮 4 RED
+
+RetryState 可重放事实与 active upstream：
+
+```text
+npm run test -w packages/core -- retry-policy.test.ts execution-plan.test.ts
+exit 1
+关键失败：旧 RetryState schema 丢弃 attempt/error/effects facts 且拒绝 completed phase；
+required Artifact 对应的 optional active 上游被误判 required_input_missing。
+```
+
+统一 due projection 与 Web 执行门禁：
+
+```text
+npm run test -w apps/web -- retry-ui.test.ts
+exit 1
+关键失败：due retry 即使 ExecutionPlan 已 blocked，Web 仍允许执行。
+```
+
+Sidecar blocked、补偿、intent 与 Gate/input 复核：
+
+```text
+npm run test -w apps/sidecar -- retry-recovery.test.ts api.test.ts codex-real-node.test.ts
+exit 1
+关键失败 7 项：credential health 仍启动外部进程；prepared intent 推进时钟后身份失效；
+completed tombstone 缺失；terminal effects 不重放；due retry 绕过 required input；
+active upstream 被误判缺失。
+
+npm run test -w apps/sidecar -- codex-real-node.test.ts -t "turns missing Codex credentials"
+exit 1
+关键失败：blocked receipt 被压成 mock-local/no_executable_adapter 身份。
+```
+
+所有功能 RED 均在对应生产修复前运行；Sidecar 首次受沙箱 `tsx listen EPERM` 限制，
+按权限流程在沙箱外重跑后记录真实行为失败。
+
+### 修复轮 4 GREEN
+
+```text
+npm run test -w apps/sidecar -- retry-recovery.test.ts api.test.ts codex-real-node.test.ts codex-multi-node.test.ts
+Test Files 4 passed
+Tests 85 passed
+
+npm run test -w packages/core -- adapter-outcome.test.ts retry-policy.test.ts execution-plan.test.ts codex-cli.test.ts
+Test Files 4 passed
+Tests 91 passed
+
+npm run test -w apps/web -- retry-ui.test.ts historical.test.ts
+Test Files 2 passed
+Tests 5 passed
+```
+
+故障注入分别覆盖 retry terminal state 写入后/event 与 Attention 前、completed tombstone
+写入后/schedule 删除前、prepared intent 落盘后推进时钟并重启。Stateful fake Codex
+Attempt 2 外部计数保持精确 2；并发、stale schedule 与重启均未增加。
+
 ## 完整测试结果
 
 ```text
 npm run test
-Core:    7 files, 112 tests passed
-Sidecar: 10 files, 170 tests passed
+Core:    7 files, 114 tests passed
+Sidecar: 10 files, 176 tests passed
 Web:     3 files, 9 tests passed
-Total:   20 files, 291 tests passed
+Total:   20 files, 299 tests passed
 ```
 
 ```text
@@ -398,6 +469,18 @@ Roadmap 语义检查：
   waiting/due/exhausted/blocked 当前投影。排队期间预算耗尽在 Node detail 查询时即可见。
 - Stateful fake Codex 外部 marker 精确为 2；重启、并发和 stale schedule 恢复均未增加。
 - 全量回归覆盖 Historical、Gate、P7-04 Scheduler；typecheck、build 和 diff check 均通过。
+- 修复轮 4 确认 Codex credential/auth/permission health 不再降级为 recoverable
+  `no_executable_adapter`，不会启动外部进程；NodeRun blocked、RetryState terminal 与单根因
+  Attention 的错误身份和恢复动作一致。
+- terminal retry effects 以 `effects_committed` 两阶段提交并可在重启后补偿；successful retry
+  的 completed tombstone 先于 schedule 删除，projection 对 completed 无条件短路。
+- prepared intent 的恢复验证不依赖当前墙钟；实际 dispatch 前仍以 current budget 授权，
+  remaining 不大于 0 时 fake Codex counter 不增长，unknown intent 不更新。
+- due retry 先进入统一 ExecutionPlan 复核 Gate/input，再叠加 retry phase。required input
+  blocked 的 NodeRun/Attention 可在 Artifact 恢复后回到 queued，active 上游保持 wait。
+- Scheduler 与 Node detail 共用 next-action helper；stop reason 区分
+  `waiting_for_retry`、`attention_required`、`paused_for_gate` 和 `no_executable_nodes`，
+  waiting/due 的统一 ExecutionPlan 均保持 `terminal=false`。
 
 ## 遗留关注
 
