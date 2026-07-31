@@ -1,6 +1,7 @@
 import type { AdapterInvocation, ProviderCatalogEntry } from "@miracle/core";
+import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ModelApiAdapter } from "./model-api-adapter";
@@ -22,7 +23,17 @@ async function canonicalSmokeWorkspace(workspaceDir: string) {
   return canonicalWorkspace;
 }
 
-async function canonicalSmokeArtifactRoot(workspaceRoot: string) {
+type VerifiedArtifactRoot = {
+  path: string;
+  device: string;
+  inode: string;
+};
+
+function isSafeSmokeArtifactBasename(fileName: string) {
+  return /^[a-zA-Z0-9._-]+\.md$/.test(fileName) && path.basename(fileName) === fileName;
+}
+
+async function canonicalSmokeArtifactRoot(workspaceRoot: string): Promise<VerifiedArtifactRoot> {
   const artifactRoot = path.join(workspaceRoot, "smoke-artifacts");
   try {
     await mkdir(artifactRoot, { mode: 0o700 });
@@ -37,15 +48,16 @@ async function canonicalSmokeArtifactRoot(workspaceRoot: string) {
   }
   const handle = await open(canonicalRoot, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try {
-    if (!(await handle.stat()).isDirectory()) throw new Error("Provider smoke artifact root is unsafe.");
+    const directory = await handle.stat();
+    if (!directory.isDirectory()) throw new Error("Provider smoke artifact root is unsafe.");
     const current = await lstat(canonicalRoot);
     if (current.isSymbolicLink() || !current.isDirectory() || await realpath(canonicalRoot) !== canonicalRoot) {
       throw new Error("Provider smoke artifact root changed during verification.");
     }
+    return { path: canonicalRoot, device: String(directory.dev), inode: String(directory.ino) };
   } finally {
     await handle.close();
   }
-  return canonicalRoot;
 }
 
 async function assertSmokeArtifactTargetAvailable(artifactRoot: string, targetPath: string) {
@@ -64,6 +76,9 @@ async function assertSmokeArtifactTargetAvailable(artifactRoot: string, targetPa
 type SmokeArtifactDestination = {
   workspace_root: string;
   artifact_root: string;
+  artifact_device: string;
+  artifact_inode: string;
+  file_name: string;
   target_path: string;
 };
 
@@ -71,31 +86,196 @@ async function prepareSmokeArtifactDestination(workspaceDir: string, providerId:
   const workspaceRoot = await canonicalSmokeWorkspace(workspaceDir);
   const artifactRoot = await canonicalSmokeArtifactRoot(workspaceRoot);
   const fileName = `${providerId.replace(/[^a-zA-Z0-9._-]/g, "_")}-${Date.now()}.md`;
-  const targetPath = path.join(artifactRoot, fileName);
-  await assertSmokeArtifactTargetAvailable(artifactRoot, targetPath);
-  return { workspace_root: workspaceRoot, artifact_root: artifactRoot, target_path: targetPath };
+  if (!isSafeSmokeArtifactBasename(fileName)) throw new Error("Provider smoke artifact target is unsafe.");
+  const targetPath = path.join(artifactRoot.path, fileName);
+  await assertSmokeArtifactTargetAvailable(artifactRoot.path, targetPath);
+  return {
+    workspace_root: workspaceRoot,
+    artifact_root: artifactRoot.path,
+    artifact_device: artifactRoot.device,
+    artifact_inode: artifactRoot.inode,
+    file_name: fileName,
+    target_path: targetPath
+  };
 }
 
-async function writeSmokeArtifact(destination: SmokeArtifactDestination, content: string) {
-  const workspaceRoot = await canonicalSmokeWorkspace(destination.workspace_root);
-  const artifactRoot = await canonicalSmokeArtifactRoot(workspaceRoot);
-  if (workspaceRoot !== destination.workspace_root || artifactRoot !== destination.artifact_root) {
+async function assertCurrentArtifactRoot(destination: SmokeArtifactDestination) {
+  const root = await lstat(destination.artifact_root);
+  if (root.isSymbolicLink() || !root.isDirectory()) throw new Error("Provider smoke artifact root changed during execution.");
+  const canonicalRoot = await realpath(destination.artifact_root);
+  if (canonicalRoot !== destination.artifact_root || !isPathInside(destination.workspace_root, canonicalRoot)) {
     throw new Error("Provider smoke artifact root changed during execution.");
   }
-  await assertSmokeArtifactTargetAvailable(artifactRoot, destination.target_path);
-  const handle = await open(
-    destination.target_path,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-    0o600
-  );
-  try {
-    const target = await handle.stat();
-    if (!target.isFile() || target.nlink !== 1) throw new Error("Provider smoke artifact target is unsafe.");
-    await handle.writeFile(content, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
+  const current = await stat(canonicalRoot);
+  if (String(current.dev) !== destination.artifact_device || String(current.ino) !== destination.artifact_inode) {
+    throw new Error("Provider smoke artifact root changed during execution.");
   }
+}
+
+const smokeArtifactWriterProgram = String.raw`
+const fs = require("node:fs/promises");
+const { constants } = require("node:fs");
+const readline = require("node:readline");
+const fileName = process.env.MIRACLE_SMOKE_WRITER_BASENAME;
+const safeName = typeof fileName === "string" && /^[a-zA-Z0-9._-]+\.md$/.test(fileName) && !fileName.includes("/") && !fileName.includes(String.fromCharCode(92));
+const send = (message) => new Promise((resolve) => process.stdout.write(JSON.stringify(message) + "\n", resolve));
+
+async function exitWithError(code) {
+  await send({ type: "error", code });
+  process.exitCode = 1;
+}
+
+(async () => {
+  if (!safeName) return exitWithError("unsafe_name");
+  let directory;
+  try {
+    directory = await fs.stat(".");
+  } catch {
+    return exitWithError("cwd_unavailable");
+  }
+  await send({ type: "ready", device: String(directory.dev), inode: String(directory.ino) });
+
+  let written = false;
+  const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  for await (const line of input) {
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      return exitWithError("invalid_command");
+    }
+    if (message.type === "write" && !written && typeof message.content === "string") {
+      try {
+        const handle = await fs.open(fileName, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+        try {
+          const target = await handle.stat();
+          if (!target.isFile() || target.nlink !== 1) throw new Error("unsafe_target");
+          await handle.writeFile(message.content, "utf8");
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        written = true;
+        await send({ type: "written" });
+      } catch {
+        return exitWithError("write_failed");
+      }
+      continue;
+    }
+    if (message.type === "commit" && written) {
+      await send({ type: "committed" });
+      return;
+    }
+    if (message.type === "discard" && written) {
+      try {
+        await fs.unlink(fileName);
+      } catch {
+        return exitWithError("discard_failed");
+      }
+      await send({ type: "discarded" });
+      return;
+    }
+    return exitWithError("invalid_command");
+  }
+})().catch(() => { process.exitCode = 1; });
+`;
+
+type SmokeWriterMessage =
+  | { type: "ready"; device: string; inode: string }
+  | { type: "written" }
+  | { type: "committed" }
+  | { type: "discarded" }
+  | { type: "error"; code: string };
+
+function isSmokeWriterMessage(value: unknown): value is SmokeWriterMessage {
+  if (!value || typeof value !== "object" || !("type" in value) || typeof value.type !== "string") return false;
+  const message = value as Record<string, unknown>;
+  if (message.type === "ready") return typeof message.device === "string" && typeof message.inode === "string";
+  return message.type === "written" || message.type === "committed" || message.type === "discarded"
+    || (message.type === "error" && typeof message.code === "string");
+}
+
+async function writeSmokeArtifact(
+  destination: SmokeArtifactDestination,
+  content: string,
+  beforeArtifactWrite?: () => Promise<void> | void
+) {
+  if (!isSafeSmokeArtifactBasename(destination.file_name)) throw new Error("Provider smoke artifact target is unsafe.");
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(process.execPath, ["-e", smokeArtifactWriterProgram], {
+      cwd: destination.artifact_root,
+      env: { MIRACLE_SMOKE_WRITER_BASENAME: destination.file_name },
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let settled = false;
+    let buffer = "";
+    let discardError: Error | undefined;
+    let messageQueue = Promise.resolve();
+
+    const rejectWriter = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      child.stdin.end();
+      child.kill();
+      reject(error);
+    };
+    const send = (message: Record<string, unknown>) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    const handleMessage = async (message: SmokeWriterMessage) => {
+      if (settled) return;
+      if (message.type === "error") return rejectWriter(new Error("Provider smoke artifact write failed."));
+      if (message.type === "ready") {
+        if (message.device !== destination.artifact_device || message.inode !== destination.artifact_inode) {
+          return rejectWriter(new Error("Provider smoke artifact root changed during execution."));
+        }
+        try {
+          await beforeArtifactWrite?.();
+          send({ type: "write", content });
+        } catch {
+          rejectWriter(new Error("Provider smoke artifact write preparation failed."));
+        }
+        return;
+      }
+      if (message.type === "written") {
+        try {
+          await assertCurrentArtifactRoot(destination);
+          send({ type: "commit" });
+        } catch (error) {
+          discardError = error instanceof Error ? error : new Error("Provider smoke artifact root changed during execution.");
+          send({ type: "discard" });
+        }
+        return;
+      }
+      if (message.type === "discarded") return rejectWriter(discardError ?? new Error("Provider smoke artifact write failed."));
+      if (message.type === "committed") {
+        settled = true;
+        child.stdin.end();
+        resolve();
+      }
+    };
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        try {
+          const message: unknown = JSON.parse(line);
+          if (!isSmokeWriterMessage(message)) throw new Error("invalid message");
+          messageQueue = messageQueue.then(() => handleMessage(message)).catch(() => {
+            rejectWriter(new Error("Provider smoke artifact writer protocol failed."));
+          });
+        } catch {
+          rejectWriter(new Error("Provider smoke artifact writer protocol failed."));
+        }
+      }
+    });
+    child.stderr.on("data", () => undefined);
+    child.once("error", () => rejectWriter(new Error("Provider smoke artifact writer failed to start.")));
+    child.once("exit", () => {
+      if (!settled) rejectWriter(new Error("Provider smoke artifact writer exited before committing."));
+    });
+  });
 }
 
 export function assertProviderSmokeEnabled(input: { enabled?: string; provider?: string; credential?: string }) {
@@ -149,6 +329,7 @@ export async function runProviderSmoke(input: {
   env?: NodeJS.ProcessEnv;
   catalog?: ProviderCatalogEntry[];
   driverRegistry?: ProviderDriverRegistry;
+  beforeArtifactWrite?: () => Promise<void> | void;
 } = {}): Promise<ProviderSmokeResult> {
   const env = input.env ?? process.env;
   const workspaceDir = input.workspaceDir ?? env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
@@ -191,7 +372,7 @@ export async function runProviderSmoke(input: {
     "",
     redact(outputText ?? "", credential)
   ].join("\n");
-  await writeSmokeArtifact(artifactDestination, markdown);
+  await writeSmokeArtifact(artifactDestination, markdown, input.beforeArtifactWrite);
   return {
     provider: entry.profile.provider,
     artifact_path: artifactDestination.target_path,

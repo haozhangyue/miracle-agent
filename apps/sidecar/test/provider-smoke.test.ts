@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderCatalogEntry, ProviderDriver } from "@miracle/core";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { assertProviderSmokeEnabled, runProviderSmoke } from "../src/provider-smoke";
@@ -182,6 +182,48 @@ describe("provider smoke safety gate", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("does not write outside the workspace when the artifact root is replaced after verification", async () => {
+    const server = createServer((_request, response) => {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ choices: [{ message: { content: "safe response" } }] }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    const workspace = await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-race-"));
+    const outside = await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-race-outside-"));
+    const originalRoot = path.join(workspace, "smoke-artifacts-original");
+    let hookInvoked = false;
+    try {
+      await expect(runProviderSmoke({
+        workspaceDir: workspace,
+        catalog: [{
+          ...catalogEntry,
+          driver_id: "openai-compatible",
+          profile: { ...catalogEntry.profile, base_url: `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}` }
+        }],
+        driverRegistry: createProviderDriverRegistry(),
+        env: {
+          MIRACLE_ENABLE_MODEL_API: "1",
+          MIRACLE_SMOKE_PROVIDER: "fixture-compatible",
+          MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret"
+        },
+        beforeArtifactWrite: async () => {
+          hookInvoked = true;
+          await rename(path.join(workspace, "smoke-artifacts"), originalRoot);
+          await symlink(outside, path.join(workspace, "smoke-artifacts"), "dir");
+        }
+      })).rejects.toThrow(/artifact root.*changed|artifact root.*unsafe/i);
+
+      expect(hookInvoked).toBe(true);
+      expect(await readdir(outside)).toEqual([]);
+      expect(await readdir(originalRoot)).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(workspace, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
     }
   });
 });
