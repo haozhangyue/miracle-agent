@@ -111,7 +111,9 @@ smoke 不在本轮验收范围内。
   Codex/Model API 的人工确认边界。
 - Provider health 不能由凭证存在、fake-server 通过或 HTTP transport 初始化推断。
 - smoke 路径有 canonical 目录、symlink、文件名和单次写入保护；默认 Artifact 位于仓库外的
-  系统临时 workspace，避免路径逃逸、覆盖既有文件和 Git 污染。
+  系统临时 workspace；若 `TMPDIR` 等环境配置使临时目录解析到仓库内，系统会清理并在联网前
+  拒绝。显式选择只按 `profile.provider` 匹配，不接受 Catalog ID 跨 Provider 别名，从而避免
+  路径逃逸、跨 Provider 凭证发送、覆盖既有文件和 Git 污染。
 
 ## 7. 验收与下一步
 

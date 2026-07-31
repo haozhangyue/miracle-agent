@@ -391,8 +391,10 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 
    显式设置 `MIRACLE_WORKSPACE_DIR` 时，Artifact 写入该目录的 `smoke-artifacts/`；未设置时，
    配置从内置 fixture workspace 读取，Artifact 写入系统临时目录安全创建的
-   `miracle-provider-smoke-*` workspace，命令返回完整路径且不会污染 Git。目录、文件名和单次
-   写入均有安全校验；输出、日志和回执不得含 API Key 或敏感正文。
+   `miracle-provider-smoke-*` workspace，命令返回完整路径且不会污染 Git。如果 `TMPDIR`
+   等环境配置把临时目录导向仓库内，系统会清理临时目录并在联网前拒绝。目标 Provider 只按
+   `profile.provider` 匹配，不接受 Catalog ID 别名。目录、文件名和单次写入均有安全校验；
+   输出、日志和回执不得含 API Key 或敏感正文。
 4. 只有完成真实 health probe 与脱敏 completion 后，对应 Provider 才可标记 `healthy`。
    凭证存在、Profile 已配置或 fake-server 测试通过都不能替代该验证。Provider fallback 尚未
    实现，属于 P7-08。

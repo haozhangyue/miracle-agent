@@ -148,6 +148,63 @@ describe("provider smoke safety gate", () => {
     }
   });
 
+  it("does not let a Catalog id alias select a different Provider", async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-provider-alias-"));
+    let builtRequest = false;
+    const registry = new ProviderDriverRegistry().register({
+      driver: {
+        id: "kimi",
+        buildRequest: () => {
+          builtRequest = true;
+          return { url: "http://127.0.0.1:1/should-not-run", init: {} };
+        },
+        parseResponse: () => ({ output_text: "unused" }),
+        mapError: () => ({ code: "unused", message: "unused", recoverable: false })
+      },
+      providers: ["kimi"]
+    });
+    const aliasedCatalog = {
+      ...catalogEntry,
+      id: "deepseek",
+      driver_id: "kimi",
+      profile: {
+        ...catalogEntry.profile,
+        id: "kimi-default",
+        provider: "kimi",
+        credential_ref: "MOONSHOT_API_KEY"
+      },
+      credential: { key: "MOONSHOT_API_KEY", source: "env" as const }
+    };
+    const manifest = {
+      ...adapterManifest,
+      supported_providers: ["kimi"],
+      required_credentials: [{
+        key: "MOONSHOT_API_KEY",
+        label: "Kimi credential",
+        source: "env" as const,
+        required: true,
+        providers: ["kimi"]
+      }]
+    };
+
+    try {
+      await expect(runProviderSmoke({
+        workspaceDir: workspace,
+        catalog: [aliasedCatalog],
+        manifest,
+        driverRegistry: registry,
+        env: {
+          MIRACLE_ENABLE_MODEL_API: "1",
+          MIRACLE_SMOKE_PROVIDER: "deepseek",
+          MOONSHOT_API_KEY: "moonshot-secret"
+        }
+      })).rejects.toThrow(/does not match.*provider|provider.*does not match/i);
+      expect(builtRequest).toBe(false);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed before constructing a Driver request when the workspace manifest is missing", async () => {
     const workspace = await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-manifest-"));
     let builtRequest = false;
@@ -256,6 +313,44 @@ describe("provider smoke safety gate", () => {
           await rmdir(path.dirname(artifactPath)).catch(() => undefined);
         } else {
           await rm(path.dirname(path.dirname(artifactPath)), { recursive: true, force: true });
+        }
+      }
+    }
+  });
+
+  it("rejects an environment-controlled temp directory inside the repository before fetch", async () => {
+    const originalTmpDir = process.env.TMPDIR;
+    const statusBefore = (await execFileAsync("git", ["status", "--short", "--untracked-files=all"], { cwd: repoRoot })).stdout;
+    let fetchCount = 0;
+    process.env.TMPDIR = repoRoot;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      fetchCount += 1;
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "must not be used" } }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    try {
+      await expect(runProviderSmoke({
+        catalog: [{ ...catalogEntry, driver_id: "openai-compatible" }],
+        manifest: adapterManifest,
+        driverRegistry: createProviderDriverRegistry(),
+        env: {
+          MIRACLE_ENABLE_MODEL_API: "1",
+          MIRACLE_SMOKE_PROVIDER: "fixture-compatible",
+          MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret"
+        }
+      })).rejects.toThrow(/temporary workspace.*repository|repository.*temporary workspace/i);
+
+      expect(fetchCount).toBe(0);
+      expect((await execFileAsync("git", ["status", "--short", "--untracked-files=all"], { cwd: repoRoot })).stdout).toBe(statusBefore);
+    } finally {
+      vi.unstubAllGlobals();
+      if (originalTmpDir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = originalTmpDir;
+      for (const entry of await readdir(repoRoot)) {
+        if (entry.startsWith("miracle-provider-smoke-")) {
+          await rm(path.join(repoRoot, entry), { recursive: true, force: true });
         }
       }
     }

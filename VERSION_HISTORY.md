@@ -147,6 +147,9 @@
   scope 授权；Driver ID 与 Provider 采用双重绑定，Catalog 缺失时按 Provider 选择专用 Driver。
   Provider Catalog 收窄为 env-only，拒绝 `keychain`、`workspace-secret` 与疑似明文密钥；默认
   smoke Artifact 改写仓库外系统临时 workspace，显式 workspace 行为保持不变。
+- 收紧 smoke 显式选择与临时目录边界：只按 `profile.provider` 匹配目标 Provider，不接受
+  Catalog ID 跨 Provider 别名；若受环境控制的系统临时目录解析到仓库内，清理临时目录并在
+  Driver request 前拒绝，避免跨 Provider 凭证发送和 Git 污染。
 - 本轮 `DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`、`MINIMAX_API_KEY` 均缺失，未运行真实外部
   smoke；三家保持 `configured_unverified`，不得声明 healthy，也不伪造真实 Artifact 或 receipt。
 - 同步 README、文档导航、用户手册、路线图和 task-baseline：`P7-07` 标记完成，

@@ -1,7 +1,7 @@
 import { adapterManifestSchema, type AdapterInvocation, type AdapterManifest, type ProviderCatalogEntry } from "@miracle/core";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,23 @@ async function readModelApiManifest(workspaceDir: string) {
 function isPathInside(parent: string, candidate: string) {
   const relative = path.relative(parent, candidate);
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+}
+
+async function createDefaultSmokeWorkspace() {
+  const workspace = await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-"));
+  try {
+    const [repositoryRoot, workspaceRoot] = await Promise.all([
+      realpath(rootDir),
+      realpath(workspace)
+    ]);
+    if (isPathInside(repositoryRoot, workspaceRoot)) {
+      throw new Error("Provider smoke temporary workspace must be outside the repository.");
+    }
+    return workspace;
+  } catch (error) {
+    await rm(workspace, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 async function canonicalSmokeWorkspace(workspaceDir: string) {
@@ -358,7 +375,7 @@ export async function runProviderSmoke(input: {
   const providerId = env.MIRACLE_SMOKE_PROVIDER;
   if (env.MIRACLE_ENABLE_MODEL_API !== "1") assertProviderSmokeEnabled({ enabled: env.MIRACLE_ENABLE_MODEL_API, provider: providerId });
   const catalog = input.catalog ?? await readProviderCatalog(configurationWorkspaceDir);
-  const entry = catalog.find((candidate) => candidate.id === providerId || candidate.profile.provider === providerId);
+  const entry = catalog.find((candidate) => candidate.profile.provider === providerId);
   if (!entry) throw new Error("MIRACLE_SMOKE_PROVIDER does not match a configured provider catalog entry.");
   if (entry.credential.source !== "env") throw new Error("Provider smoke only supports an env credential source in this local Sidecar phase.");
   const manifest = input.manifest ?? await readModelApiManifest(configurationWorkspaceDir);
@@ -372,7 +389,7 @@ export async function runProviderSmoke(input: {
   const driver = registry.resolve({ driver_id: entry.driver_id, provider: entry.profile.provider });
   if (!driver) throw new Error("Provider Driver is not registered; no request was constructed.");
   const artifactWorkspaceDir = configuredWorkspaceDir
-    ?? await mkdtemp(path.join(tmpdir(), "miracle-provider-smoke-"));
+    ?? await createDefaultSmokeWorkspace();
   const artifactDestination = await prepareSmokeArtifactDestination(artifactWorkspaceDir, entry.id);
 
   let outputText: string | undefined;
