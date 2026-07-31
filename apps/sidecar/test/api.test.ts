@@ -1128,6 +1128,7 @@ describe("sidecar api", () => {
     const scheduled = await fetchJson<{
       stop_reason: string;
       summary: { nodes_executed: number; failures: number; attention_items_created: number };
+      next_suggested_actions: string[];
       ticks: Array<{
         failed?: Array<{ error: { code: string }; retry_decision?: { action: string } }>;
         attention_items?: Array<{ root_cause_key: string }>;
@@ -1137,7 +1138,8 @@ describe("sidecar api", () => {
       body: JSON.stringify({ max_ticks: 3, max_nodes_per_tick: 1 })
     });
 
-    expect(scheduled.stop_reason).toBe("execution_failed");
+    expect(scheduled.stop_reason).toBe("waiting_for_retry");
+    expect(scheduled.next_suggested_actions).toEqual(["wait_for_retry"]);
     expect(scheduled.summary.nodes_executed).toBe(1);
     expect(scheduled.summary.failures).toBe(1);
     expect(scheduled.summary.attention_items_created).toBe(0);

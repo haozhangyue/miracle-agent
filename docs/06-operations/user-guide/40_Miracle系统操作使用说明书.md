@@ -325,19 +325,27 @@ Provider fallback 仍属于 P7-08，当前 Scheduler 不会自动切换 Provider
 
 ### 5.13 查看和处置 Retry
 
-1. 当 Adapter 返回明确 `failed` 且 error code 在节点 RetryPolicy 允许列表内时，查看节点详情中的
-   “Retry 决策”；界面会显示 operation、下一个 attempt、到期时间和预算快照。
-2. `schedule_retry` 表示已排期。未到 `scheduled_for` 时再次运行 Scheduler 不会派发；
+1. 当 Adapter 返回明确 `failed`，或返回由 `process_timeout` 确认终止的 `timed_out`，
+   且归一化 error code 在节点 RetryPolicy 允许列表内时，查看节点详情中的“Retry 决策”。
+2. 真实 Codex 进程退出/启动失败归一为 `adapter_process_error`，确认超时归一为
+   `adapter_timeout`，无效 JSONL 输出归一为 `adapter_output_invalid`。节点模板可在
+   `failure_policy.retry_policy` 完整配置退避、code、attempt timeout、总时间、成本和
+   人工确认阈值；legacy `retry` 仍映射为有限默认策略。
+3. 投影状态 `waiting_for_retry` 表示尚未到期，按钮保持禁用；`due` 表示可直接执行；
+   `exhausted` / `blocked` 表示必须处理 Attention。界面同时显示 attempts、elapsed time
+   和 cost 的 used/limit。
+4. `schedule_retry` 表示已排期。未到 `scheduled_for` 时再次运行 Scheduler 不会派发；
    到期后运行“调度一次”或“自动推进”会创建递增 `attempt_number` 的新 NodeAttempt。
-3. 自动 retry 复用原 `operation_id`，每次 Attempt 都追加保留。可在 Attempt 列表和
+5. 自动 retry 复用原 `operation_id`，每次 Attempt 都追加保留。可在 Attempt 列表和
    `retry_scheduled` / `retry_exhausted` 事件中核对完整历史。
-4. Sidecar 重启后无需手工重建 schedule；Scheduler 会从 `retry_schedule.json` 和
-   `attempts.json` 恢复，到期 Attempt 已提交时不会重复 dispatch。
-5. `require_attention` 表示 attempt、time 或 cost 预算耗尽。进入 Attention，按
+6. Sidecar 重启后无需手工重建 schedule；Scheduler 会从 `retry_schedule.json`、
+   durable retry state 和 `attempts.json` 恢复，到期 Attempt 已提交时不会重复 dispatch。
+7. `require_attention` 表示 attempt、time 或 cost 预算耗尽。进入 Attention，按
    `inspect_node_attempt`、`fix_root_cause`、`increase_retry_budget` 或 `retry_manually`
-   处理；同一 root cause 只保留一张卡。
-6. 若错误状态是 `dispatched_unknown`、AdapterResult 无效或外部状态未知，系统不会自动
-   重派。先检查 dispatch intent 和外部回执，再决定人工恢复。
+   处理；同一 root cause 只保留一张卡，新 Attempt 会合并关联并重新打开已解决卡。
+8. 凭证、权限、必需输入或 Artifact 缺失直接进入 `blocked` + Attention。若状态是
+   `cancelled`、`aborted`、`unknown`、`dispatched_unknown` 或 `invalid_result`，系统也
+   不会自动重派；先检查 dispatch intent 和外部回执，再决定人工恢复。
 
 默认自动 Attempt 总数不超过 3。策略只允许 fixed/exponential 退避，并拒绝负数、NaN、
 Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5，模板可显式覆盖。

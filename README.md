@@ -26,10 +26,12 @@ Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与
 真实工作流工程接入基线。`P7-01` 总体设计、`P7-02` 多节点 ExecutionPlan 与输入解析和
 `P7-03` Codex 多节点 Artifact 真实交接、`P7-04` Scheduler 连续执行和 `P7-05`
 Retry 与故障恢复已完成，当前主线推进到 `P7-06` 通用 Model API Adapter：
-Codex CLI 已可按 ExecutionPlan 连续执行、在 Gate 暂停后批准恢复，并对明确 failed 的
-AdapterResult 按 fixed/exponential 退避和 attempt/time/cost 预算创建新 NodeAttempt；
+Codex CLI 已可按 ExecutionPlan 连续执行、在 Gate 暂停后批准恢复，并对明确 failed 或
+已确认终止的 timed_out AdapterResult 按节点策略、fixed/exponential 退避和
+attempt/time/cost 预算创建新 NodeAttempt；
 同 operation 的 retry 复用 operation ID，原子 schedule 可在进程重启后幂等恢复。
-未知派发结果和无效回执不会自动重派。Provider fallback 仍属于 P7-08；P7 不接入
+凭证、权限、输入或 Artifact 缺失进入 blocked Attention；未知派发结果、取消、终止和
+无效回执不会自动重派。Provider fallback 仍属于 P7-08；P7 不接入
 OpenAI 官方 API。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。

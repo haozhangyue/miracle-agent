@@ -12,6 +12,8 @@ import type {
   WorkflowSpec
 } from "./types";
 import { adapterResultSchema } from "./schemas";
+import { classifyAdapterOutcome } from "./adapter-outcome";
+import { resolveNodeRetryPolicy } from "./retry-policy";
 
 function normalizeId(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -59,6 +61,7 @@ export function createAdapterInvocation(input: {
   resolvedInputs?: ResolvedNodeInput[];
   operationId?: string;
   attemptNumber?: number;
+  remainingTotalBudgetMs?: number;
 }): AdapterInvocation {
   const nodeSpec = input.workflow.nodes.find((node) => node.id === input.nodeRun.node_id);
   if (!nodeSpec) throw new Error(`NodeSpec not found: ${input.nodeRun.node_id}`);
@@ -68,6 +71,15 @@ export function createAdapterInvocation(input: {
   if (!Number.isSafeInteger(attemptNumber) || attemptNumber < 1) throw new Error("attemptNumber must be a positive integer");
   const attemptId = attemptNumber === 1 ? `attempt_${operationId}` : `attempt_${operationId}_${attemptNumber}`;
   const adapterKind = input.adapterKind ?? "mock-local";
+  const retryPolicy = resolveNodeRetryPolicy(nodeSpec);
+  if (input.remainingTotalBudgetMs !== undefined
+    && (!Number.isFinite(input.remainingTotalBudgetMs) || input.remainingTotalBudgetMs <= 0)) {
+    throw new Error("remaining total retry budget must be a positive finite number");
+  }
+  const timeoutMs = Math.floor(Math.min(
+    retryPolicy.attempt_timeout_ms,
+    input.remainingTotalBudgetMs ?? retryPolicy.attempt_timeout_ms
+  ));
   const attemptWorkspace = `runtime/${input.runSpec.run_id}/${input.nodeRun.node_run_id}/${attemptId}`;
   return {
     operation_id: operationId,
@@ -89,7 +101,7 @@ export function createAdapterInvocation(input: {
       required: output.required
     })),
     runtime_control: {
-      timeout_ms: 1_800_000,
+      timeout_ms: timeoutMs,
       cancellation_token_id: `cancel_${operationId}`,
       attempt_workspace: attemptWorkspace,
       sandbox: "workspace-write"
@@ -168,6 +180,7 @@ export function createNodeAttemptFromAdapterResult(
   timing?: { startedAt: string; dispatchedAt: string }
 ): NodeAttempt {
   const parsedResult = adapterResultSchema.parse(result);
+  const outcome = classifyAdapterOutcome(parsedResult);
   if (!Number.isSafeInteger(attemptNumber) || attemptNumber < 1) throw new Error("attemptNumber must be a positive integer");
   return {
     attempt_id: parsedResult.attempt_id,
@@ -175,9 +188,9 @@ export function createNodeAttemptFromAdapterResult(
     operation_id: parsedResult.operation_id,
     attempt_number: attemptNumber,
     attempt_kind: "execute",
-    status: parsedResult.status,
+    status: outcome.attempt_status,
     provider_receipt: parsedResult.provider_receipt,
-    error: parsedResult.error,
+    error: outcome.normalized_error,
     started_at: timing?.startedAt,
     dispatched_at: timing?.dispatchedAt,
     created_at: parsedResult.received_at

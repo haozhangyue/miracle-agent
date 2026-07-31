@@ -57,6 +57,28 @@ const costOverrideWorkflow = {
   }))
 };
 
+const policyWorkflow = {
+  ...retryWorkflow,
+  id: "retry-policy-override-v0",
+  name: "Retry policy override test",
+  nodes: retryWorkflow.nodes.map((node) => ({
+    ...node,
+    failure_policy: {
+      ...node.failure_policy,
+      retry_policy: {
+        max_attempts: 2,
+        backoff: "fixed",
+        initial_delay_ms: 0,
+        max_delay_ms: 0,
+        retryable_error_codes: ["mock_failure"],
+        attempt_timeout_ms: 1_234,
+        total_time_budget_ms: 5_000,
+        cost_budget: 5
+      }
+    }
+  }))
+};
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl}${url}`, {
     ...init,
@@ -119,6 +141,10 @@ function attemptsPath(runId: string) {
   return path.join(tempWorkspace, "runs", runId, "attempts.json");
 }
 
+function retryStatePath(runId: string) {
+  return path.join(tempWorkspace, "runs", runId, "retry_state.json");
+}
+
 function eventsPath(runId: string) {
   return path.join(tempWorkspace, "runs", runId, "events.jsonl");
 }
@@ -153,6 +179,7 @@ async function failFirstAttempt(workflowId = retryWorkflow.id) {
           node_run_id: string;
           node_id: string;
           resolved_inputs: Array<{ input_id: string }>;
+          runtime_control: { timeout_ms: number };
           dispatched_at: string;
         };
         retry_decision?: { action: string; reason_code: string };
@@ -238,6 +265,11 @@ describe("P7-05 retry recovery", () => {
       `${JSON.stringify(costOverrideWorkflow, null, 2)}\n`,
       "utf8"
     );
+    await writeFile(
+      path.join(tempWorkspace, "workflows", `${policyWorkflow.id}.json`),
+      `${JSON.stringify(policyWorkflow, null, 2)}\n`,
+      "utf8"
+    );
     port = 6200 + Math.floor(Math.random() * 300);
     baseUrl = `http://127.0.0.1:${port}`;
     await startSidecar();
@@ -281,6 +313,53 @@ describe("P7-05 retry recovery", () => {
     expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${failure.runId}`)).attempts).toHaveLength(1);
   });
 
+  it("projects waiting and due retry consistently across Scheduler and Node detail", async () => {
+    const failure = await failFirstAttempt();
+    const waitingRun = await fetchJson<{
+      stop_reason: string;
+      ticks: Array<{ decisions: Array<{ decision: string; reason_code: string; retry_decision?: { phase: string } }> }>;
+    }>(`/api/v0/runs/${failure.runId}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    expect(waitingRun.stop_reason).toBe("waiting_for_retry");
+    expect(waitingRun.ticks[0]?.decisions[0]).toMatchObject({
+      decision: "wait",
+      reason_code: "waiting_for_retry",
+      retry_decision: { phase: "waiting_for_retry" }
+    });
+    const waitingDetail = await fetchJson<{ retry_decision: { phase: string; action: string } }>(
+      `/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`
+    );
+    expect(waitingDetail.retry_decision).toMatchObject({
+      phase: "waiting_for_retry",
+      action: "schedule_retry"
+    });
+
+    await writeFile(
+      retrySchedulePath(failure.runId),
+      `${JSON.stringify([{ ...failure.schedules[0], scheduled_for: "2020-01-01T00:00:00.000Z" }], null, 2)}\n`,
+      "utf8"
+    );
+    const due = await fetchJson<{
+      execution_plan: { decisions: Array<{ decision: string; reason_code: string }> };
+      decisions: Array<{ decision: string; reason_code: string; retry_decision?: { phase: string } }>;
+    }>(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+    });
+    expect(due.execution_plan.decisions[0]).toMatchObject({ decision: "execute", reason_code: "retry_due" });
+    expect(due.decisions[0]).toMatchObject({
+      decision: "execute",
+      reason_code: "retry_due",
+      retry_decision: { phase: "due" }
+    });
+    const dueDetail = await fetchJson<{ retry_decision: { phase: string } }>(
+      `/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`
+    );
+    expect(dueDetail.retry_decision.phase).toBe("due");
+  });
+
   it("honors an explicit NodeSpec cost budget override", async () => {
     const failure = await failFirstAttempt(costOverrideWorkflow.id);
     expect(failure.retryDecision).toMatchObject({
@@ -290,6 +369,164 @@ describe("P7-05 retry recovery", () => {
     expect(failure.schedules).toEqual([]);
     const attention = await fetchJson<{ attention: unknown[] }>(`/api/v0/attention?run_id=${failure.runId}`);
     expect(attention.attention).toHaveLength(1);
+    const detail = await fetchJson<{ retry_decision: { phase: string; action: string; reason_code: string } }>(
+      `/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`
+    );
+    expect(detail.retry_decision).toMatchObject({
+      phase: "exhausted",
+      action: "require_attention",
+      reason_code: "cost_budget_exhausted"
+    });
+  });
+
+  it("merges a new Attempt into an existing root-cause Attention and reopens it", async () => {
+    const failure = await failFirstAttempt(policyWorkflow.id);
+    const rootCauseKey = `run:${failure.runId}:node:${failure.nodeRunId}:retry:mock_failure`;
+    await writeFile(
+      path.join(tempWorkspace, "runs", failure.runId, "attention.json"),
+      `${JSON.stringify([{
+        attention_id: `att_${rootCauseKey.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+        root_cause_key: rootCauseKey,
+        title: "Resolved first failure",
+        severity: "P0",
+        status: "resolved",
+        related_objects: [
+          { type: "NodeRun", id: failure.nodeRunId },
+          { type: "NodeAttempt", id: failure.attempt.attempt_id }
+        ],
+        impact: { blocked_nodes: [failure.nodeRunId], waiting_agents: [], unaffected_paths: [] },
+        safe_actions: ["retry_manually"]
+      }], null, 2)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      retrySchedulePath(failure.runId),
+      `${JSON.stringify([{ ...failure.schedules[0], scheduled_for: "2020-01-01T00:00:00.000Z" }], null, 2)}\n`,
+      "utf8"
+    );
+
+    await fetchJson(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ max_nodes: 1 })
+    });
+
+    const attention = await fetchJson<{
+      attention: Array<{ root_cause_key: string; status: string; related_objects: Array<{ type: string; id: string }> }>;
+    }>(`/api/v0/attention?run_id=${failure.runId}`);
+    const item = attention.attention.find((candidate) => candidate.root_cause_key === rootCauseKey);
+    const attempts = item?.related_objects.filter((object) => object.type === "NodeAttempt").map((object) => object.id);
+    expect(item?.status).toBe("open");
+    expect(attempts).toEqual(expect.arrayContaining([
+      failure.attempt.attempt_id,
+      `attempt_${failure.attempt.operation_id}_2`
+    ]));
+  });
+
+  it("uses a complete NodeSpec retry policy for the first Attempt timeout", async () => {
+    const failure = await failFirstAttempt(policyWorkflow.id);
+    expect(failure.invocation.runtime_control.timeout_ms).toBe(1_234);
+    expect(failure.schedules[0]).toMatchObject({
+      attempt_number: 2,
+      scheduled_for: expect.any(String)
+    });
+  });
+
+  it("recovers a post-commit missing retry effect before direct execute and caps timeout by remaining budget", async () => {
+    const failure = await failFirstAttempt(policyWorkflow.id);
+    await writeFile(retrySchedulePath(failure.runId), "[]\n", "utf8");
+    const attempts = JSON.parse(await readFile(attemptsPath(failure.runId), "utf8")) as Array<Record<string, unknown>>;
+    const firstDispatch = new Date(Date.now() - 4_300).toISOString();
+    attempts[0] = { ...attempts[0], started_at: firstDispatch, dispatched_at: firstDispatch };
+    await writeFile(attemptsPath(failure.runId), `${JSON.stringify(attempts, null, 2)}\n`, "utf8");
+
+    const response = await fetch(`${baseUrl}/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    const body = await response.json() as {
+      invocation?: { runtime_control: { timeout_ms: number } };
+      error?: { code: string };
+    };
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body.invocation?.runtime_control.timeout_ms).toBeGreaterThan(0);
+    expect(body.invocation?.runtime_control.timeout_ms).toBeLessThan(1_000);
+    expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${failure.runId}`)).attempts).toHaveLength(2);
+  });
+
+  it("persists an exhausted tombstone and does not revive it from an old received_at", async () => {
+    const failure = await failFirstAttempt(policyWorkflow.id);
+    const attempts = JSON.parse(await readFile(attemptsPath(failure.runId), "utf8")) as Array<Record<string, unknown>>;
+    attempts[0] = {
+      ...attempts[0],
+      started_at: "2020-01-01T00:00:00.000Z",
+      dispatched_at: "2020-01-01T00:00:00.000Z",
+      created_at: "2020-01-01T00:00:00.100Z"
+    };
+    await writeFile(attemptsPath(failure.runId), `${JSON.stringify(attempts, null, 2)}\n`, "utf8");
+    await writeFile(
+      retrySchedulePath(failure.runId),
+      `${JSON.stringify([{ ...failure.schedules[0], scheduled_for: "2020-01-01T00:00:00.200Z" }], null, 2)}\n`,
+      "utf8"
+    );
+
+    await fetchJson(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ max_nodes: 1 })
+    });
+    await fetchJson(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ max_nodes: 1 })
+    });
+
+    expect(await new RetryScheduleStore({ workspace_dir: tempWorkspace }).list(failure.runId)).toEqual([]);
+    expect(JSON.parse(await readFile(retryStatePath(failure.runId), "utf8"))).toEqual([
+      expect.objectContaining({
+        operation_id: failure.attempt.operation_id,
+        phase: "exhausted",
+        reason_code: "time_budget_exhausted"
+      })
+    ]);
+    expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${failure.runId}`)).attempts).toHaveLength(1);
+  });
+
+  it("projects queued time exhaustion before Scheduler reconcile and keeps Scheduler consistent", async () => {
+    const failure = await failFirstAttempt(policyWorkflow.id);
+    const attempts = JSON.parse(await readFile(attemptsPath(failure.runId), "utf8")) as Array<Record<string, unknown>>;
+    attempts[0] = {
+      ...attempts[0],
+      started_at: "2020-01-01T00:00:00.000Z",
+      dispatched_at: "2020-01-01T00:00:00.000Z"
+    };
+    await writeFile(attemptsPath(failure.runId), `${JSON.stringify(attempts, null, 2)}\n`, "utf8");
+    await writeFile(
+      retrySchedulePath(failure.runId),
+      `${JSON.stringify([{ ...failure.schedules[0], scheduled_for: "2100-01-01T00:00:00.000Z" }], null, 2)}\n`,
+      "utf8"
+    );
+
+    const detail = await fetchJson<{ retry_decision: { phase: string; action: string; reason_code: string } }>(
+      `/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`
+    );
+    expect(detail.retry_decision).toMatchObject({
+      phase: "exhausted",
+      action: "require_attention",
+      reason_code: "time_budget_exhausted"
+    });
+
+    const dryRun = await fetchJson<{
+      decisions: Array<{ decision: string; reason_code: string; retry_decision: { phase: string } }>;
+      executable: unknown[];
+    }>(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+    });
+    expect(dryRun.decisions[0]).toMatchObject({
+      decision: "blocked",
+      reason_code: "time_budget_exhausted",
+      retry_decision: { phase: "exhausted" }
+    });
+    expect(dryRun.executable).toEqual([]);
   });
 
   it("rechecks elapsed time at Scheduler consumption and does not dispatch an exhausted retry", async () => {

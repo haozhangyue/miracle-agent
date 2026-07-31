@@ -69,6 +69,29 @@ const workflow: WorkflowSpec = {
   registry_meta: { source: "p6-integration-test", status: "experimental" }
 };
 
+const retryingWorkflow: WorkflowSpec = {
+  ...workflow,
+  id: "codex-retry-once-v0",
+  name: "Codex retry once workflow",
+  nodes: workflow.nodes.map((node) => ({
+    ...node,
+    failure_policy: {
+      ...node.failure_policy,
+      retry: 1,
+      retry_policy: {
+        max_attempts: 2,
+        backoff: "fixed",
+        initial_delay_ms: 0,
+        max_delay_ms: 0,
+        retryable_error_codes: ["adapter_process_error"],
+        attempt_timeout_ms: 5_000,
+        total_time_budget_ms: 30_000,
+        cost_budget: 5
+      }
+    }
+  }))
+};
+
 const multiOutputWorkflow: WorkflowSpec = {
   ...workflow,
   id: "codex-multi-output-v0",
@@ -444,6 +467,7 @@ describe("P6-07 Codex real single-node execution", () => {
     );
     await cp(fixtureWorkspace, tempWorkspace, { recursive: true });
     await writeFile(path.join(tempWorkspace, "workflows", `${workflow.id}.json`), `${JSON.stringify(workflow, null, 2)}\n`, "utf8");
+    await writeFile(path.join(tempWorkspace, "workflows", `${retryingWorkflow.id}.json`), `${JSON.stringify(retryingWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${multiOutputWorkflow.id}.json`), `${JSON.stringify(multiOutputWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${unsupportedOutputWorkflow.id}.json`), `${JSON.stringify(unsupportedOutputWorkflow, null, 2)}\n`, "utf8");
     await writeFile(path.join(tempWorkspace, "workflows", `${handoffWorkflow.id}.json`), `${JSON.stringify(handoffWorkflow, null, 2)}\n`, "utf8");
@@ -847,6 +871,78 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(await fakeCodexDispatchCount()).toBe(dispatchCountBeforeRecovery);
   });
 
+  it("retries one real Codex process failure once and remains at-most-once across restart, concurrency, and a stale schedule", async () => {
+    const markerBefore = await fakeCodexDispatchCount();
+    const launched = await launchConfirmedRun(retryingWorkflow.id, { force_fail_first_attempt: true });
+    const first = await fetchJson<{
+      executed: Array<{ result: { adapter_result: { status: string }; retry_decision: { phase?: string } } }>;
+    }>(`/api/v0/runs/${launched.run_id}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ max_nodes: 1 })
+    });
+    expect(first.executed[0]?.result.adapter_result.status).toBe("failed");
+    const schedules = JSON.parse(await readFile(
+      path.join(tempWorkspace, "runs", launched.run_id, "retry_schedule.json"),
+      "utf8"
+    )) as Array<Record<string, unknown>>;
+    expect(schedules).toHaveLength(1);
+    expect(await fakeCodexDispatchCount()).toBe(markerBefore + 1);
+
+    const bundleBeforeRetry = await fetchJson<{ nodes: Array<{ node_run_id: string }> }>(`/api/v0/runs/${launched.run_id}`);
+    const nodeRunId = bundleBeforeRetry.nodes[0]!.node_run_id;
+    await stopSidecar();
+    await startSidecar();
+    await Promise.all([
+      fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/scheduler/tick`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ max_nodes: 1 })
+      }),
+      fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/nodes/${nodeRunId}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      })
+    ]);
+
+    const completed = await fetchJson<{
+      attempts: Array<{ operation_id: string; attempt_number: number; status: string; error?: { code: string } }>;
+    }>(`/api/v0/runs/${launched.run_id}`);
+    expect(completed.attempts).toHaveLength(2);
+    expect(completed.attempts).toEqual([
+      expect.objectContaining({
+        attempt_number: 1,
+        status: "failed",
+        error: expect.objectContaining({ code: "adapter_process_error" })
+      }),
+      expect.objectContaining({ attempt_number: 2, status: "succeeded" })
+    ]);
+    expect(new Set(completed.attempts.map((attempt) => attempt.operation_id)).size).toBe(1);
+    expect(await fakeCodexDispatchCount()).toBe(markerBefore + 2);
+
+    await writeFile(
+      path.join(tempWorkspace, "runs", launched.run_id, "retry_schedule.json"),
+      `${JSON.stringify(schedules, null, 2)}\n`,
+      "utf8"
+    );
+    await stopSidecar();
+    await startSidecar();
+    await Promise.all([
+      fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/scheduler/tick`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ max_nodes: 1 })
+      }),
+      fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/nodes/${nodeRunId}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      })
+    ]);
+    expect(await fakeCodexDispatchCount()).toBe(markerBefore + 2);
+    expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${launched.run_id}`)).attempts).toHaveLength(2);
+  }, 30_000);
+
   it("does not steal another Sidecar instance mutation lock while requests are active", async () => {
     const launched = await launchConfirmedRun(workflow.id);
     const lockDir = path.join(tempWorkspace, "runs", launched.run_id, "locks", `${launched.run_id}.mutation.lock`);
@@ -1135,6 +1231,62 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(bundle.nodes).toEqual([expect.objectContaining({ node_id: "A_generate", status: "done" }), expect.objectContaining({ node_id: "B_consume", status: "done" })]);
     expect(snapshot.artifact_files).toEqual([expect.objectContaining({ hash: upstream.hash })]);
     await expect(readFile(path.join(runtimeWorkspace, "runtime", "attempts", downstreamAttempt.attempt_id, "input", snapshot.artifact_files[0]!.target_path), "utf8")).resolves.toContain("Miracle P6-07");
+  });
+
+  it("classifies a missing input artifact as blocked and opens one root-cause Attention", async () => {
+    const launched = await launchConfirmedRun(handoffWorkflow.id);
+    await fetchJson(`/api/v0/runs/${launched.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const before = await fetchJson<{
+      nodes: Array<{ node_id: string; node_run_id: string; status: string }>;
+      artifacts: Array<{ artifact_spec_ref?: string; path: string }>;
+    }>(`/api/v0/runs/${launched.run_id}`);
+    const upstream = before.artifacts.find((artifact) => artifact.artifact_spec_ref === "upstream_artifact")!;
+    const downstream = before.nodes.find((node) => node.node_id === "B_consume")!;
+    await rm(path.join(tempWorkspace, upstream.path));
+
+    const scheduled = await fetchJson<{
+      failed: Array<{ node_run_id: string; retry_decision?: { action: string } }>;
+      decisions: Array<{ node_run_id: string; decision: string; reason_code: string }>;
+      next_suggested_actions: string[];
+    }>(`/api/v0/runs/${launched.run_id}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ max_nodes: 1 })
+    });
+    const bundle = await fetchJson<{
+      nodes: Array<{ node_id: string; status: string }>;
+      attempts: Array<{ node_run_id: string; status: string; error?: { code: string; recoverable: boolean } }>;
+      attention: Array<{ root_cause_key: string; status: string; related_objects: Array<{ type: string; id: string }> }>;
+    }>(`/api/v0/runs/${launched.run_id}`);
+    const downstreamAttempt = bundle.attempts.find((attempt) => attempt.node_run_id === downstream.node_run_id)!;
+
+    expect(scheduled.failed).toEqual([
+      expect.objectContaining({
+        node_run_id: downstream.node_run_id,
+        retry_decision: expect.objectContaining({ action: "fail_terminal" })
+      })
+    ]);
+    expect(scheduled.decisions.find((decision) => decision.node_run_id === downstream.node_run_id)).toMatchObject({
+      decision: "blocked",
+      reason_code: "error_not_retryable"
+    });
+    expect(scheduled.next_suggested_actions).toEqual(["inspect_attention", "retry_manually"]);
+    expect(bundle.nodes.find((node) => node.node_id === "B_consume")).toMatchObject({ status: "blocked" });
+    expect(downstreamAttempt).toMatchObject({
+      status: "failed",
+      error: { code: "artifact_missing", recoverable: false }
+    });
+    expect(bundle.attention).toEqual([
+      expect.objectContaining({
+        root_cause_key: expect.stringContaining(":retry:artifact_missing"),
+        status: "open",
+        related_objects: expect.arrayContaining([
+          expect.objectContaining({ type: "NodeAttempt", id: expect.any(String) })
+        ])
+      })
+    ]);
   });
 
   it("keeps colliding normalized output IDs distinct in artifact identity and output path", async () => {

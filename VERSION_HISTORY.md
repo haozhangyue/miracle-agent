@@ -113,6 +113,14 @@
   持久化真实派发时间，Scheduler/直接 execute 在锁内按最新时间、成本和次数权威复核。
   重启恢复会补齐缺失的 `retry_scheduled`，unknown/invalid intent 在 Node detail 明确阻断，
   已提交 Attempt 后的陈旧 schedule 不会产生重复 dispatch。
+- P7-05 修复轮 2：schedule 创建按 `elapsed + delay` 校验，消费时不重复计入 backoff；
+  仓库外 append-only fake Codex counter 验证未知派发和事务恢复不会重复外部调用。
+- P7-05 修复轮 3：Core 统一归一真实 Codex outcome，支持 policy 配置的 confirmed timeout
+  和输出格式重试，凭证/权限/输入/Artifact 缺失统一 blocked + Attention。NodeSpec 支持完整
+  `retry_policy`，Attempt timeout 受剩余总预算硬截断；durable terminal tombstone 关闭
+  post-commit/pre-schedule 与旧时间复活窗口。Scheduler、Node detail 和 Web 共用
+  waiting/due/exhausted/blocked 投影，展示 attempts/time/cost 三类 used/limit，Attention
+  合并新 Attempt 并按需 reopen。
 
 ## 4. v0.8.0 发布记录
 

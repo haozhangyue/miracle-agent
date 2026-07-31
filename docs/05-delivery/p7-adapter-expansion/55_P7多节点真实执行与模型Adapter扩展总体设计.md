@@ -230,6 +230,13 @@ A_fact_input（脱敏事实输入）
 | 用户修改输入后重跑 | 创建新 operation | 否 |
 | 不可恢复 Adapter 错误 | NodeAttempt failed + Attention | 否 |
 
+Core classifier 是 Adapter outcome 的唯一归一化入口。真实 Codex
+`process_exit_nonzero` / `process_spawn_failed` 映射为 `adapter_process_error`，
+`process_timeout` 与 `timed_out` 同时成立时映射为 `adapter_timeout`，
+`invalid_adapter_output` 映射为 `adapter_output_invalid`。只有 policy 明确允许的
+归一化 code 才能自动 retry；`cancelled`、`aborted`、`unknown`、
+`dispatched_unknown` 和 `invalid_result` 始终阻断自动重派。
+
 ### 5.2 Operation 与 Attempt 规则
 
 | 场景 | `operation_id` | `NodeAttempt` |
@@ -262,6 +269,13 @@ P7 默认 `max_attempts <= 3`。如果超过时间、次数或成本预算，Orc
 
 默认和 legacy NodeSpec 映射使用保守有限 `cost_budget = 5`，模板可以显式覆盖；
 任何有效 RetryPolicy 都必须具有有限 cost budget。
+
+NodeSpec 可在 `failure_policy.retry_policy` 提供完整覆盖。首 Attempt 使用
+`attempt_timeout_ms`；retry Attempt 使用
+`min(attempt_timeout_ms, remaining_total_budget_ms)`，remaining 不大于 0 时不得派发。
+Sidecar 以原子 schedule 和 durable retry state 区分 `waiting_for_retry`、到期、
+`exhausted` 与 `blocked`；恢复扫描始终使用 current now，terminal tombstone 不会被旧
+`created_at` 复活。
 
 ## 6. 通用模型 API Adapter
 

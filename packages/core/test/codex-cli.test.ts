@@ -109,6 +109,45 @@ describe("P6-05 adapter contract", () => {
     });
   });
 
+  it("uses node attempt timeout and caps retry timeout by remaining total budget", () => {
+    const policyWorkflow = structuredClone(workflow);
+    policyWorkflow.nodes[0]!.failure_policy.retry_policy = {
+      max_attempts: 3,
+      backoff: "fixed",
+      initial_delay_ms: 1_000,
+      max_delay_ms: 1_000,
+      retryable_error_codes: ["adapter_timeout"],
+      attempt_timeout_ms: 1_250,
+      total_time_budget_ms: 5_000,
+      cost_budget: 5
+    };
+
+    expect(createAdapterInvocation({
+      runSpec,
+      workflow: policyWorkflow,
+      nodeRun,
+      createdAt: "2026-07-13T00:00:01.000Z"
+    }).runtime_control.timeout_ms).toBe(1_250);
+    expect(createAdapterInvocation({
+      runSpec,
+      workflow: policyWorkflow,
+      nodeRun,
+      createdAt: "2026-07-13T00:00:01.000Z",
+      operationId: "op_retry_timeout",
+      attemptNumber: 2,
+      remainingTotalBudgetMs: 700
+    }).runtime_control.timeout_ms).toBe(700);
+    expect(() => createAdapterInvocation({
+      runSpec,
+      workflow: policyWorkflow,
+      nodeRun,
+      createdAt: "2026-07-13T00:00:01.000Z",
+      operationId: "op_retry_exhausted",
+      attemptNumber: 2,
+      remainingTotalBudgetMs: 0
+    })).toThrow(/remaining total retry budget/i);
+  });
+
   it("requires result, receipt, and artifact descriptor audit fields to agree", () => {
     const invocation = createInvocation();
     const result = executeMockAdapter({ invocation, workflow, receivedAt: "2026-07-13T00:00:02.000Z" });

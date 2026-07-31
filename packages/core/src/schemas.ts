@@ -6,7 +6,8 @@ import type {
   NodeExecutionDecision,
   ResolvedNodeInput,
   RetryPolicy,
-  RetryScheduleRecord
+  RetryScheduleRecord,
+  RetryStateRecord
 } from "./types";
 
 const credentialScopeSchema = z.object({
@@ -38,6 +39,7 @@ export const nodeSpecSchema = z.object({
   failure_policy: z.object({
     retry: z.number().int().min(0),
     cost_budget: z.number().finite().min(0).optional(),
+    retry_policy: z.lazy(() => retryPolicySchema).optional(),
     on_missing_input: z.enum(["blocked", "failed"]),
     on_provider_failure: z.enum(["blocked", "failed"])
   })
@@ -351,15 +353,17 @@ export const adapterResultSchema = z.object({
 
 const finiteNonNegativeNumber = z.number().finite().min(0);
 const finitePositiveNumber = z.number().finite().positive();
+const finiteNonNegativeMs = finiteNonNegativeNumber.int();
+const finitePositiveMs = finitePositiveNumber.int();
 
 export const retryPolicySchema: z.ZodType<RetryPolicy> = z.object({
   max_attempts: z.number().finite().int().min(1).max(3),
   backoff: z.enum(["fixed", "exponential"]),
-  initial_delay_ms: finiteNonNegativeNumber,
-  max_delay_ms: finiteNonNegativeNumber,
+  initial_delay_ms: finiteNonNegativeMs,
+  max_delay_ms: finiteNonNegativeMs,
   retryable_error_codes: z.array(z.string().min(1)),
-  attempt_timeout_ms: finitePositiveNumber,
-  total_time_budget_ms: finitePositiveNumber,
+  attempt_timeout_ms: finitePositiveMs,
+  total_time_budget_ms: finitePositiveMs,
   cost_budget: finiteNonNegativeNumber,
   manual_confirmation_after: z.number().finite().int().min(1).max(3).optional()
 }).superRefine((policy, context) => {
@@ -395,6 +399,24 @@ export const retryScheduleRecordSchema: z.ZodType<RetryScheduleRecord> = z.objec
   reason_code: z.string().min(1),
   scheduled_for: z.string().datetime(),
   budget_snapshot: retryBudgetSnapshotSchema
+});
+
+export const retryStateRecordSchema: z.ZodType<RetryStateRecord> = z.object({
+  operation_id: z.string().min(1),
+  node_run_id: z.string().min(1),
+  phase: z.enum(["waiting_for_retry", "exhausted", "blocked"]),
+  reason_code: z.string().min(1),
+  decision: z.object({
+    action: z.enum(["schedule_retry", "require_attention", "fail_terminal"]),
+    phase: z.enum(["waiting_for_retry", "due", "exhausted", "blocked"]).optional(),
+    reason_code: z.string().min(1),
+    operation_id: z.string().min(1),
+    next_attempt_number: z.number().int().min(2).optional(),
+    delay_ms: finiteNonNegativeMs.optional(),
+    scheduled_for: z.string().datetime().optional(),
+    budget_snapshot: retryBudgetSnapshotSchema
+  }),
+  updated_at: z.string().datetime()
 });
 
 export function parseAdapterResultForInvocation(invocation: AdapterInvocation, result: AdapterResult): AdapterResult {

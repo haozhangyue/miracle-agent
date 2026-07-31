@@ -143,6 +143,12 @@ if (args[0] === "exec") {
       const launchContext = await readFile(path.resolve(workDir, "../input/launch_context.json"), "utf8")
         .then((value) => JSON.parse(value))
         .catch(() => ({}));
+      const attemptId = path.basename(path.resolve(workDir, ".."));
+      if (launchContext.inputs?.force_fail_first_attempt && !attemptId.endsWith("_2")) {
+        process.stdout.write('{"type":"thread.started","thread_id":"thread_retry_once"}\n');
+        process.stderr.write("stateful fake first attempt failure\n");
+        process.exit(9);
+      }
       if (launchContext.inputs?.force_slow_output) {
         await new Promise((resolve) => setTimeout(resolve, 150));
       }

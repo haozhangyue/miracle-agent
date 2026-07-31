@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { decideRetry, retryPolicySchema } from "../src";
+import {
+  decideRetry,
+  nodeSpecSchema,
+  resolveNodeRetryPolicy,
+  retryPolicySchema,
+  type NodeSpec
+} from "../src";
 
 const basePolicy = {
   max_attempts: 3,
@@ -17,6 +23,20 @@ const rateLimitError = {
   message: "Provider asked the caller to retry later.",
   recoverable: true
 };
+
+function retryNode(failurePolicy: NodeSpec["failure_policy"]): NodeSpec {
+  return {
+    id: "retry_node",
+    name: "Retry node",
+    type: "agent",
+    capability_requirements: [],
+    recommended_libraries: [],
+    agent_candidates: [],
+    inputs: [],
+    outputs: [],
+    failure_policy: failurePolicy
+  };
+}
 
 function failedAttempt(input: {
   attemptNumber: number;
@@ -41,6 +61,84 @@ function failedAttempt(input: {
 }
 
 describe("RetryPolicy", () => {
+  it("maps legacy failure policy and honors a complete validated retry_policy override", () => {
+    expect(resolveNodeRetryPolicy(retryNode({
+      retry: 1,
+      cost_budget: 2,
+      on_missing_input: "blocked",
+      on_provider_failure: "failed"
+    }))).toMatchObject({
+      max_attempts: 2,
+      cost_budget: 2,
+      attempt_timeout_ms: 1_800_000
+    });
+
+    const override = {
+      max_attempts: 3,
+      backoff: "exponential" as const,
+      initial_delay_ms: 250,
+      max_delay_ms: 2_000,
+      retryable_error_codes: ["adapter_timeout"],
+      attempt_timeout_ms: 700,
+      total_time_budget_ms: 1_500,
+      cost_budget: 9,
+      manual_confirmation_after: 2
+    };
+    const node = retryNode({
+      retry: 0,
+      cost_budget: 1,
+      retry_policy: override,
+      on_missing_input: "blocked",
+      on_provider_failure: "failed"
+    });
+    expect(nodeSpecSchema.parse(node).failure_policy.retry_policy).toEqual(override);
+    expect(resolveNodeRetryPolicy(node)).toEqual(override);
+  });
+
+  it("rejects incomplete or invalid NodeSpec retry_policy overrides while accepting legacy specs", () => {
+    expect(() => nodeSpecSchema.parse(retryNode({
+      retry: 1,
+      on_missing_input: "blocked",
+      on_provider_failure: "failed"
+    }))).not.toThrow();
+
+    const valid = {
+      ...basePolicy,
+      retryable_error_codes: ["adapter_process_error"]
+    };
+    for (const retryPolicy of [
+      { ...valid, cost_budget: undefined },
+      { ...valid, max_attempts: 4 },
+      { ...valid, attempt_timeout_ms: Number.POSITIVE_INFINITY },
+      { ...valid, initial_delay_ms: 2_000, max_delay_ms: 1_000 }
+    ]) {
+      expect(() => nodeSpecSchema.parse(retryNode({
+        retry: 1,
+        retry_policy: retryPolicy as typeof valid,
+        on_missing_input: "blocked",
+        on_provider_failure: "failed"
+      }))).toThrow();
+    }
+  });
+
+  it("allows a confirmed normalized timeout to enter policy evaluation", () => {
+    const attempt = {
+      ...failedAttempt({ attemptNumber: 1, createdAt: "2026-07-31T00:00:00.000Z" }),
+      status: "timed_out" as const,
+      error: { code: "adapter_timeout", message: "Timed out", recoverable: true }
+    };
+
+    expect(decideRetry({
+      policy: { ...basePolicy, retryable_error_codes: ["adapter_timeout"] },
+      error: attempt.error,
+      attempts: [attempt],
+      now: "2026-07-31T00:00:01.000Z"
+    })).toMatchObject({
+      action: "schedule_retry",
+      next_attempt_number: 2
+    });
+  });
+
   it("reuses the operation and creates a later attempt for a retryable error", () => {
     const attempts = [failedAttempt({ attemptNumber: 1, createdAt: "2026-07-31T00:00:00.000Z", cost: 0.25 })];
 
@@ -170,6 +268,16 @@ describe("RetryPolicy", () => {
     })).toMatchObject({
       action: "schedule_retry",
       next_attempt_number: 2
+    });
+    expect(decideRetry({
+      policy,
+      error: rateLimitError,
+      attempts,
+      now: "2026-07-31T00:00:01.500Z",
+      mode: "consume"
+    })).toMatchObject({
+      action: "require_attention",
+      reason_code: "time_budget_exhausted"
     });
     expect(decideRetry({
       policy,

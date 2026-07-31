@@ -29,6 +29,7 @@ import { Background, Controls, MarkerType, ReactFlow, type Edge as FlowEdge, typ
 import { useEffect, useMemo, useState } from "react";
 import { artifactPreviewCapability, confidenceLabel, eventSortDescending, gapLabel, isHistoricalRun } from "./historical";
 import { canConfirmRunDraft, runDraftModeLabel, summarizeBranchImpact } from "./run-drafts";
+import { canExecuteNode, retryBudgetLabel } from "./retry-ui";
 
 type Page = "home" | "new" | "dryrun" | "run" | "attention" | "agents" | "artifacts" | "review" | "canvas" | "sync" | "evolution";
 type ApiState<T> = { loading: boolean; data?: T; error?: string; refreshing?: boolean; updatedAt?: number };
@@ -659,7 +660,11 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
     }
   }
   const selectedStatus = String(node.data?.node?.status ?? "");
-  const executable = ["queued", "running"].includes(selectedStatus);
+  const executable = canExecuteNode({
+    status: selectedStatus,
+    retryPhase: node.data?.retry_decision?.phase,
+    historical
+  });
 
   return (
     <section className="page">
@@ -751,7 +756,7 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
                   <div><strong>Retry 决策</strong><Pill value={node.data.retry_decision.action} /></div>
                   <span>{node.data.retry_decision.reason_code} · attempt {node.data.retry_decision.next_attempt_number ?? "-"}</span>
                   <small>{node.data.retry_decision.operation_id}{node.data.retry_decision.scheduled_for ? ` · ${node.data.retry_decision.scheduled_for}` : ""}</small>
-                  <small>budget · attempts {node.data.retry_decision.budget_snapshot?.attempts_used ?? "-"} / {node.data.retry_decision.budget_snapshot?.max_attempts ?? "-"} · cost {node.data.retry_decision.budget_snapshot?.cost_used ?? "-"}</small>
+                  <small>budget · {retryBudgetLabel(node.data.retry_decision.budget_snapshot)}</small>
                 </div>
               )}
               {selectedGateForNode && (

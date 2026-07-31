@@ -62,6 +62,7 @@ export interface NodeSpec {
   failure_policy: {
     retry: number;
     cost_budget?: number;
+    retry_policy?: RetryPolicy;
     on_missing_input: "blocked" | "failed";
     on_provider_failure: "blocked" | "failed";
   };
@@ -346,6 +347,7 @@ export interface RetryBudgetSnapshot {
 
 export interface RetryDecision {
   action: "schedule_retry" | "require_attention" | "fail_terminal";
+  phase?: "waiting_for_retry" | "due" | "exhausted" | "blocked";
   reason_code: string;
   operation_id: string;
   next_attempt_number?: number;
@@ -361,6 +363,15 @@ export interface RetryScheduleRecord {
   reason_code: string;
   scheduled_for: string;
   budget_snapshot: RetryBudgetSnapshot;
+}
+
+export interface RetryStateRecord {
+  operation_id: string;
+  node_run_id: string;
+  phase: "waiting_for_retry" | "exhausted" | "blocked";
+  reason_code: string;
+  decision: RetryDecision;
+  updated_at: string;
 }
 
 export interface TraceEvent {

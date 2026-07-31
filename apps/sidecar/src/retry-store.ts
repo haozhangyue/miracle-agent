@@ -1,4 +1,9 @@
-import { retryScheduleRecordSchema, type RetryScheduleRecord } from "@miracle/core";
+import {
+  retryScheduleRecordSchema,
+  retryStateRecordSchema,
+  type RetryScheduleRecord,
+  type RetryStateRecord
+} from "@miracle/core";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -54,6 +59,66 @@ export class RetryScheduleStore {
 
   private async writeAtomically(runId: string, records: RetryScheduleRecord[]) {
     const target = this.schedulePath(runId);
+    await mkdir(path.dirname(target), { recursive: true });
+    const temporary = `${target}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(
+        temporary,
+        `${JSON.stringify(records, null, 2)}\n`,
+        { encoding: "utf8", flag: "wx", mode: 0o600 }
+      );
+      await rename(temporary, target);
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
+  }
+}
+
+export class RetryStateStore {
+  private readonly workspaceDir: string;
+
+  constructor(input: { workspace_dir: string }) {
+    this.workspaceDir = path.resolve(input.workspace_dir);
+  }
+
+  private statePath(runId: string) {
+    if (!runId || path.basename(runId) !== runId) throw new Error("runId must be a single path segment");
+    return path.join(this.workspaceDir, "runs", runId, "retry_state.json");
+  }
+
+  async list(runId: string): Promise<RetryStateRecord[]> {
+    try {
+      const value = JSON.parse(await readFile(this.statePath(runId), "utf8")) as unknown;
+      if (!Array.isArray(value)) throw new Error("retry_state.json must contain an array");
+      const records = value.map((record) => retryStateRecordSchema.parse(record));
+      if (new Set(records.map((record) => record.operation_id)).size !== records.length) {
+        throw new Error("retry_state.json contains duplicate operations");
+      }
+      return records;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  async upsert(runId: string, record: RetryStateRecord) {
+    const parsed = retryStateRecordSchema.parse(record);
+    const current = await this.list(runId);
+    await this.writeAtomically(runId, [
+      ...current.filter((item) => item.operation_id !== parsed.operation_id),
+      parsed
+    ]);
+    return parsed;
+  }
+
+  async remove(runId: string, operationId: string) {
+    const current = await this.list(runId);
+    const next = current.filter((record) => record.operation_id !== operationId);
+    if (next.length !== current.length) await this.writeAtomically(runId, next);
+  }
+
+  private async writeAtomically(runId: string, records: RetryStateRecord[]) {
+    const target = this.statePath(runId);
     await mkdir(path.dirname(target), { recursive: true });
     const temporary = `${target}.${randomUUID()}.tmp`;
     try {

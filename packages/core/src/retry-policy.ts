@@ -1,5 +1,5 @@
 import { retryPolicySchema } from "./schemas";
-import type { NodeAttempt, RetryBudgetSnapshot, RetryDecision, RetryPolicy } from "./types";
+import type { NodeAttempt, NodeSpec, RetryBudgetSnapshot, RetryDecision, RetryPolicy } from "./types";
 
 export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   max_attempts: 3,
@@ -9,14 +9,24 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   retryable_error_codes: [
     "network_error",
     "rate_limit",
-    "codex_process_error",
-    "node_timeout",
+    "adapter_process_error",
+    "adapter_timeout",
+    "adapter_output_invalid",
     "mock_failure"
   ],
   attempt_timeout_ms: 1_800_000,
   total_time_budget_ms: 3_600_000,
   cost_budget: 5
 };
+
+export function resolveNodeRetryPolicy(node: NodeSpec): RetryPolicy {
+  if (node.failure_policy.retry_policy) return retryPolicySchema.parse(node.failure_policy.retry_policy);
+  return retryPolicySchema.parse({
+    ...DEFAULT_RETRY_POLICY,
+    max_attempts: Math.min(3, Math.max(1, node.failure_policy.retry + 1)),
+    cost_budget: node.failure_policy.cost_budget ?? DEFAULT_RETRY_POLICY.cost_budget
+  });
+}
 
 type RetryError = {
   code: string;
@@ -89,7 +99,9 @@ export function decideRetry(input: {
     const attemptNumber = attempt.attempt_number ?? 1;
     return attemptNumber > latestNumber ? attempt : latest;
   });
-  if (latestAttempt.status !== "failed") throw new Error("Only an explicit failed NodeAttempt may be retried");
+  if (!["failed", "timed_out"].includes(latestAttempt.status)) {
+    throw new Error("Only an explicit failed or confirmed timed_out NodeAttempt may be retried");
+  }
 
   const attemptsUsed = Math.max(...input.attempts.map((attempt) => attempt.attempt_number ?? 1));
   const firstAttemptAt = Math.min(...input.attempts.map(attemptDispatchTimestamp));
@@ -140,7 +152,10 @@ export function decideRetry(input: {
   const nextAttemptNumber = attemptsUsed + 1;
   const delayMs = backoffDelay(policy, nextAttemptNumber);
   const projectedElapsedMs = input.mode === "consume" ? elapsedMs : elapsedMs + delayMs;
-  if (projectedElapsedMs > policy.total_time_budget_ms) {
+  const timeBudgetExhausted = input.mode === "consume"
+    ? projectedElapsedMs >= policy.total_time_budget_ms
+    : projectedElapsedMs > policy.total_time_budget_ms;
+  if (timeBudgetExhausted) {
     return decision({
       action: "require_attention",
       reasonCode: "time_budget_exhausted",
