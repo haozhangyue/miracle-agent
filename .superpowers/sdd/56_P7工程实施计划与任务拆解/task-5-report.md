@@ -192,3 +192,43 @@ P7-06 已完成。功能提交：`dc4195d7f91721f44f11a12e4f4de0b5f2d281b3`（`�
 ### 已知限制
 
 - 终态 receipt 保留策略沿用 workspace receipt 机制；本任务不新增清理器。其路径受 operation_id 白名单约束，写入使用既有原子 JSON 写入流程。
+
+## 全局审查第四轮修复（2026-07-31）
+
+功能修复提交：`42374b222e594f1433a61f53b10c87c7e7d9279b`（`加固Model API收据安全与终态取消`）。报告提交：待提交。
+
+### RED
+
+`npm run test -w apps/sidecar -- model-api-server.test.ts`
+
+- 结果：失败，新增 3 个用例均复现问题。
+- schema 合法的 `source: "keychain"` Model API credential 被通用 adapter 选择提前筛掉，API 返回 `no_executable_adapter`，没有进入执行层的稳定 `credential_not_authorized` 防御。
+- receipt writer 延迟期间，AdapterResult 已产生但 execution 已完成；说明 active operation 直到 `await` 完成后才被移除，无法定义终态取消语义。
+- 预置 `model-api-operations` 为指向 workspace 外目录的 symlink 后，Model API 仍成功执行并会经该 symlink 写入 receipt。
+
+### GREEN 与验证
+
+1. `npm run test -w apps/sidecar -- model-api-server.test.ts`
+   - 结果：通过，7 tests。覆盖非 env credential source、完成到取消的确定性延迟窗口，以及预置 receipt root symlink 不发起 provider 请求且外部目录为空。
+2. `npm run typecheck -w apps/sidecar`
+   - 结果：通过。
+3. `npm run test`
+   - 结果：通过；Sidecar 12 files、213 tests，Web 3 files、9 tests，Core 8 files、125 tests。
+4. `npm run typecheck`
+   - 结果：通过；Core、Sidecar、Web 均通过。
+5. `npm run build`
+   - 结果：通过；Core、Sidecar、Web production build 均通过。
+6. `git diff --check`
+   - 结果：通过。
+
+### 修复说明
+
+- `apps/sidecar/src/server.ts`：Model API receipt root 固定为 canonical workspace 下的 `model-api-operations`。每次读写前均检查 root 是目录、不是 symlink、canonical path 未逃离 workspace；目录 handle 使用 `O_DIRECTORY | O_NOFOLLOW` 验证，写入前再复核 root。receipt 文件本身也用 `O_NOFOLLOW` 打开，写入仍保持原子临时文件 rename。
+- `apps/sidecar/src/server.ts`：AdapterResult 返回后的 `finally` 先同步从 active operation 移除并写入有界 terminal tombstone，之后才 await durable receipt 写入；取消端点在该窗口立即返回 `already_finished`。
+- `apps/sidecar/src/server.ts`：当正常选择没有 executable adapter 时，仅允许匹配 provider/capability 的 `model-api` manifest 进入其自身授权防御。非 `env` credential source 在读取环境变量和任何 provider 请求前固定返回 `credential_not_authorized`；其他 adapter 的选择保持原样。
+- `apps/sidecar/test/model-api-server.test.ts`：新增上述 API 集成测试，测试 fixture 断言 provider 无请求、API/持久化/events/log 不含 secret，并验证 symlink 外部目标没有生成文件。
+
+### 接口与范围
+
+- `MIRACLE_MODEL_API_RECEIPT_WRITE_DELAY_MS` 仅作为集成测试使用的可控 receipt 写入延迟，以稳定覆盖完成-取消窗口；默认 `0`，不改变正常运行。
+- Node.js 不提供跨平台 `openat` dirfd 写入 API；实现以 canonical path、`lstat`/`realpath`、目录 `O_NOFOLLOW` 打开和写入前复核来拒绝预置或检测到的替换。P7-06 未扩展到真实厂商 Driver、ProviderRouter 或 fallback，未引入 OpenAI SDK/官方服务。
