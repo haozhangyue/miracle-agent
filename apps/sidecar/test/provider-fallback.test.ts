@@ -232,6 +232,40 @@ describe("provider fallback orchestration", () => {
     expect(events.events.map((event) => event.type)).toEqual(expect.arrayContaining(["provider_fallback_started", "provider_fallback_completed"]));
   });
 
+  it("rejects healthy Provider profiles when the Model API Adapter is not executable", async () => {
+    const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow_id: fallbackWorkflow.id, execution_policy: "auto" })
+    });
+    const run = await runResponse.json() as { run_id: string; initial_node_runs: string[] };
+    expect(runResponse.status).toBe(201);
+    const firstResponse = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/execute`, { method: "POST" });
+    expect(firstResponse.status).toBe(200);
+
+    const manifestPath = path.join(workspace, "adapters/model-api.json");
+    const originalManifest = await readFile(manifestPath, "utf8");
+    const blockedManifest = JSON.parse(originalManifest) as { status: string };
+    blockedManifest.status = "blocked";
+    await writeFile(manifestPath, `${JSON.stringify(blockedManifest, null, 2)}\n`, "utf8");
+    try {
+      const secondResponse = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/execute`, { method: "POST" });
+      expect(secondResponse.status).toBe(200);
+      const routing = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/routing-decisions`)).json() as {
+        routing_decisions: Array<{
+          selected_provider_profile_id?: string;
+          rejected_candidates: Array<{ profile_id: string; reason_code: string }>;
+        }>;
+      };
+      expect(routing.routing_decisions.at(-1)?.selected_provider_profile_id).toBeUndefined();
+      expect(routing.routing_decisions.at(-1)?.rejected_candidates).toEqual(expect.arrayContaining([
+        { profile_id: "kimi-default", reason_code: "adapter_not_executable" }
+      ]));
+    } finally {
+      await writeFile(manifestPath, originalManifest, "utf8");
+    }
+  });
+
   it("projects a Run-owned routing history and rejects stale confirmation without a current decision", async () => {
     const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
       method: "POST",

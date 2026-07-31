@@ -953,6 +953,7 @@ async function buildProviderFallbackContext(input: {
 
   const catalog = await readProviderCatalogEntries();
   const availableCredentials = availableCredentialKeys();
+  const adapterManifests = await readAdapterManifests();
   const health = buildProviderHealthProjection(catalog, {
     credentialKeys: availableCredentials,
     driverProviderBindings: providerDriverRegistry.registeredDriverBindings()
@@ -964,15 +965,23 @@ async function buildProviderFallbackContext(input: {
     ?? (currentAdapterKind === "model-api" ? ["model-api" as const] : ["codex" as const]);
   const modelApiAllowed = allowedAdapterKinds.includes("model-api");
   const candidates = modelApiAllowed
-    ? catalog.filter((entry) => allowedProviders.has(entry.profile.provider)).map((entry, index) => {
+      ? catalog.filter((entry) => allowedProviders.has(entry.profile.provider)).map((entry, index) => {
         const projection = healthById.get(entry.profile.id);
         const fallbackIndex = fallbackOrder.indexOf(entry.profile.provider);
+        const adapterExecutable = adapterManifests.some((manifest) =>
+          manifest.kind === "model-api"
+          && manifest.status !== "blocked"
+          && manifest.runtime.can_execute
+          && manifest.supported_providers.includes(entry.profile.provider)
+          && input.nodeSpec.capability_requirements.every((capability) => manifest.capabilities.includes(capability))
+          && authorizeProviderCredential(manifest, entry.profile).authorized
+        );
         return {
           id: entry.profile.id,
           provider: entry.profile.provider,
           adapter_kind: "model-api" as const,
           capabilities: entry.capabilities,
-          executable: Boolean(projection?.driver_registered),
+          executable: Boolean(projection?.driver_registered) && adapterExecutable,
           credential_available: Boolean(projection?.credential.configured),
           health_status: projection?.health_status ?? "unavailable" as const,
           user_priority: entry.routing?.user_priority ?? (fallbackIndex >= 0 ? fallbackIndex : fallbackOrder.length + index + 100),
