@@ -32,8 +32,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 |---|---|
 | 当前产品版本 | `v0.8.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
-| 当前阶段 | P7-02 ExecutionPlan、P7-03 Artifact 交接、P7-04 Scheduler 与 P7-05 Retry 已完成 |
-| 当前任务焦点 | `P7-06` 通用 Model API Adapter |
+| 当前阶段 | P7-02 至 P7-06 已完成，已形成 Model API 通用兼容 Adapter 契约 |
+| 当前任务焦点 | `P7-07` DeepSeek/Kimi/MiniMax Provider Driver |
 | 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
 | P6 验收基线 | `54_P6回归验收与版本收口报告.md` |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
@@ -52,6 +52,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
   `input/artifacts/`；任何 hash、media type 或路径校验失败都不会启动 Codex。
 - Scheduler 每个 commit tick 都从完整 Run bundle 重算 ExecutionPlan，只执行 `execute` 决策；
   `execution_plan_calculated` 与 `node_inputs_resolved` 审计只记录 ID、数量和 reason code。
+- Model API Adapter 使用 Node.js 原生 `fetch` 处理兼容协议；用户只配置 ProviderProfile
+  的 `credential_ref`，不会在 Adapter 回执、错误或运行界面看到凭证值。
 
 ```text
 GET  /api/v0/adapters/codex-cli/health
@@ -356,7 +358,9 @@ Provider fallback 仍属于 P7-08，当前 Scheduler 不会自动切换 Provider
 
 默认自动 Attempt 总数不超过 3。策略只允许 fixed/exponential 退避，并拒绝负数、NaN、
 Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5，模板可显式覆盖。
-当前版本不实现 Provider fallback，也不调用真实第三方模型 API。
+当前版本不实现 Provider fallback。P7-06 已提供兼容协议的通用 transport 和 fixture
+契约，但 DeepSeek、Kimi、MiniMax 的真实 Driver 与验证仍属于 P7-07；本阶段不使用
+OpenAI SDK 或 OpenAI 官方 API。
 
 ## 6. 当前版本新增能力
 
@@ -365,6 +369,7 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 | P4 本地 MVP | Web、Sidecar、core、fixture workspace 形成可运行基线 | 用户可以本地启动并走通首页、Dry-run、Run、Attention、Agent、Artifact、Gate、Canvas |
 | Run 工作区 | DAG、Node Detail、Attempt、Scheduler、事件审计 | 用户能看清任务执行到哪个节点、为何暂停、如何继续 |
 | Retry 与恢复 | 到期排期、重启幂等、Attempt 历史、三类预算和根因 Attention | 用户能确认何时自动重试、预算为何停止，以及如何安全恢复 |
+| P7-06 通用 Model API Adapter | 兼容协议 transport、ProviderProfile、usage/receipt、timeout/取消/大小/JSON 错误边界和 fake provider 契约 | 用户可配置不含明文凭证的 ProviderProfile；真实厂商连接仍待 P7-07 |
 | Gate 审核 | approve/reject/request_changes、返工版本、决策投影 | 用户能处理审核、创建返工版本，并保留审计证据 |
 | Attention | 根因聚合和关联对象展开 | 用户能从异常直接定位 Agent、Node、Artifact、Gate |
 | Artifact Board | Artifact detail 和本地预览 | 用户能查看产物版本、审核状态和预览内容 |
@@ -423,6 +428,7 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 | `v0.8.0` / P6-08 | 真实工作流工程接入基线 | W24/W23 historical、RunDraft、真实 Codex、46 项 API 和多 Domain 完整验收 | 修复长 Run/Node/Artifact ID 导致事件审计文本重叠 | 用户可导入真实历史 Run、创建并确认草案、执行 Codex 单节点并进入人工 Gate；下一步为 P7-01 | 启动命令不变；真实导入和执行仍需显式环境变量 |
 | P7-02 / P7-03 / P7-04 | 多节点计划、Artifact 真实交接与连续调度 | 按端口、版本、hash 和 media type 解析输入；每 tick 重算 ExecutionPlan；Gate 暂停、批准恢复与拒绝阻断均有审计 | 修复路径逃逸、符号链接/硬链接、身份碰撞、部分提交、事件覆盖、运行锁抢占和 Gate 响应后锁残留风险 | 使用一次 Scheduler run 连续推进就绪节点，审核 Gate 后再次调度；审计不显示 Artifact 正文 | 启动命令不变；真实 Codex 仍需显式 opt-in |
 | P7-05 | Retry 与故障恢复 | 错误分类、fixed/exponential 退避、attempt/time/cost 预算、NodeAttempt 历史、重启恢复和 Attention 动作 | 修复混合 Gate/P0 blocker 被 Gate 动作遮蔽、legacy RetryState 锁竞争 500、旧 retry intent 重复 unknown 不稳定，以及并发读取 NodeRun 时偶发空 JSON | 在 Node detail 查看 retry 状态和预算；全局混合阻塞先处理 Attention，Gate 返工仍在节点详情可达 | 启动命令不变；`dispatched_unknown` 不会自动重派 |
+| P7-06 | 通用 Model API Adapter | `model-api` kind、兼容协议 transport、ProviderProfile、usage/receipt、稳定错误和 fake provider 测试契约 | 凭证仅通过运行时引用传递，不会进入 profile、回执或错误 | 暂无新增 UI；后续 Provider Driver 可复用此契约 | 启动命令不变；不使用 OpenAI SDK 或官方 API |
 
 ### 8.3 提交前同步检查
 
@@ -463,7 +469,8 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 1. 真实“热点工具更新”历史 Run importer 已实现 Sidecar API，Web 已支持 W24/W23 historical Run
    只读展示，但仍需使用仓库外 runtime workspace 才能看到真实导入数据。
 2. Codex CLI 已开放按 ExecutionPlan 的多节点连续调度、Gate 暂停/批准恢复和显式 failed
-   的限次 retry；Provider fallback、Hermes、OpenClaw 和模型 API 尚未开放。
+   的限次 retry；Model API 已具备通用兼容 transport，但 Provider fallback、Hermes、
+   OpenClaw 及 DeepSeek/Kimi/MiniMax 真实 Driver 尚未开放。
 3. 没有云端控制平面、多租户、账号、权限、计费和团队协作。
 4. 没有移动端或 APP 适配，本阶段只面向 Web 工作台。
 5. Infinite Canvas 仍是草稿态，不是完整自由画布产品。

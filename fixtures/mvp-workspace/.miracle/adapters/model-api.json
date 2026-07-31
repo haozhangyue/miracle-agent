@@ -1,0 +1,37 @@
+{
+  "id": "model-api-compatible-adapter",
+  "kind": "model-api",
+  "display_name": "Model API Compatible Adapter",
+  "version": "0.1.0",
+  "status": "experimental",
+  "description": "通用兼容协议 Model API Adapter。仅使用原生 HTTP transport，不绑定任何官方 SDK 或厂商服务。",
+  "execution_mode": "external",
+  "capabilities": ["model.call"],
+  "supported_providers": ["fixture-compatible"],
+  "default_provider": "fixture-compatible",
+  "required_credentials": [
+    {
+      "key": "MODEL_API_FIXTURE_CREDENTIAL",
+      "label": "Model API fixture credential",
+      "source": "env",
+      "required": true,
+      "providers": ["fixture-compatible"]
+    }
+  ],
+  "provider_profiles": [
+    {
+      "id": "fixture-compatible-default",
+      "provider": "fixture-compatible",
+      "model": "fixture-chat",
+      "base_url": "http://127.0.0.1:9999",
+      "api_path": "/v1/chat/completions",
+      "credential_ref": "MODEL_API_FIXTURE_CREDENTIAL",
+      "verification_status": "configured_unverified"
+    }
+  ],
+  "runtime": {
+    "local_executor": "external-api",
+    "can_execute": true,
+    "entrypoint": "openai-compatible"
+  }
+}

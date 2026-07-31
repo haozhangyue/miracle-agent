@@ -89,7 +89,13 @@ export function createAdapterInvocation(input: {
     node_run_id: input.nodeRun.node_run_id,
     node_id: input.nodeRun.node_id,
     adapter_kind: adapterKind,
-    adapter_id: input.adapterId ?? (adapterKind === "codex" ? "codex-mock-compatible-adapter" : "mock-local-adapter"),
+    adapter_id: input.adapterId ?? (
+      adapterKind === "codex"
+        ? "codex-mock-compatible-adapter"
+        : adapterKind === "model-api"
+          ? "model-api-compatible-adapter"
+          : "mock-local-adapter"
+    ),
     provider: input.nodeRun.provider ?? input.runSpec.resolved_provider_policy.default_provider,
     capability_requirements: nodeSpec.capability_requirements,
     input_artifacts: input.nodeRun.upstream_artifacts,

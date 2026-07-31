@@ -7,7 +7,8 @@ import type {
   ResolvedNodeInput,
   RetryPolicy,
   RetryScheduleRecord,
-  RetryStateRecord
+  RetryStateRecord,
+  ProviderProfile
 } from "./types";
 
 const credentialScopeSchema = z.object({
@@ -233,9 +234,22 @@ export const adapterCredentialRequirementSchema = z.object({
   providers: z.array(z.string()).optional()
 });
 
+export const providerProfileSchema: z.ZodType<ProviderProfile> = z.object({
+  id: z.string().min(1),
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  base_url: z.string().url().refine((value) => {
+    const url = new URL(value);
+    return url.username.length === 0 && url.password.length === 0;
+  }, "base_url must not contain credentials"),
+  api_path: z.string().startsWith("/").optional(),
+  credential_ref: z.string().min(1),
+  verification_status: z.enum(["configured_unverified", "healthy", "degraded", "unavailable"])
+}).strict();
+
 export const adapterManifestSchema = z.object({
   id: z.string(),
-  kind: z.enum(["mock-local", "codex", "hermes", "openclaw", "official-api"]),
+  kind: z.enum(["mock-local", "codex", "hermes", "openclaw", "official-api", "model-api"]),
   display_name: z.string(),
   version: z.string(),
   status: z.enum(["draft", "experimental", "stable", "deprecated", "blocked"]),
@@ -245,6 +259,7 @@ export const adapterManifestSchema = z.object({
   supported_providers: z.array(z.string()),
   default_provider: z.string(),
   required_credentials: z.array(adapterCredentialRequirementSchema),
+  provider_profiles: z.array(providerProfileSchema).optional(),
   runtime: z.object({
     local_executor: z.enum(["mock-runner", "codex-cli", "external-api", "not-implemented"]),
     can_execute: z.boolean(),
@@ -252,7 +267,7 @@ export const adapterManifestSchema = z.object({
   })
 });
 
-const adapterKindSchema = z.enum(["mock-local", "codex", "hermes", "openclaw", "official-api"]);
+const adapterKindSchema = z.enum(["mock-local", "codex", "hermes", "openclaw", "official-api", "model-api"]);
 const adapterStatusSchema = z.enum(["succeeded", "failed", "timed_out", "cancelled", "aborted", "unknown"]);
 
 export const adapterRuntimeControlSchema = z.object({
@@ -296,7 +311,12 @@ export const providerReceiptSchema = z.object({
   external_session_id: z.string().min(1).optional(),
   cost: z.number().min(0).optional(),
   latency_ms: z.number().min(0).optional(),
-  raw_receipt_id: z.string().min(1).optional()
+  raw_receipt_id: z.string().min(1).optional(),
+  usage: z.object({
+    input_tokens: z.number().int().nonnegative().optional(),
+    output_tokens: z.number().int().nonnegative().optional(),
+    total_tokens: z.number().int().nonnegative().optional()
+  }).optional()
 });
 
 export const adapterArtifactDescriptorSchema = z.object({

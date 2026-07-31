@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.8.0` |
 | 版本名称 | 真实工作流工程接入基线 |
-| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-05 已完成，当前任务为 `P7-06` 通用 Model API Adapter |
+| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-06 已完成，当前任务为 `P7-07` DeepSeek/Kimi/MiniMax Provider Driver |
 | 基线提交 | P6-08 收口提交（见 Git HEAD） |
 | 基线日期 | 2026-07-16 |
 | 最终评审 | 通过 |
@@ -127,6 +127,15 @@
   旧 retry dispatch intent 缺少 deadline 时按首个 Attempt 总预算原子补齐，重复
   `dispatched_unknown` 请求保持稳定 409 且不重复派发。真实派发的 NodeRun running/rollback
   状态改为原子 replace，避免并发读取 Run Bundle 时短暂读到空 JSON。
+- 完成 P7-06 通用 Model API Adapter：新增 `model-api` 可执行 Adapter kind、
+  `ProviderProfile`、`ProviderDriver` 和 `ModelApiAdapter` 分层。兼容协议仅指 HTTP
+  传输格式，不引入 OpenAI SDK，也不调用 OpenAI 官方服务。
+- Adapter 使用 Node.js 原生 `fetch`，统一执行 timeout、外部 AbortSignal、响应大小上限、
+  JSON 解析、usage、provider receipt 和稳定 HTTP/transport 错误映射；ProviderProfile
+  只持久化 `credential_ref`，回执、错误、日志和测试快照不写入明文 credential。
+- 新增 fake provider server，覆盖 success、401、429、500、慢响应、无效 JSON、usage
+  缺失和超大响应；本轮不实现 DeepSeek/Kimi/MiniMax Driver、ProviderRouter 或 fallback。
+- 同步 task-baseline：`P7-06` 标记完成，`current_node_id` 推进到 `p7-07`。
 
 ## 4. v0.8.0 发布记录
 

@@ -220,7 +220,7 @@ export interface AdapterInvocation {
   run_id: string;
   node_run_id: string;
   node_id: string;
-  adapter_kind: "mock-local" | "codex" | "hermes" | "openclaw" | "official-api";
+  adapter_kind: "mock-local" | "codex" | "hermes" | "openclaw" | "official-api" | "model-api";
   adapter_id: string;
   provider: string;
   capability_requirements: string[];
@@ -236,6 +236,51 @@ export interface AdapterInvocation {
   prompt_path: string;
   output_schema_path: string;
   dispatched_at: string;
+}
+
+export type ProviderVerificationStatus = "configured_unverified" | "healthy" | "degraded" | "unavailable";
+
+export interface ProviderProfile {
+  id: string;
+  provider: string;
+  model: string;
+  base_url: string;
+  api_path?: string;
+  credential_ref: string;
+  verification_status: ProviderVerificationStatus;
+}
+
+export interface AdapterError {
+  code: string;
+  message: string;
+  recoverable: boolean;
+}
+
+export interface ModelApiRequest {
+  invocation: AdapterInvocation;
+  profile: ProviderProfile;
+  credential: string;
+  prompt?: string;
+}
+
+export interface ModelApiUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+}
+
+export interface NormalizedModelResponse {
+  output_text?: string;
+  usage?: ModelApiUsage;
+  external_session_id?: string;
+  raw_receipt_id?: string;
+}
+
+export interface ProviderDriver {
+  id: string;
+  buildRequest(input: ModelApiRequest): { url: string; init: RequestInit };
+  parseResponse(input: { response: Response; body: unknown; profile: ProviderProfile }): NormalizedModelResponse;
+  mapError(input: { response?: Response; error?: unknown }): AdapterError;
 }
 
 export interface AdapterRuntimeControl {
@@ -268,6 +313,7 @@ export interface AdapterManifest {
   supported_providers: string[];
   default_provider: string;
   required_credentials: AdapterCredentialRequirement[];
+  provider_profiles?: ProviderProfile[];
   runtime: {
     local_executor: "mock-runner" | "codex-cli" | "external-api" | "not-implemented";
     can_execute: boolean;
@@ -307,6 +353,7 @@ export interface ProviderReceipt extends Record<string, unknown> {
   cost?: number;
   latency_ms?: number;
   raw_receipt_id?: string;
+  usage?: ModelApiUsage;
 }
 
 export interface AdapterResult {

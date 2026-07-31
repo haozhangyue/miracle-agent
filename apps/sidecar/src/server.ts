@@ -66,6 +66,8 @@ import { CodexCliAdapter, CodexCliAdapterError, type CodexCliHealth } from "./co
 import { assertUniqueArtifactTargetPaths, resolveArtifactInputFiles } from "./artifact-input-resolver";
 import { NodeOutputContractError, buildNodeOutputContract } from "./node-output-contract";
 import { codexPreflightFailure, startCodexOperation } from "./codex-real-adapter";
+import { ModelApiAdapter } from "./model-api-adapter";
+import { openAiCompatibleDriver } from "./provider-drivers/openai-compatible";
 import {
   RetryScheduleStore,
   RetryStateStore,
@@ -1470,13 +1472,13 @@ function selectAdapterForNode(input: {
   );
 }
 
-function executeSidecarAdapter(input: {
+async function executeSidecarAdapter(input: {
   invocation: ReturnType<typeof createAdapterInvocation>;
   workflow: WorkflowSpec;
   nodeRun: NodeRun;
   adapter: AdapterRegistryEntry;
   receivedAt?: string;
-}): AdapterResult {
+}): Promise<AdapterResult> {
   const receivedAt = input.receivedAt ?? new Date().toISOString();
   if (!input.adapter.executable) {
     return {
@@ -1525,6 +1527,34 @@ function executeSidecarAdapter(input: {
   if (input.nodeRun.provider === "mock-invalid-receipt") {
     const result = executeMockAdapter({ invocation: input.invocation, workflow: input.workflow, receivedAt });
     return { ...result, provider_receipt: { ...result.provider_receipt, operation_id: "op_mismatched" } };
+  }
+  if (input.adapter.kind === "model-api") {
+    const profile = input.adapter.provider_profiles?.find((candidate) => candidate.provider === input.invocation.provider);
+    if (!profile) {
+      return buildAdapterUnavailableResult({
+        invocation: input.invocation,
+        message: `No ProviderProfile is configured for provider ${input.invocation.provider}.`,
+        errorCode: "provider_profile_missing",
+        recoverable: false,
+        receivedAt
+      });
+    }
+    const credential = process.env[profile.credential_ref];
+    if (!credential) {
+      return buildAdapterUnavailableResult({
+        invocation: input.invocation,
+        message: `Credential reference ${profile.credential_ref} is not configured.`,
+        errorCode: "credential_missing",
+        recoverable: false,
+        receivedAt
+      });
+    }
+    return new ModelApiAdapter({ driver: openAiCompatibleDriver }).execute({
+      invocation: input.invocation,
+      profile,
+      credential,
+      signal: new AbortController().signal
+    });
   }
   if (input.adapter.execution_mode !== "mock-compatible") {
     return {
@@ -2699,7 +2729,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       rawResult = executed.result;
     } else {
       rawResult = adapter
-        ? executeSidecarAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, adapter, receivedAt: new Date().toISOString() })
+        ? await executeSidecarAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, adapter, receivedAt: new Date().toISOString() })
         : (() => {
           const blockedHealth = realCodexEnabled(runSpec) ? blockedCodexHealthError(codexHealth) : undefined;
           return buildAdapterUnavailableResult({
