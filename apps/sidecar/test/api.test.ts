@@ -952,6 +952,7 @@ describe("sidecar api", () => {
     const profiles = manifest.provider_profiles as Array<Record<string, unknown>>;
     manifest.status = status;
     manifest.required_credentials = [{ key: credential, label: "Fixture credential", source, required: true, providers: ["fixture-compatible"] }];
+    manifest.provider_profiles = [profiles[0]!];
     profiles[0]!.credential_ref = credential;
     const workflow = {
       id: "model-api-unavailable-v0",

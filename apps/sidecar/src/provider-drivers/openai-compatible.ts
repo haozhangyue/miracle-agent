@@ -1,4 +1,5 @@
 import type { AdapterError, ModelApiRequest, NormalizedModelResponse, ProviderDriver } from "@miracle/core";
+import { ProviderRequestInvalidError } from "../provider-driver-errors";
 
 function errorForStatus(status: number): AdapterError {
   if (status === 401) return { code: "authentication_failed", message: "Provider rejected the configured credential.", recoverable: false };
@@ -31,20 +32,25 @@ function isOriginRelativeApiPath(value: string) {
 }
 
 function compatibleEndpoint(input: ModelApiRequest) {
-  const baseUrl = new URL(input.profile.base_url);
-  const apiPath = input.profile.api_path ?? "/v1/chat/completions";
-  if (!isOriginRelativeApiPath(apiPath)) throw new Error("provider_api_path_invalid");
-  const endpoint = new URL(apiPath, baseUrl);
-  if (
-    endpoint.origin !== baseUrl.origin
-    || endpoint.username.length > 0
-    || endpoint.password.length > 0
-    || baseUrl.username.length > 0
-    || baseUrl.password.length > 0
-  ) {
-    throw new Error("provider_api_path_invalid");
+  try {
+    const baseUrl = new URL(input.profile.base_url);
+    const apiPath = input.profile.api_path ?? "/v1/chat/completions";
+    if (!isOriginRelativeApiPath(apiPath)) throw new ProviderRequestInvalidError();
+    const endpoint = new URL(apiPath, baseUrl);
+    if (
+      endpoint.origin !== baseUrl.origin
+      || endpoint.username.length > 0
+      || endpoint.password.length > 0
+      || baseUrl.username.length > 0
+      || baseUrl.password.length > 0
+    ) {
+      throw new ProviderRequestInvalidError();
+    }
+    return endpoint;
+  } catch (error) {
+    if (error instanceof ProviderRequestInvalidError) throw error;
+    throw new ProviderRequestInvalidError();
   }
-  return endpoint;
 }
 
 export const openAiCompatibleDriver: ProviderDriver = {
@@ -76,15 +82,17 @@ export const openAiCompatibleDriver: ProviderDriver = {
     const content = message?.content;
     if (typeof content !== "string") throw new Error("compatible_response_missing_message_content");
     const usage = asRecord(body?.usage);
+    const inputTokens = tokenCount(usage?.prompt_tokens);
+    const outputTokens = tokenCount(usage?.completion_tokens);
+    const totalTokens = tokenCount(usage?.total_tokens);
+    const normalizedUsage = {
+      ...(inputTokens !== undefined ? { input_tokens: inputTokens } : {}),
+      ...(outputTokens !== undefined ? { output_tokens: outputTokens } : {}),
+      ...(totalTokens !== undefined ? { total_tokens: totalTokens } : {})
+    };
     return {
       output_text: content,
-      ...(usage ? {
-        usage: {
-          input_tokens: tokenCount(usage.prompt_tokens),
-          output_tokens: tokenCount(usage.completion_tokens),
-          total_tokens: tokenCount(usage.total_tokens)
-        }
-      } : {}),
+      ...(Object.keys(normalizedUsage).length > 0 ? { usage: normalizedUsage } : {}),
       ...(typeof body?.id === "string" ? { raw_receipt_id: body.id } : {})
     };
   },

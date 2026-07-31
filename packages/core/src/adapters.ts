@@ -127,14 +127,22 @@ export function parseAdapterManifests(input: unknown[]): AdapterManifest[] {
   return input.map(parseAdapterManifest);
 }
 
-export function buildAdapterRegistry(input: { manifests: AdapterManifest[]; availableCredentials?: string[] }): AdapterRegistryEntry[] {
+export function buildAdapterRegistry(input: { manifests: AdapterManifest[]; availableCredentials?: string[]; provider?: string }): AdapterRegistryEntry[] {
   const availableCredentials = new Set(input.availableCredentials ?? []);
   return input.manifests.map((manifest) => {
     const credentialStatus = manifest.required_credentials.map((credential) => ({
       ...credential,
       configured: credential.source === "env" ? availableCredentials.has(credential.key) : false
     }));
-    const missingRequiredCredentials = credentialStatus.filter((credential) => credential.required && !credential.configured);
+    const missingRequiredCredentials = credentialStatus.filter((credential) =>
+      credential.required
+      && !credential.configured
+      && (
+        input.provider === undefined
+        || credential.providers === undefined
+        || credential.providers.includes(input.provider)
+      )
+    );
     const unavailableReasons = [
       ...(manifest.status === "blocked" ? ["adapter_blocked"] : []),
       ...(!manifest.runtime.can_execute ? ["runtime_not_executable"] : []),
@@ -160,7 +168,11 @@ export function selectAdapterManifest(input: {
   preferredKinds?: AdapterInvocation["adapter_kind"][];
   availableCredentials?: string[];
 }): AdapterRegistryEntry | undefined {
-  const registry = buildAdapterRegistry({ manifests: input.manifests, availableCredentials: input.availableCredentials });
+  const registry = buildAdapterRegistry({
+    manifests: input.manifests,
+    availableCredentials: input.availableCredentials,
+    provider: input.provider
+  });
   const preferredKinds = new Set(input.preferredKinds ?? []);
   return registry
     .filter((adapter) => adapter.executable)

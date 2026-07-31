@@ -66,8 +66,17 @@ function writeJson(res: import("node:http").ServerResponse, status: number, body
 function successBody(provider: string, withUsage = true) {
   return {
     id: "provider-receipt-001",
-    choices: [{ message: { content: "provider completion" } }],
-    ...(withUsage ? { usage: { prompt_tokens: 3, completion_tokens: 5, total_tokens: 8, cached_tokens: 2, total_characters: 99 } } : {}),
+    choices: [{ message: { content: "provider completion", reasoning_content: "provider reasoning" } }],
+    ...(withUsage ? {
+      usage: {
+        prompt_tokens: 3,
+        completion_tokens: 5,
+        total_tokens: 8,
+        cached_tokens: 2,
+        total_characters: 99,
+        completion_tokens_details: { reasoning_tokens: 4 }
+      }
+    } : {}),
     ...(provider === "minimax" ? { base_resp: { status_code: 0, status_msg: "" } } : {})
   };
 }
@@ -81,9 +90,7 @@ beforeAll(async () => {
     received.push({ url, headers: request.headers, body });
     const mode = url.searchParams.get("mode") ?? "success";
     const provider = String(body.model).replace(/^fixture-/, "").replace(/-model$/, "");
-    if (mode === "401") return writeJson(response, 401, { error: { message: secret } });
-    if (mode === "429") return writeJson(response, 429, { error: { message: secret } });
-    if (mode === "500") return writeJson(response, 500, { error: { message: secret } });
+    if (mode.startsWith("status-")) return writeJson(response, Number(mode.slice("status-".length)), { error: { message: secret } });
     if (mode === "slow") return void setTimeout(() => writeJson(response, 200, successBody(provider)), 250);
     if (mode === "invalid-json") {
       response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
@@ -91,8 +98,37 @@ beforeAll(async () => {
       return;
     }
     if (mode === "oversized") return writeJson(response, 200, { ...successBody(provider), choices: [{ message: { content: "x".repeat(2_000) } }] });
+    if (mode === "partial-usage") {
+      return writeJson(response, 200, {
+        ...successBody(provider),
+        usage: { prompt_tokens: 3, completion_tokens: -1, total_tokens: 3, cached_tokens: 2, total_characters: 99 }
+      });
+    }
+    if (mode === "invalid-usage") {
+      return writeJson(response, 200, {
+        ...successBody(provider),
+        usage: { prompt_tokens: -1, completion_tokens: "5", total_tokens: 8.5, cached_tokens: 2, total_characters: 99 }
+      });
+    }
+    if (mode === "missing-choices") return writeJson(response, 200, { ...successBody(provider), choices: undefined });
+    if (mode === "missing-message") return writeJson(response, 200, { ...successBody(provider), choices: [{}] });
+    if (mode === "non-string-content") return writeJson(response, 200, { ...successBody(provider), choices: [{ message: { content: 42 } }] });
     if (mode.startsWith("base-resp-")) {
-      return writeJson(response, 200, { ...successBody("minimax"), base_resp: { status_code: mode.slice("base-resp-".length) === "missing" ? undefined : Number(mode.slice("base-resp-".length)), status_msg: secret } });
+      const value = mode.slice("base-resp-".length);
+      const statusCode = value === "missing"
+        ? undefined
+        : value === "string"
+          ? "0"
+          : value === "float"
+            ? 0.5
+            : Number(value);
+      return writeJson(response, 200, {
+        ...successBody("minimax"),
+        base_resp: {
+          ...(statusCode !== undefined ? { status_code: statusCode } : {}),
+          status_msg: secret
+        }
+      });
     }
     return writeJson(response, 200, successBody(provider, mode !== "missing-usage"));
   });
@@ -133,7 +169,8 @@ describe("provider driver loopback contracts", () => {
     received.length = 0;
     const result = await new ModelApiAdapter({ driver, max_response_bytes: 10_000 }).execute({ invocation: invocation(provider), profile: profile(provider, apiPath, credentialRef), credential: secret, prompt: "fake-server prompt", signal: new AbortController().signal });
 
-    expect(result).toMatchObject({ status: "succeeded", provider_receipt: { model: `fixture-${provider}-model`, raw_receipt_id: "provider-receipt-001", usage: { input_tokens: 3, output_tokens: 5, total_tokens: 8 } } });
+    expect(result).toMatchObject({ status: "succeeded", provider_receipt: { model: `fixture-${provider}-model`, raw_receipt_id: "provider-receipt-001" } });
+    expect(result.provider_receipt.usage).toEqual({ input_tokens: 3, output_tokens: 5, total_tokens: 8 });
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ url: expect.objectContaining({ hostname: "127.0.0.1", pathname: apiPath }), headers: expect.objectContaining({ authorization: `Bearer ${secret}` }), body: expect.objectContaining({ model: `fixture-${provider}-model` }) });
@@ -145,13 +182,57 @@ describe("provider driver loopback contracts", () => {
     expect(result.provider_receipt).not.toHaveProperty("usage");
   });
 
-  it.each(providerCases.flatMap(([provider, driver, apiPath, credentialRef]) => ([
-    [provider, driver, apiPath, credentialRef, "401", "authentication_failed", false],
-    [provider, driver, apiPath, credentialRef, "429", "provider_rate_limited", true],
-    [provider, driver, apiPath, credentialRef, "500", "provider_unavailable", true]
-  ] as const)))("maps %s HTTP %s without exposing the response body", async (provider, driver, apiPath, credentialRef, mode, code, recoverable) => {
-    const result = await new ModelApiAdapter({ driver }).execute({ invocation: invocation(provider), profile: profile(provider, apiPath, credentialRef, mode), credential: secret, signal: new AbortController().signal });
+  it.each(providerCases)("keeps only valid canonical %s usage fields", async (provider, driver, apiPath, credentialRef) => {
+    const adapter = new ModelApiAdapter({ driver });
+    const partial = await adapter.execute({ invocation: invocation(provider), profile: profile(provider, apiPath, credentialRef, "partial-usage"), credential: secret, signal: new AbortController().signal });
+    const invalid = await adapter.execute({ invocation: invocation(provider), profile: profile(provider, apiPath, credentialRef, "invalid-usage"), credential: secret, signal: new AbortController().signal });
+    expect(partial.provider_receipt.usage).toEqual({ input_tokens: 3, total_tokens: 3 });
+    expect(invalid.provider_receipt).not.toHaveProperty("usage");
+  });
+
+  it.each(providerCases.flatMap(([provider, driver, apiPath, credentialRef]) => [
+    ["missing-choices", provider, driver, apiPath, credentialRef],
+    ["missing-message", provider, driver, apiPath, credentialRef],
+    ["non-string-content", provider, driver, apiPath, credentialRef]
+  ] as const))("rejects %s content from %s", async (mode, provider, driver, apiPath, credentialRef) => {
+    const result = await new ModelApiAdapter({ driver }).execute({
+      invocation: invocation(provider),
+      profile: profile(provider, apiPath, credentialRef, mode),
+      credential: secret,
+      signal: new AbortController().signal
+    });
+    expect(result).toMatchObject({ status: "failed", error: { code: "provider_response_invalid", recoverable: false } });
+  });
+
+  it.each(providerCases.flatMap(([provider, driver, apiPath, credentialRef]) => [
+    [provider, driver, apiPath, credentialRef, 400, "provider_http_error", false],
+    [provider, driver, apiPath, credentialRef, 401, "authentication_failed", false],
+    [provider, driver, apiPath, credentialRef, 402, "provider_http_error", false],
+    [provider, driver, apiPath, credentialRef, 403, "permission_denied", false],
+    [provider, driver, apiPath, credentialRef, 404, "provider_endpoint_not_found", false],
+    [provider, driver, apiPath, credentialRef, 408, "provider_timeout", true],
+    [provider, driver, apiPath, credentialRef, 413, "provider_request_too_large", false],
+    [provider, driver, apiPath, credentialRef, 418, "provider_http_error", false],
+    [provider, driver, apiPath, credentialRef, 422, "provider_http_error", false],
+    [provider, driver, apiPath, credentialRef, 429, "provider_rate_limited", true],
+    [provider, driver, apiPath, credentialRef, 500, "provider_unavailable", true],
+    [provider, driver, apiPath, credentialRef, 503, "provider_unavailable", true],
+    [provider, driver, apiPath, credentialRef, 504, "provider_unavailable", true],
+    [provider, driver, apiPath, credentialRef, 599, "provider_unavailable", true]
+  ] as const))("maps %s HTTP status through the stable contract", async (provider, driver, apiPath, credentialRef, status, code, recoverable) => {
+    const result = await new ModelApiAdapter({ driver }).execute({ invocation: invocation(provider), profile: profile(provider, apiPath, credentialRef, `status-${status}`), credential: secret, signal: new AbortController().signal });
     expect(result).toMatchObject({ status: "failed", error: { code, recoverable } });
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it.each(providerCases)("maps a loopback %s transport failure without leaking credentials", async (provider, driver, apiPath, credentialRef) => {
+    const result = await new ModelApiAdapter({ driver }).execute({
+      invocation: invocation(provider),
+      profile: { ...profile(provider, apiPath, credentialRef), base_url: "http://127.0.0.1:1", api_path: apiPath },
+      credential: secret,
+      signal: new AbortController().signal
+    });
+    expect(result).toMatchObject({ status: "failed", error: { code: "provider_network_error", recoverable: true } });
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
@@ -171,7 +252,7 @@ describe("provider driver loopback contracts", () => {
     ]);
   });
 
-  it.each(["1004", "1002", "1039", "1026", "2013", "missing", "not-an-integer"])("rejects MiniMax HTTP 200 base_resp status_code %s", async (statusCode) => {
+  it.each(["1004", "1002", "1039", "1026", "2013", "string", "float", "missing"])("rejects MiniMax HTTP 200 base_resp status_code %s", async (statusCode) => {
     const result = await new ModelApiAdapter({ driver: minimaxDriver }).execute({
       invocation: invocation("minimax"),
       profile: profile("minimax", "/v1/chat/completions", "MINIMAX_API_KEY", `base-resp-${statusCode}`),
@@ -180,6 +261,29 @@ describe("provider driver loopback contracts", () => {
     });
     expect(result).toMatchObject({ status: "failed", error: { code: "provider_response_invalid", recoverable: false } });
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it.each([
+    ["deepseek", deepseekDriver, "/v1/chat/completions", "http://127.0.0.1", "DEEPSEEK_API_KEY"],
+    ["kimi", kimiDriver, "https://example.invalid/v1/chat/completions", "http://127.0.0.1", "MOONSHOT_API_KEY"],
+    ["minimax", minimaxDriver, "/v1/chat/completions", "http://user:password@127.0.0.1", "MINIMAX_API_KEY"]
+  ])("maps invalid local %s request configuration without fetch", async (provider, driver, apiPath, configuredBaseUrl, credentialRef) => {
+    const requestCountBefore = received.length;
+    const result = await new ModelApiAdapter({ driver }).execute({
+      invocation: invocation(provider),
+      profile: {
+        ...profile(provider, "/v1/chat/completions", credentialRef),
+        base_url: configuredBaseUrl,
+        api_path: apiPath
+      },
+      credential: secret,
+      signal: new AbortController().signal
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      error: { code: "provider_request_invalid", recoverable: false }
+    });
+    expect(received).toHaveLength(requestCountBefore);
   });
 });
 

@@ -1613,6 +1613,28 @@ function selectAdapterForNode(input: {
   );
 }
 
+function missingModelApiCredential(input: {
+  manifests: AdapterManifest[];
+  node: WorkflowSpec["nodes"][number];
+  provider: string;
+  availableCredentials: string[];
+}) {
+  const availableCredentials = new Set(input.availableCredentials);
+  const candidate = input.manifests.find((manifest) =>
+    manifest.kind === "model-api"
+    && manifest.status !== "blocked"
+    && manifest.runtime.can_execute
+    && manifest.supported_providers.includes(input.provider)
+    && input.node.capability_requirements.every((capability) => manifest.capabilities.includes(capability))
+  );
+  return candidate?.required_credentials.find((credential) =>
+    credential.required
+    && credential.source === "env"
+    && (credential.providers === undefined || credential.providers.includes(input.provider))
+    && !availableCredentials.has(credential.key)
+  )?.key;
+}
+
 async function executeSidecarAdapter(input: {
   invocation: ReturnType<typeof createAdapterInvocation>;
   workflow: WorkflowSpec;
@@ -2851,6 +2873,9 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     const adapter = realCodexEnabled(runSpec)
       ? (useRealCodex ? codexRealAdapterEntry() : undefined)
       : selectAdapterForNode({ manifests, node: nodeSpec, provider, availableCredentials });
+    const missingProviderCredential = !adapter && !realCodexEnabled(runSpec)
+      ? missingModelApiCredential({ manifests, node: nodeSpec, provider, availableCredentials })
+      : undefined;
     const invocationAdapter = realCodexEnabled(runSpec) ? codexRealAdapterEntry() : adapter;
     let existingIntent = await readNodeDispatchIntent(dispatchIntentPath, {
       runId,
@@ -2945,10 +2970,16 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
           const blockedHealth = realCodexEnabled(runSpec) ? blockedCodexHealthError(codexHealth) : undefined;
           return buildAdapterUnavailableResult({
             invocation,
-            message: realCodexEnabled(runSpec) && codexHealth?.status !== "healthy"
-              ? `Codex CLI is not healthy: ${codexHealth?.reasons.join(", ") ?? "health unavailable"}`
-              : `No executable adapter supports NodeSpec ${targetNodeRun.node_id} capabilities: ${nodeSpec?.capability_requirements.join(", ") ?? "unknown"}`,
-            ...(blockedHealth ? { errorCode: blockedHealth.code, recoverable: blockedHealth.recoverable } : {}),
+            message: missingProviderCredential
+              ? `Credential reference ${missingProviderCredential} is not configured.`
+              : realCodexEnabled(runSpec) && codexHealth?.status !== "healthy"
+                ? `Codex CLI is not healthy: ${codexHealth?.reasons.join(", ") ?? "health unavailable"}`
+                : `No executable adapter supports NodeSpec ${targetNodeRun.node_id} capabilities: ${nodeSpec?.capability_requirements.join(", ") ?? "unknown"}`,
+            ...(missingProviderCredential
+              ? { errorCode: "credential_missing", recoverable: false }
+              : blockedHealth
+                ? { errorCode: blockedHealth.code, recoverable: blockedHealth.recoverable }
+                : {}),
             receivedAt: new Date().toISOString()
           });
         })();

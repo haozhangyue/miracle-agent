@@ -14,6 +14,7 @@ import {
   selectAdapterManifest,
   validateWorkflowSpec,
   type GateInstance,
+  type AdapterManifest,
   type NodeRun,
   type WorkflowSpec
 } from "../src";
@@ -177,5 +178,41 @@ describe("workflow validation", () => {
     expect(officialApi?.credential_status.some((credential) => credential.key === "PROVIDER_API_KEY" && !credential.configured)).toBe(true);
     expect(officialApi?.executable).toBe(false);
     expect(selected).toMatchObject({ id: "codex-mock-compatible-adapter", kind: "codex", execution_mode: "mock-compatible", executable: true });
+  });
+
+  it.each([
+    ["deepseek", "DEEPSEEK_API_KEY"],
+    ["kimi", "MOONSHOT_API_KEY"],
+    ["minimax", "MINIMAX_API_KEY"]
+  ])("selects the Model API adapter for %s with only its provider-scoped credential", (provider, credentialKey) => {
+    const manifest = {
+      id: "model-api-compatible-adapter",
+      kind: "model-api",
+      display_name: "Model API Compatible Adapter",
+      version: "0.1.0",
+      status: "experimental",
+      description: "Provider-scoped credential selection fixture.",
+      execution_mode: "external",
+      capabilities: ["model.call"],
+      supported_providers: ["deepseek", "kimi", "minimax"],
+      default_provider: "deepseek",
+      required_credentials: [
+        { key: "DEEPSEEK_API_KEY", label: "DeepSeek", source: "env", required: true, providers: ["deepseek"] },
+        { key: "MOONSHOT_API_KEY", label: "Kimi", source: "env", required: true, providers: ["kimi"] },
+        { key: "MINIMAX_API_KEY", label: "MiniMax", source: "env", required: true, providers: ["minimax"] }
+      ],
+      runtime: { local_executor: "external-api", can_execute: true }
+    } satisfies AdapterManifest;
+
+    expect(selectAdapterManifest({
+      manifests: [manifest],
+      capabilityRequirements: ["model.call"],
+      provider,
+      availableCredentials: [credentialKey]
+    })).toMatchObject({
+      id: "model-api-compatible-adapter",
+      executable: true,
+      unavailable_reasons: []
+    });
   });
 });

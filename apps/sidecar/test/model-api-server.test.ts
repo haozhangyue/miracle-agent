@@ -199,7 +199,7 @@ describe("Model API Sidecar integration", () => {
     const outputBefore = providerOutput;
     const { runId, nodeRunId } = await createModelRun("minimax");
     const response = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
-    expect(await response.json()).toMatchObject({ adapter_result: { status: "failed", error: { code: "no_executable_adapter" } } });
+    expect(await response.json()).toMatchObject({ adapter_result: { status: "failed", error: { code: "credential_missing", recoverable: false } } });
     expect(providerOutput.slice(outputBefore.length)).not.toContain("provider-authorization:");
   });
 

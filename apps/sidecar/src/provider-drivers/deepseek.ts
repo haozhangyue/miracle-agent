@@ -1,13 +1,14 @@
 import type { ModelApiRequest, ProviderDriver } from "@miracle/core";
+import { ProviderRequestInvalidError } from "../provider-driver-errors";
 import { openAiCompatibleDriver } from "./openai-compatible";
 
 function requireDeepSeekApiPath(input: ModelApiRequest) {
   try {
     if (!input.profile.api_path || new URL(input.profile.api_path, "https://miracle.invalid").pathname !== "/chat/completions") {
-      throw new Error("deepseek_api_path_invalid");
+      throw new ProviderRequestInvalidError();
     }
   } catch {
-    throw new Error("deepseek_api_path_invalid");
+    throw new ProviderRequestInvalidError();
   }
 }
 

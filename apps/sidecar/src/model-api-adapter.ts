@@ -1,4 +1,5 @@
 import type { AdapterError, AdapterInvocation, AdapterResult, ModelApiUsage, NormalizedModelResponse, ProviderDriver, ProviderProfile } from "@miracle/core";
+import { ProviderRequestInvalidError } from "./provider-driver-errors";
 
 type ObservedNormalizedResponse = Readonly<Omit<NormalizedModelResponse, "usage">> & {
   readonly usage?: Readonly<ModelApiUsage>;
@@ -24,7 +25,6 @@ type AbortKind = "timeout" | "cancelled";
 
 class ProviderResponseTooLargeError extends Error {}
 class ProviderResponseInvalidError extends Error {}
-class ProviderRequestInvalidError extends Error {}
 
 function abortSignals(input: { signal: AbortSignal; timeout_ms: number }) {
   const controller = new AbortController();
