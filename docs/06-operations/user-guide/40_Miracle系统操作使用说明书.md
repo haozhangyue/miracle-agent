@@ -430,7 +430,11 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 
    decision、operation、当前 kind、活动 RetrySchedule 或目标 Profile 任一不匹配时返回
    `409 routing_decision_not_current`。Decision 按 revision 追加保存，确认不会修改历史 Attempt，
-   也不会把未验证 Provider 自动升级为 healthy。
+   也不会把未验证 Provider 自动升级为 healthy。Sidecar 恢复时会校验已持久化 Invocation
+   中的精确 Profile；尚未派发且路由已变化时原子更新目标，派发结果未知时仍保持 409、不自动重派。
+   早期缺少 `decision_id/revision` 的开发数据会被确定性补齐。同一 Provider
+   有多个 Profile 时，只排除 receipt 明确记录的失败 Profile；旧 Attempt 缺少 Profile ID 时，
+   该 Provider 的全部 Profile 都不会自动 fallback，需要选择其他 Provider 或人工处理。
 
 ## 6. 当前版本新增能力
 
@@ -502,6 +506,7 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 | P7-05 | Retry 与故障恢复 | 错误分类、fixed/exponential 退避、attempt/time/cost 预算、NodeAttempt 历史、重启恢复和 Attention 动作 | 修复混合 Gate/P0 blocker 被 Gate 动作遮蔽、legacy RetryState 锁竞争 500、旧 retry intent 重复 unknown 不稳定，以及并发读取 NodeRun 时偶发空 JSON | 在 Node detail 查看 retry 状态和预算；全局混合阻塞先处理 Attention，Gate 返工仍在节点详情可达 | 启动命令不变；`dispatched_unknown` 不会自动重派 |
 | P7-06 | 通用 Model API Adapter | `model-api` kind、兼容协议 transport、ProviderProfile、usage/receipt、稳定错误和 fake provider 测试契约 | 凭证仅通过运行时引用传递，不会进入 profile、回执或错误 | 暂无新增 UI；后续 Provider Driver 可复用此契约 | 启动命令不变；不使用 OpenAI SDK 或官方 API |
 | P7-07 | DeepSeek/Kimi/MiniMax Provider Driver | 三家 Driver、Profile、`GET /api/v0/providers`、错误合同和安全 smoke 路径 | MiniMax `base_resp` 最小兼容检查、未知 Driver 拒绝且无 fallback | 新增 Provider 配置、状态检查与显式 smoke 操作 | 需设置对应 Key 且显式 `MIRACLE_ENABLE_MODEL_API=1`；本轮三家凭证均缺失、真实 smoke 未执行，均非 healthy |
+| P7-08 | Provider 路由与 fallback | 确定性 Profile 路由、同类自动 fallback、跨 kind 人工确认和 Run 级审计 | 修复恢复 Invocation 丢失/陈旧 Profile、旧 Decision 无法确认、同 Provider 多 Profile 误排除 | 操作入口不变；prepared 恢复可跟随当前路由，unknown 不重派，旧开发数据可继续读取和确认 | 启动命令不变；未验证 Provider 仍不可执行 |
 
 ### 8.3 提交前同步检查
 

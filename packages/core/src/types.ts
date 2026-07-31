@@ -321,6 +321,7 @@ export interface ProviderRoutingInput {
   allowed_adapter_kinds: Array<"codex" | "model-api">;
   current_adapter_kind?: "codex" | "model-api";
   failed_profile_id?: string;
+  failed_provider_id?: string;
   failure?: {
     error_code: string;
     status: AttemptStatus;

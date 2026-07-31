@@ -1,10 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  createAdapterInvocation,
+  type NodeAttempt,
+  type NodeRun,
+  type RetryScheduleRecord,
+  type RunSpec,
+  type WorkflowSpec
+} from "@miracle/core";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const fixtureWorkspace = path.join(repoRoot, "fixtures/mvp-workspace/.miracle");
@@ -16,7 +25,7 @@ let baseUrl = "";
 let output = "";
 let providerBaseUrl = "";
 
-const fallbackWorkflow = {
+const fallbackWorkflow: WorkflowSpec = {
   id: "provider-fallback-v0",
   name: "Provider fallback test",
   version: "0.1.0",
@@ -234,6 +243,12 @@ async function prepareCrossKindRetry(operationId: string) {
   return { runId: run.run_id, nodeRunId };
 }
 
+function nodeDispatchIntentPath(runId: string, nodeRunId: string) {
+  const prefix = nodeRunId.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 48) || "node";
+  const suffix = createHash("sha256").update(nodeRunId).digest("hex").slice(0, 16);
+  return path.join(workspace, "runs", runId, "dispatches", `${prefix}_${suffix}.json`);
+}
+
 describe("provider fallback orchestration", () => {
   it("reuses the operation id and creates a new Attempt when falling back from DeepSeek 429 to Kimi", async () => {
     const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
@@ -309,6 +324,203 @@ describe("provider fallback orchestration", () => {
       });
     } finally {
       await rm(alternatePath, { force: true });
+    }
+  });
+
+  it("reroutes a prepared fallback dispatch intent when the selected Profile changes before dispatch", async () => {
+    const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow_id: fallbackWorkflow.id, execution_policy: "auto" })
+    });
+    const run = await runResponse.json() as { run_id: string; initial_node_runs: string[] };
+    const nodeRunId = run.initial_node_runs[0]!;
+    const first = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}/execute`, { method: "POST" })).json() as {
+      invocation: { operation_id: string };
+    };
+    const bundle = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}`)).json() as {
+      run: RunSpec;
+      nodes: NodeRun[];
+      attempts: NodeAttempt[];
+    };
+    const schedule = (JSON.parse(await readFile(path.join(workspace, `runs/${run.run_id}/retry_schedule.json`), "utf8")) as RetryScheduleRecord[])[0]!;
+    const firstDispatchedAt = bundle.attempts[0]!.dispatched_at!;
+    const operationDeadlineAt = new Date(Date.parse(firstDispatchedAt) + 30_000).toISOString();
+    const preparedAt = new Date().toISOString();
+    const invocation = createAdapterInvocation({
+      runSpec: bundle.run,
+      workflow: fallbackWorkflow,
+      nodeRun: { ...bundle.nodes[0]!, provider: "kimi" },
+      createdAt: preparedAt,
+      adapterKind: "model-api",
+      adapterId: "model-api-compatible-adapter",
+      resolvedInputs: [],
+      operationId: schedule.operation_id,
+      attemptNumber: schedule.attempt_number,
+      providerProfileId: "kimi-default",
+      remainingTotalBudgetMs: Date.parse(operationDeadlineAt) - Date.parse(preparedAt)
+    });
+    const intentPath = nodeDispatchIntentPath(run.run_id, nodeRunId);
+    await mkdir(path.dirname(intentPath), { recursive: true });
+    await writeFile(intentPath, `${JSON.stringify({
+      node_run_id: nodeRunId,
+      invocation,
+      decision: { reason_code: schedule.reason_code, resolved_input_count: 0, resolved_input_ids: [] },
+      event: {
+        event_id: `evt_${invocation.attempt_id}_inputs_resolved`,
+        run_id: run.run_id,
+        type: "node_inputs_resolved",
+        subject: { type: "NodeRun", id: nodeRunId },
+        message: `NodeRun ${nodeRunId} resolved 0 input(s); reason_code=${schedule.reason_code}`,
+        created_at: preparedAt
+      },
+      state: "prepared",
+      prepared_at: preparedAt,
+      operation_deadline_at: operationDeadlineAt
+    }, null, 2)}\n`, "utf8");
+
+    const sourcePath = path.join(workspace, "providers/kimi.json");
+    const replacementPath = path.join(workspace, "providers/kimi-recovery.json");
+    const replacement = JSON.parse(await readFile(sourcePath, "utf8")) as {
+      id: string;
+      display_name: string;
+      profile: { id: string; model: string };
+      routing: { user_priority: number; cost_tier: number };
+    };
+    replacement.id = "kimi-recovery";
+    replacement.display_name = "kimi recovery";
+    replacement.profile.id = "kimi-recovery-profile";
+    replacement.profile.model = "kimi-recovery-fixture";
+    replacement.routing = { user_priority: 0, cost_tier: 0 };
+    await writeFile(replacementPath, `${JSON.stringify(replacement, null, 2)}\n`, "utf8");
+    try {
+      const resumed = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}/execute`, { method: "POST" });
+      expect(resumed.status).toBe(200);
+      expect(await resumed.json()).toMatchObject({
+        invocation: { operation_id: first.invocation.operation_id, provider_profile_id: "kimi-recovery-profile" },
+        adapter_result: { status: "succeeded", provider_receipt: { provider_profile_id: "kimi-recovery-profile" } }
+      });
+    } finally {
+      await rm(replacementPath, { force: true });
+    }
+  });
+
+  it("migrates a legacy routing Decision before reusing the same routing result", async () => {
+    const operationId = "op_cross_kind_legacy_decision";
+    const { runId, nodeRunId } = await prepareCrossKindRetry(operationId);
+    expect((await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" })).status).toBe(409);
+    const firstHistory = await (await fetch(`${baseUrl}/api/v0/runs/${runId}/routing-decisions`)).json() as {
+      routing_decisions: Array<Record<string, unknown>>;
+    };
+    const legacy = { ...firstHistory.routing_decisions[0] };
+    delete legacy.decision_id;
+    delete legacy.revision;
+    await writeFile(path.join(workspace, `runs/${runId}/routing_decisions.json`), `${JSON.stringify([legacy], null, 2)}\n`, "utf8");
+
+    expect((await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" })).status).toBe(409);
+    const migrated = await (await fetch(`${baseUrl}/api/v0/runs/${runId}/routing-decisions`)).json() as {
+      routing_decisions: Array<{ decision_id?: string; revision?: number }>;
+    };
+    expect(migrated.routing_decisions).toHaveLength(1);
+    expect(migrated.routing_decisions[0]).toMatchObject({ revision: 1 });
+    expect(migrated.routing_decisions[0]?.decision_id).toMatch(/^route_[a-f0-9]{24}$/);
+  });
+
+  it("excludes the exact failed Profile when one Provider has multiple Profiles", async () => {
+    const sourcePath = path.join(workspace, "providers/kimi.json");
+    const failedPath = path.join(workspace, "providers/zz-kimi-failed.json");
+    const deepseekPath = path.join(workspace, "providers/deepseek.json");
+    const originalDeepseek = await readFile(deepseekPath, "utf8");
+    const failedProfile = JSON.parse(await readFile(sourcePath, "utf8")) as {
+      id: string;
+      display_name: string;
+      profile: { id: string; model: string };
+      routing: { user_priority: number; cost_tier: number };
+    };
+    failedProfile.id = "kimi-z-failed";
+    failedProfile.display_name = "kimi failed profile";
+    failedProfile.profile.id = "kimi-z-failed-profile";
+    failedProfile.profile.model = "kimi-failed-fixture";
+    failedProfile.routing = { user_priority: 0, cost_tier: 0 };
+    const deepseek = JSON.parse(originalDeepseek) as { routing: { user_priority: number; cost_tier: number } };
+    deepseek.routing = { user_priority: 100, cost_tier: 100 };
+    await writeFile(failedPath, `${JSON.stringify(failedProfile, null, 2)}\n`, "utf8");
+    await writeFile(deepseekPath, `${JSON.stringify(deepseek, null, 2)}\n`, "utf8");
+    try {
+      const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workflow_id: fallbackWorkflow.id, execution_policy: "auto" })
+      });
+      const run = await runResponse.json() as { run_id: string; initial_node_runs: string[] };
+      const nodeRunId = run.initial_node_runs[0]!;
+      const firstResponse = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}/execute`, { method: "POST" });
+      const first = await firstResponse.json() as { invocation: { operation_id: string } };
+      const attemptsPath = path.join(workspace, `runs/${run.run_id}/attempts.json`);
+      const attempts = JSON.parse(await readFile(attemptsPath, "utf8")) as NodeAttempt[];
+      attempts[0] = {
+        ...attempts[0]!,
+        provider_receipt: {
+          ...attempts[0]!.provider_receipt!,
+          provider: "kimi",
+          provider_profile_id: "kimi-z-failed-profile",
+          model: "kimi-failed-fixture"
+        }
+      };
+      await writeFile(attemptsPath, `${JSON.stringify(attempts, null, 2)}\n`, "utf8");
+
+      const fallback = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}/execute`, { method: "POST" });
+      expect(fallback.status).toBe(200);
+      expect(await fallback.json()).toMatchObject({
+        invocation: { operation_id: first.invocation.operation_id, provider_profile_id: "kimi-default" },
+        adapter_result: { status: "succeeded", provider_receipt: { provider_profile_id: "kimi-default" } }
+      });
+      const routing = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/routing-decisions`)).json() as {
+        routing_decisions: Array<{ rejected_candidates: Array<{ profile_id: string; reason_code: string }> }>;
+      };
+      expect(routing.routing_decisions.at(-1)?.rejected_candidates).toContainEqual({
+        profile_id: "kimi-z-failed-profile",
+        reason_code: "failed_profile_excluded"
+      });
+
+      const legacyRunResponse = await fetch(`${baseUrl}/api/v0/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workflow_id: fallbackWorkflow.id, execution_policy: "auto" })
+      });
+      const legacyRun = await legacyRunResponse.json() as { run_id: string; initial_node_runs: string[] };
+      const legacyNodeRunId = legacyRun.initial_node_runs[0]!;
+      const legacyFirst = await (await fetch(`${baseUrl}/api/v0/runs/${legacyRun.run_id}/nodes/${legacyNodeRunId}/execute`, { method: "POST" })).json() as {
+        invocation: { operation_id: string };
+      };
+      const legacyAttemptsPath = path.join(workspace, `runs/${legacyRun.run_id}/attempts.json`);
+      const legacyAttempts = JSON.parse(await readFile(legacyAttemptsPath, "utf8")) as NodeAttempt[];
+      legacyAttempts[0] = {
+        ...legacyAttempts[0]!,
+        provider_receipt: {
+          ...legacyAttempts[0]!.provider_receipt!,
+          provider: "kimi",
+          model: "legacy-profile-unknown"
+        }
+      };
+      delete legacyAttempts[0]!.provider_receipt!.provider_profile_id;
+      await writeFile(legacyAttemptsPath, `${JSON.stringify(legacyAttempts, null, 2)}\n`, "utf8");
+
+      const legacyFallback = await fetch(`${baseUrl}/api/v0/runs/${legacyRun.run_id}/nodes/${legacyNodeRunId}/execute`, { method: "POST" });
+      expect(legacyFallback.status).toBe(200);
+      expect(await legacyFallback.json()).toMatchObject({
+        invocation: { operation_id: legacyFirst.invocation.operation_id, provider: "deepseek", provider_profile_id: "deepseek-default" }
+      });
+      const legacyRouting = await (await fetch(`${baseUrl}/api/v0/runs/${legacyRun.run_id}/routing-decisions`)).json() as {
+        routing_decisions: Array<{ rejected_candidates: Array<{ profile_id: string; reason_code: string }> }>;
+      };
+      expect(legacyRouting.routing_decisions.at(-1)?.rejected_candidates).toEqual(expect.arrayContaining([
+        { profile_id: "kimi-default", reason_code: "failed_provider_profile_unknown" },
+        { profile_id: "kimi-z-failed-profile", reason_code: "failed_provider_profile_unknown" }
+      ]));
+    } finally {
+      await rm(failedPath, { force: true });
+      await writeFile(deepseekPath, originalDeepseek, "utf8");
     }
   });
 

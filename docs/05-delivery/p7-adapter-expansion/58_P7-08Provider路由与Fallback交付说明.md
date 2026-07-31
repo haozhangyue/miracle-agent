@@ -85,6 +85,14 @@ Sidecar 会重新核对当前 NodeAttempt、当前 Decision revision、活动 Re
 - 跨 kind 场景覆盖 Codex 失败、确认 Kimi 目标、第二次 Attempt 实际由 `model-api` 执行。
 - 路由历史包含 Kimi 目标 Profile，事件包含 fallback started/completed。
 - 人工确认覆盖无当前决策、错误 kind、错误目标、有效确认和幂等重复确认。
+- 已持久化的 fallback dispatch intent 在 Sidecar 恢复后保留精确 `provider_profile_id`。尚未派发
+  的 `prepared` intent 若当前路由目标已变化，会在锁内原子更新路由身份；
+  `dispatched_unknown` 保留原派发身份并继续阻止自动重派。
+- 早期开发阶段缺少 `decision_id/revision` 的 routing history 会按追加顺序确定性迁移，迁移后
+  仍可参与当前决策复用与人工确认。
+- 同一 Provider 存在多个 Profile 时，优先按失败 Attempt receipt 中的
+  `provider_profile_id` 排除精确失败项，不会误排除同 Provider 的其他可用 Profile。旧 Attempt
+  若缺失 Profile ID，则拒绝该 Provider 的全部 Profile 自动 fallback，不猜测 catalog 首项。
 - 定向回归覆盖 Provider fallback、Model API 错误归一和 P7-05 retry recovery。
 
 ## 6. 当前限制与下一步

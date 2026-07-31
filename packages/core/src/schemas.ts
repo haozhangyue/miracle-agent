@@ -349,6 +349,7 @@ export const providerRoutingInputSchema: z.ZodType<ProviderRoutingInput> = z.obj
   allowed_adapter_kinds: z.array(z.enum(["codex", "model-api"])).min(1),
   current_adapter_kind: z.enum(["codex", "model-api"]).optional(),
   failed_profile_id: z.string().min(1).optional(),
+  failed_provider_id: z.string().min(1).optional(),
   failure: z.object({ error_code: z.string().min(1), status: z.enum(["succeeded", "failed", "timed_out", "cancelled", "aborted", "unknown"]) }).strict().optional(),
   profiles: z.array(providerRoutingCandidateSchema),
   budget: z.object({

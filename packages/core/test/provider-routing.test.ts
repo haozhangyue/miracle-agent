@@ -112,6 +112,19 @@ describe("Provider Router", () => {
     }
   );
 
+  it("rejects every Profile from a failed Provider when legacy facts cannot identify the exact Profile", () => {
+    const decision = selectProviderRoute({
+      ...baseInput,
+      failed_provider_id: "kimi",
+      failure: { error_code: "rate_limit", status: "failed" }
+    });
+    expect(decision.selected_provider_profile_id).toBe("deepseek-default");
+    expect(decision.rejected_candidates).toContainEqual({
+      profile_id: "kimi-premium",
+      reason_code: "failed_provider_profile_unknown"
+    });
+  });
+
   it.each(["authentication_failed", "permission_denied", "content_policy", "provider_request_invalid", "unknown", "operation_cancelled", "operation_aborted"])(
     "does not automatically fallback for %s",
     (error_code) => {

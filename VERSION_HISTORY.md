@@ -172,6 +172,11 @@
 - 独立审查修订：Provider Profile ID 贯穿 Invocation、receipt 与执行解析；
   `configured_unverified` 不再允许派发；Router 收紧为显式 kind/error 转换矩阵；fallback 确认绑定
   不可变 decision revision 与活动 RetrySchedule，并在释放 Run 锁后才返回响应。
+- P7-08 恢复兼容加固：fallback dispatch intent 重建时保留精确 `provider_profile_id`；尚未派发
+  的 prepared intent 可在锁内跟随当前路由原子更新，dispatched unknown 仍保留旧身份且不重派。旧格式
+  routing decision 按追加顺序确定性补齐 `decision_id/revision`；多 Profile 场景优先依据失败
+  Attempt receipt 排除精确 Profile。旧 Attempt 缺失 Profile ID 时拒绝该 Provider 的全部 Profile
+  自动 fallback，避免恢复错配、旧确认失效、错误猜测或重复选择失败 Profile。
 
 ## 4. v0.8.0 发布记录
 

@@ -19,6 +19,7 @@ function rejectionReason(input: ProviderRoutingInput, candidate: ProviderRouting
   if (!candidate.credential_available) return "credential_missing";
   if (candidate.health_status !== "healthy") return "provider_not_healthy";
   if (input.failed_profile_id === candidate.id) return "failed_profile_excluded";
+  if (!input.failed_profile_id && input.failed_provider_id === candidate.provider) return "failed_provider_profile_unknown";
   if (candidate.estimated_cost && candidate.estimated_cost.max > input.budget.cost_budget - input.budget.cost_used) {
     return "estimated_cost_exceeds_budget";
   }

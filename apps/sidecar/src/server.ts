@@ -424,6 +424,7 @@ async function readNodeDispatchIntent(
     nodeSpec: NodeSpec;
     decision: NodeExecutionDecision;
     adapter?: AdapterRegistryEntry;
+    providerProfileId?: string;
     retryDeadlineAt?: string;
   }
 ) {
@@ -433,7 +434,7 @@ async function readNodeDispatchIntent(
   let intent: NodeDispatchIntent = rawIntent;
   const parsedInvocation = adapterInvocationSchema.safeParse(intent.invocation);
   if (!parsedInvocation.success) invalidNodeDispatchIntent(relativePath, "invocation does not satisfy adapterInvocationSchema");
-  const invocation = parsedInvocation.data;
+  let invocation = parsedInvocation.data;
   const attemptNumber = invocation.attempt_number ?? 1;
   const event = intent.event;
   const decision = intent.decision;
@@ -464,7 +465,7 @@ async function readNodeDispatchIntent(
   if (remainingTotalBudgetMs !== undefined && (!Number.isFinite(remainingTotalBudgetMs) || remainingTotalBudgetMs <= 0)) {
     invalidNodeDispatchIntent(relativePath, "persisted retry runtime deadline is not after the prepared invocation");
   }
-  const rebuiltInvocation = createAdapterInvocation({
+  let rebuiltInvocation = createAdapterInvocation({
     runSpec: expected.runSpec,
     workflow: expected.workflow,
     nodeRun: expected.nodeRun,
@@ -474,8 +475,46 @@ async function readNodeDispatchIntent(
     resolvedInputs: expectedResolvedInputs,
     operationId: invocation.operation_id,
     attemptNumber,
+    providerProfileId: expected.providerProfileId,
     remainingTotalBudgetMs
   });
+  const routeIdentityChanged = invocation.adapter_kind !== rebuiltInvocation.adapter_kind
+    || invocation.adapter_id !== rebuiltInvocation.adapter_id
+    || invocation.provider !== rebuiltInvocation.provider
+    || invocation.provider_profile_id !== rebuiltInvocation.provider_profile_id;
+  const canReroutePreparedFallback = intent.state === "prepared"
+    && attemptNumber > 1
+    && typeof invocation.provider_profile_id === "string"
+    && typeof expected.providerProfileId === "string";
+  if (routeIdentityChanged && canReroutePreparedFallback) {
+    const reroutedInvocation = {
+      ...invocation,
+      adapter_kind: rebuiltInvocation.adapter_kind,
+      adapter_id: rebuiltInvocation.adapter_id,
+      provider: rebuiltInvocation.provider,
+      ...(rebuiltInvocation.provider_profile_id
+        ? { provider_profile_id: rebuiltInvocation.provider_profile_id }
+        : {})
+    };
+    if (!rebuiltInvocation.provider_profile_id) delete reroutedInvocation.provider_profile_id;
+    invocation = reroutedInvocation;
+    intent = { ...intent, invocation };
+    await writeJsonAtomically(relativePath, intent);
+  } else if (routeIdentityChanged && intent.state !== "prepared") {
+    rebuiltInvocation = createAdapterInvocation({
+      runSpec: expected.runSpec,
+      workflow: expected.workflow,
+      nodeRun: { ...expected.nodeRun, provider: invocation.provider },
+      createdAt: invocation.dispatched_at,
+      adapterKind: invocation.adapter_kind,
+      adapterId: invocation.adapter_id,
+      resolvedInputs: expectedResolvedInputs,
+      operationId: invocation.operation_id,
+      attemptNumber,
+      providerProfileId: invocation.provider_profile_id,
+      remainingTotalBudgetMs
+    });
+  }
 
   if (intent.node_run_id !== expected.nodeRunId
     || invocation.run_id !== expected.runId
@@ -891,24 +930,17 @@ function fallbackConfirmationsPath(runId: string) {
   return `runs/${runId}/fallback_confirmations.json`;
 }
 
-async function readRoutingDecisions(runId: string) {
-  return (await readJsonOptional<RunRoutingDecision[]>(routingDecisionsPath(runId))) ?? [];
+type StoredRunRoutingDecision = Omit<RunRoutingDecision, "decision_id" | "revision"> & {
+  decision_id?: string;
+  revision?: number;
+};
+
+function routingDecisionIdentity(item: { operation_id: string; node_run_id: string; target_attempt_number: number }) {
+  return `${item.operation_id}\0${item.node_run_id}\0${item.target_attempt_number}`;
 }
 
-async function readFallbackConfirmations(runId: string) {
-  return (await readJsonOptional<FallbackConfirmation[]>(fallbackConfirmationsPath(runId))) ?? [];
-}
-
-async function persistRoutingDecision(
-  runId: string,
-  decision: Omit<RunRoutingDecision, "decision_id" | "revision">
-): Promise<{ decision: RunRoutingDecision; created: boolean }> {
-  const current = await readRoutingDecisions(runId);
-  const identity = (item: { operation_id: string; node_run_id: string; target_attempt_number: number }) =>
-    `${item.operation_id}\0${item.node_run_id}\0${item.target_attempt_number}`;
-  const revisions = current.filter((item) => identity(item) === identity(decision));
-  const latest = revisions.sort((left, right) => left.revision - right.revision).at(-1);
-  const comparable = (item: Omit<RunRoutingDecision, "decision_id" | "revision"> | RunRoutingDecision) => ({
+function comparableRoutingDecision(item: Omit<RunRoutingDecision, "decision_id" | "revision"> | StoredRunRoutingDecision | RunRoutingDecision) {
+  return {
     operation_id: item.operation_id,
     node_run_id: item.node_run_id,
     current_adapter_kind: item.current_adapter_kind,
@@ -920,13 +952,59 @@ async function persistRoutingDecision(
     reason_codes: item.reason_codes,
     estimated_cost: item.estimated_cost,
     requires_confirmation: item.requires_confirmation
+  };
+}
+
+function normalizedRoutingDecisionId(item: StoredRunRoutingDecision, revision: number) {
+  return `route_${createHash("sha256")
+    .update(JSON.stringify([item.operation_id, item.node_run_id, item.target_attempt_number, revision, comparableRoutingDecision(item)]))
+    .digest("hex")
+    .slice(0, 24)}`;
+}
+
+function normalizeRoutingDecisionHistory(stored: StoredRunRoutingDecision[]) {
+  const revisions = new Map<string, number>();
+  let changed = false;
+  const decisions = stored.map((item) => {
+    const identity = routingDecisionIdentity(item);
+    const revision = (revisions.get(identity) ?? 0) + 1;
+    revisions.set(identity, revision);
+    const decisionId = typeof item.decision_id === "string" && item.decision_id.length > 0 && item.revision === revision
+      ? item.decision_id
+      : normalizedRoutingDecisionId(item, revision);
+    if (item.revision !== revision || item.decision_id !== decisionId) changed = true;
+    return { ...item, decision_id: decisionId, revision } as RunRoutingDecision;
   });
-  if (latest && JSON.stringify(comparable(latest)) === JSON.stringify(comparable(decision))) {
+  return { decisions, changed };
+}
+
+async function readStoredRoutingDecisions(runId: string) {
+  return (await readJsonOptional<StoredRunRoutingDecision[]>(routingDecisionsPath(runId))) ?? [];
+}
+
+async function readRoutingDecisions(runId: string) {
+  return normalizeRoutingDecisionHistory(await readStoredRoutingDecisions(runId)).decisions;
+}
+
+async function readFallbackConfirmations(runId: string) {
+  return (await readJsonOptional<FallbackConfirmation[]>(fallbackConfirmationsPath(runId))) ?? [];
+}
+
+async function persistRoutingDecision(
+  runId: string,
+  decision: Omit<RunRoutingDecision, "decision_id" | "revision">
+): Promise<{ decision: RunRoutingDecision; created: boolean }> {
+  const normalized = normalizeRoutingDecisionHistory(await readStoredRoutingDecisions(runId));
+  const current = normalized.decisions;
+  const revisions = current.filter((item) => routingDecisionIdentity(item) === routingDecisionIdentity(decision));
+  const latest = revisions.sort((left, right) => left.revision - right.revision).at(-1);
+  if (latest && JSON.stringify(comparableRoutingDecision(latest)) === JSON.stringify(comparableRoutingDecision(decision))) {
+    if (normalized.changed) await writeJsonAtomically(routingDecisionsPath(runId), current);
     return { decision: latest, created: false };
   }
   const revision = (latest?.revision ?? 0) + 1;
   const decisionId = `route_${createHash("sha256")
-    .update(JSON.stringify([decision.operation_id, decision.node_run_id, decision.target_attempt_number, revision, comparable(decision)]))
+    .update(JSON.stringify([decision.operation_id, decision.node_run_id, decision.target_attempt_number, revision, comparableRoutingDecision(decision)]))
     .digest("hex")
     .slice(0, 24)}`;
   const persisted = { ...decision, decision_id: decisionId, revision };
@@ -942,6 +1020,11 @@ function adapterKindFromAttempt(attempt: NodeAttempt): "codex" | "model-api" | u
 function providerFromAttempt(attempt: NodeAttempt) {
   const provider = attempt.provider_receipt?.provider;
   return typeof provider === "string" && provider.length > 0 ? provider : undefined;
+}
+
+function providerProfileFromAttempt(attempt: NodeAttempt) {
+  const profileId = attempt.provider_receipt?.provider_profile_id;
+  return typeof profileId === "string" && profileId.length > 0 ? profileId : undefined;
 }
 
 function providerCostFromAttempt(attempt: NodeAttempt) {
@@ -1027,7 +1110,11 @@ async function buildProviderFallbackContext(input: {
       })
     : [];
   const failedProvider = providerFromAttempt(latestAttempt);
-  const failedProfileId = catalog.find((entry) => entry.profile.provider === failedProvider)?.profile.id;
+  const failedProviderProfiles = catalog.filter((entry) => entry.profile.provider === failedProvider);
+  const receiptProfileId = providerProfileFromAttempt(latestAttempt);
+  const failedProfileId = receiptProfileId
+    ?? (failedProviderProfiles.length === 1 ? failedProviderProfiles[0]?.profile.id : undefined);
+  const failedProviderId = !receiptProfileId && failedProviderProfiles.length > 1 ? failedProvider : undefined;
   const policy = retryPolicyForNode(input.nodeSpec);
   const firstDispatchedAt = operationAttempts
     .map((attempt) => attempt.dispatched_at ?? attempt.started_at ?? attempt.created_at)
@@ -1040,6 +1127,7 @@ async function buildProviderFallbackContext(input: {
     allowed_adapter_kinds: allowedAdapterKinds,
     current_adapter_kind: currentAdapterKind,
     ...(failedProfileId ? { failed_profile_id: failedProfileId } : {}),
+    ...(failedProviderId ? { failed_provider_id: failedProviderId } : {}),
     failure,
     profiles: candidates,
     budget: {
@@ -3201,6 +3289,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       nodeSpec,
       decision,
       adapter: invocationAdapter,
+      providerProfileId: fallbackContext?.selected_profile_id,
       retryDeadlineAt: retryRuntimeDeadlineAt
     });
     if (existingIntent?.state === "dispatched_unknown") {
