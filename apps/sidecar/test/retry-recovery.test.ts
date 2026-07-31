@@ -146,6 +146,22 @@ function retryStatePath(runId: string) {
   return path.join(tempWorkspace, "runs", runId, "retry_state.json");
 }
 
+async function replaceRetryStateWithLegacyFixture(runId: string, overrides: Record<string, unknown> = {}) {
+  const records = JSON.parse(await readFile(retryStatePath(runId), "utf8")) as Array<Record<string, unknown>>;
+  const current = records[0];
+  if (!current) throw new Error("Expected current RetryState fixture");
+  const {
+    attempt_id: _attemptId,
+    attempt_number: _attemptNumber,
+    error: _error,
+    effects_committed: _effectsCommitted,
+    ...legacy
+  } = current;
+  const fixture = { ...legacy, ...overrides };
+  await writeFile(retryStatePath(runId), `${JSON.stringify([fixture], null, 2)}\n`, "utf8");
+  return { current, fixture };
+}
+
 function eventsPath(runId: string) {
   return path.join(tempWorkspace, "runs", runId, "events.jsonl");
 }
@@ -360,6 +376,145 @@ describe("P7-05 retry recovery", () => {
       `/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`
     );
     expect(dueDetail.retry_decision.phase).toBe("due");
+  });
+
+  it("migrates a legacy waiting RetryState before Node detail, Scheduler, and direct execute read it", async () => {
+    const failure = await failFirstAttempt(policyWorkflow.id);
+    await writeFile(
+      retrySchedulePath(failure.runId),
+      `${JSON.stringify([{ ...failure.schedules[0], scheduled_for: "2020-01-01T00:00:00.000Z" }], null, 2)}\n`,
+      "utf8"
+    );
+    const { fixture } = await replaceRetryStateWithLegacyFixture(failure.runId);
+    expect(fixture).not.toHaveProperty("attempt_id");
+    expect(fixture).not.toHaveProperty("error");
+
+    const detail = await fetchJson<{
+      retry_decision: { phase: string };
+      execution_decision: { decision: string };
+    }>(`/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`);
+    expect(detail.retry_decision.phase).toBe("due");
+    expect(detail.execution_decision.decision).toBe("execute");
+
+    const scheduler = await fetchJson<{
+      decisions: Array<{ decision: string; retry_decision?: { phase: string } }>;
+    }>(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+    });
+    expect(scheduler.decisions[0]).toMatchObject({
+      decision: "execute",
+      retry_decision: { phase: "due" }
+    });
+
+    const migrated = JSON.parse(await readFile(retryStatePath(failure.runId), "utf8")) as Array<Record<string, unknown>>;
+    expect(migrated).toEqual([
+      expect.objectContaining({
+        operation_id: failure.attempt.operation_id,
+        attempt_id: failure.attempt.attempt_id,
+        attempt_number: failure.attempt.attempt_number,
+        error: failure.attempt.error,
+        effects_committed: true
+      })
+    ]);
+
+    const direct = await fetch(`${baseUrl}/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(direct.status).toBe(200);
+  });
+
+  it("migrates a legacy exhausted RetryState without parse failures or duplicate terminal effects", async () => {
+    const failure = await failFirstAttempt(costOverrideWorkflow.id);
+    const { fixture } = await replaceRetryStateWithLegacyFixture(failure.runId);
+    expect(fixture).not.toHaveProperty("effects_committed");
+
+    const detail = await fetchJson<{
+      retry_decision: { phase: string; reason_code: string };
+      execution_decision: { decision: string; reason_code: string };
+    }>(`/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`);
+    expect(detail.retry_decision).toMatchObject({
+      phase: "exhausted",
+      reason_code: "cost_budget_exhausted"
+    });
+    expect(detail.execution_decision.decision).toBe("blocked");
+
+    const scheduler = await fetchJson<{
+      stop_reason: string;
+      next_suggested_actions: string[];
+    }>(`/api/v0/runs/${failure.runId}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    expect(scheduler.stop_reason).toBe("attention_required");
+
+    const direct = await fetch(`${baseUrl}/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(direct.status).toBe(409);
+    const migrated = JSON.parse(await readFile(retryStatePath(failure.runId), "utf8")) as Array<Record<string, unknown>>;
+    expect(migrated).toEqual([
+      expect.objectContaining({
+        operation_id: failure.attempt.operation_id,
+        attempt_id: failure.attempt.attempt_id,
+        attempt_number: failure.attempt.attempt_number,
+        error: failure.attempt.error,
+        effects_committed: true
+      })
+    ]);
+    expect((await readEvents(failure.runId)).filter((event) => event.type === "retry_exhausted")).toHaveLength(1);
+  });
+
+  it("blocks an unresolvable legacy RetryState with a migration Attention instead of returning 500", async () => {
+    const failure = await failFirstAttempt(policyWorkflow.id);
+    const unmatchedOperationId = "op_unmatched_legacy_state";
+    const currentState = (JSON.parse(await readFile(retryStatePath(failure.runId), "utf8")) as Array<Record<string, unknown>>)[0]!;
+    const currentDecision = currentState.decision as Record<string, unknown>;
+    await writeFile(retrySchedulePath(failure.runId), "[]\n", "utf8");
+    await replaceRetryStateWithLegacyFixture(failure.runId, {
+      operation_id: unmatchedOperationId,
+      decision: { ...currentDecision, operation_id: unmatchedOperationId }
+    });
+
+    const detail = await fetchJson<{
+      execution_decision: { decision: string; reason_code: string };
+      next_suggested_actions: string[];
+    }>(`/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`);
+    expect(detail.execution_decision).toMatchObject({
+      decision: "blocked",
+      reason_code: "retry_state_migration_failed"
+    });
+    expect(detail.next_suggested_actions).toEqual(["inspect_attention", "retry_manually"]);
+
+    const scheduler = await fetchJson<{
+      stop_reason: string;
+      next_suggested_actions: string[];
+    }>(`/api/v0/runs/${failure.runId}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    expect(scheduler.stop_reason).toBe("attention_required");
+    expect(scheduler.next_suggested_actions).toEqual(detail.next_suggested_actions);
+
+    const direct = await fetch(`${baseUrl}/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(direct.status).toBe(409);
+    const attention = await fetchJson<{
+      attention: Array<{ root_cause_key: string; safe_actions: string[] }>;
+    }>(`/api/v0/attention?run_id=${failure.runId}`);
+    expect(attention.attention).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        root_cause_key: `run:${failure.runId}:node:${failure.nodeRunId}:retry_state_migration:${unmatchedOperationId}`,
+        safe_actions: ["inspect_retry_state", "repair_retry_state"]
+      })
+    ]));
   });
 
   it("honors an explicit NodeSpec cost budget override", async () => {

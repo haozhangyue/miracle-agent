@@ -66,7 +66,11 @@ import { CodexCliAdapter, CodexCliAdapterError, type CodexCliHealth } from "./co
 import { assertUniqueArtifactTargetPaths, resolveArtifactInputFiles } from "./artifact-input-resolver";
 import { NodeOutputContractError, buildNodeOutputContract } from "./node-output-contract";
 import { codexPreflightFailure, startCodexOperation } from "./codex-real-adapter";
-import { RetryScheduleStore, RetryStateStore } from "./retry-store";
+import {
+  RetryScheduleStore,
+  RetryStateStore,
+  type RetryStateMigrationIssue
+} from "./retry-store";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
@@ -173,6 +177,7 @@ type NodeDispatchIntent = {
   };
   state: "prepared" | "dispatched_unknown" | "invalid_result";
   prepared_at: string;
+  operation_deadline_at?: string;
   dispatched_at?: string;
   error?: { code: string; message: string };
 };
@@ -253,6 +258,7 @@ function isNodeDispatchIntent(value: unknown): value is NodeDispatchIntent {
     && Number(decision.resolved_input_count) >= 0
     && Array.isArray(decision.resolved_input_ids)
     && decision.resolved_input_ids.every(isNonEmptyString)
+    && (value.operation_deadline_at === undefined || isTimestamp(value.operation_deadline_at))
     && validState;
 }
 
@@ -343,8 +349,19 @@ async function readNodeDispatchIntent(
   const resolvedInputIds = invocation.resolved_inputs.map((input) => input.input_id);
   const expectedOutputs = nodeSpecExpectedOutputs(expected.nodeSpec);
   const expectedResolvedInputs = normalizeResolvedInputsForDispatch(expected.decision.resolved_inputs, invocation.dispatched_at);
-  const remainingTotalBudgetMs = attemptNumber > 1 && expected.retryDeadlineAt
-    ? Date.parse(expected.retryDeadlineAt) - Date.parse(invocation.dispatched_at)
+  const persistedRetryDeadlineAt = attemptNumber > 1 ? intent.operation_deadline_at : undefined;
+  if (attemptNumber > 1 && (
+    !persistedRetryDeadlineAt
+    || !expected.retryDeadlineAt
+    || persistedRetryDeadlineAt !== expected.retryDeadlineAt
+  )) {
+    invalidNodeDispatchIntent(relativePath, "persisted retry operation deadline does not match the first Attempt budget");
+  }
+  if (attemptNumber === 1 && intent.operation_deadline_at !== undefined) {
+    invalidNodeDispatchIntent(relativePath, "initial dispatch intent must not declare a retry operation deadline");
+  }
+  const remainingTotalBudgetMs = persistedRetryDeadlineAt
+    ? Date.parse(persistedRetryDeadlineAt) - Date.parse(invocation.dispatched_at)
     : undefined;
   if (remainingTotalBudgetMs !== undefined && (!Number.isFinite(remainingTotalBudgetMs) || remainingTotalBudgetMs <= 0)) {
     invalidNodeDispatchIntent(relativePath, "persisted retry runtime deadline is not after the prepared invocation");
@@ -1583,6 +1600,7 @@ async function executeRealCodexAdapter(input: {
   invocation: ReturnType<typeof createAdapterInvocation>;
   workflow: WorkflowSpec;
   nodeRun: NodeRun;
+  operationDeadlineAt?: string;
 }) {
   const launchContextPath = path.join(workspaceDir, "runs", input.invocation.run_id, "launch_context.json");
   const nodeSpec = input.workflow.nodes.find((node) => node.id === input.nodeRun.node_id);
@@ -1644,7 +1662,13 @@ async function executeRealCodexAdapter(input: {
     "最终只返回符合 output schema 的 JSON。",
     "不要输出隐藏推理、凭证、环境变量或工作区外的内容。"
   ].join("\n");
-  const processResult = await startCodexOperation({ adapter: codexCliAdapter, invocation: launchedInvocation, attempt, prompt });
+  const processResult = await startCodexOperation({
+    adapter: codexCliAdapter,
+    invocation: launchedInvocation,
+    attempt,
+    prompt,
+    operation_deadline_at: input.operationDeadlineAt
+  });
   if (processResult.status !== "succeeded") return { invocation: launchedInvocation, result: processResult };
 
   try {
@@ -1860,6 +1884,99 @@ function isBlockedSourceAttempt(nodeRun: NodeRun, attempt: NodeAttempt | undefin
 
 type ReplayableRetryState = Exclude<RetryStateRecord, { phase: "completed" }>;
 type TerminalRetryState = ReplayableRetryState & { phase: "exhausted" | "blocked" };
+const retryStateMigrationBlockedPrefix = "RetryStateMigration:";
+
+function retryStateMigrationBlockedOperation(nodeRun: NodeRun) {
+  return nodeRun.status === "blocked" && nodeRun.blocked_reason?.startsWith(retryStateMigrationBlockedPrefix)
+    ? nodeRun.blocked_reason.slice(retryStateMigrationBlockedPrefix.length)
+    : undefined;
+}
+
+async function reconcileRetryStateMigrationIssues(input: {
+  runId: string;
+  nodes: NodeRun[];
+  issues: RetryStateMigrationIssue[];
+  now: string;
+}) {
+  const issueByNode = new Map(input.issues.map((issue) => [issue.node_run_id, issue] as const));
+  const activeRootCauses = new Set(
+    input.issues.map((issue) =>
+      `run:${input.runId}:node:${issue.node_run_id}:retry_state_migration:${issue.operation_id}`
+    )
+  );
+  let nodesChanged = false;
+  for (const nodeRun of input.nodes) {
+    const issue = issueByNode.get(nodeRun.node_run_id);
+    if (issue) {
+      const blockedReason = `${retryStateMigrationBlockedPrefix}${issue.operation_id}`;
+      if (nodeRun.status !== "blocked" || nodeRun.blocked_reason !== blockedReason) {
+        nodeRun.status = "blocked";
+        nodeRun.blocked_reason = blockedReason;
+        nodeRun.updated_at = input.now;
+        nodesChanged = true;
+      }
+      continue;
+    }
+    if (retryStateMigrationBlockedOperation(nodeRun)) {
+      nodeRun.status = "failed";
+      delete nodeRun.blocked_reason;
+      nodeRun.updated_at = input.now;
+      nodesChanged = true;
+    }
+  }
+  if (nodesChanged) await writeJsonAtomically(`runs/${input.runId}/nodes.json`, input.nodes);
+
+  const current = (await readJsonOptional<AttentionItem[]>(`runs/${input.runId}/attention.json`)) ?? [];
+  const byRootCause = new Map(current.map((item) => [item.root_cause_key, item] as const));
+  let attentionChanged = false;
+  for (const issue of input.issues) {
+    const nodeRun = input.nodes.find((node) => node.node_run_id === issue.node_run_id);
+    const rootCauseKey = `run:${input.runId}:node:${issue.node_run_id}:retry_state_migration:${issue.operation_id}`;
+    const next: AttentionItem = {
+      attention_id: `att_${safeId(rootCauseKey)}`,
+      root_cause_key: rootCauseKey,
+      title: "RetryState 迁移需要人工处理",
+      severity: "P0",
+      status: "open",
+      related_objects: [
+        { type: "NodeRun", id: issue.node_run_id, ...(nodeRun ? { label: nodeRun.node_id } : {}) },
+        { type: "Operation", id: issue.operation_id }
+      ],
+      impact: {
+        blocked_nodes: [issue.node_run_id],
+        waiting_agents: nodeRun?.agent_id ? [nodeRun.agent_id] : [],
+        unaffected_paths: []
+      },
+      safe_actions: ["inspect_retry_state", "repair_retry_state"]
+    };
+    const existing = byRootCause.get(rootCauseKey);
+    if (!existing || JSON.stringify(existing) !== JSON.stringify(next)) {
+      byRootCause.set(rootCauseKey, next);
+      attentionChanged = true;
+    }
+    if (!existing) {
+      const event = {
+        event_id: `evt_${next.attention_id}_created`,
+        run_id: input.runId,
+        type: "attention_item_created",
+        subject: { type: "AttentionItem", id: next.attention_id },
+        message: `AttentionItem ${rootCauseKey} opened because legacy RetryState facts could not be migrated`,
+        created_at: input.now
+      };
+      await appendEventIfMissing(input.runId, event);
+    }
+  }
+  for (const [rootCauseKey, item] of byRootCause) {
+    if (!rootCauseKey.includes(":retry_state_migration:") || activeRootCauses.has(rootCauseKey) || item.status === "resolved") {
+      continue;
+    }
+    byRootCause.set(rootCauseKey, { ...item, status: "resolved" });
+    attentionChanged = true;
+  }
+  if (attentionChanged) {
+    await writeJsonAtomically(`runs/${input.runId}/attention.json`, Array.from(byRootCause.values()));
+  }
+}
 
 function retryAttemptFromState(state: ReplayableRetryState): NodeAttempt {
   return {
@@ -2026,7 +2143,14 @@ async function reconcileRetryState(runId: string) {
     const nodes = bundle.nodes as NodeRun[];
     const attempts = (await readJsonOptional<NodeAttempt[]>(`runs/${runId}/attempts.json`)) ?? [];
     const now = new Date().toISOString();
-    let retryStates = await retryStateStore.list(runId);
+    const migration = await retryStateStore.migrateLegacy(runId, attempts);
+    await reconcileRetryStateMigrationIssues({
+      runId,
+      nodes,
+      issues: migration.issues,
+      now
+    });
+    let retryStates = migration.records;
 
     for (const state of retryStates) {
       if (state.phase === "completed") {
@@ -2124,6 +2248,7 @@ async function reconcileRetryState(runId: string) {
       (await retryStateStore.list(runId)).map((record) => [record.operation_id, record] as const)
     );
     for (const nodeRun of nodes.filter((node) => ["failed", "blocked"].includes(node.status))) {
+      if (retryStateMigrationBlockedOperation(nodeRun)) continue;
       if (schedulesAfterRecovery.some((schedule) => schedule.node_run_id === nodeRun.node_run_id)) continue;
       const intent = await readJsonOptional<unknown>(nodeDispatchIntentRelativePath(runId, nodeRun.node_run_id));
       if (isNodeDispatchIntent(intent) && ["dispatched_unknown", "invalid_result"].includes(intent.state)) continue;
@@ -2330,6 +2455,17 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
         error: { code: "not_found", message: "NodeRun not found" }
       };
     }
+    if (retryStateMigrationBlockedOperation(targetNodeRun)) {
+      return {
+        accepted: false,
+        status_code: 409,
+        error: {
+          code: "retry_state_migration_failed",
+          message: "Legacy RetryState facts could not be matched to a persisted NodeAttempt.",
+          reason_code: "retry_state_migration_failed"
+        }
+      };
+    }
     const nodeSpec = lockedBundle.workflow.nodes.find((node) => node.id === targetNodeRun.node_id);
     if (!nodeSpec) throw new Error(`NodeSpec not found: ${targetNodeRun.node_id}`);
     const dispatchedAt = new Date().toISOString();
@@ -2431,7 +2567,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     const provider = targetNodeRun.provider ?? runSpec.resolved_provider_policy.default_provider;
     const manifests = await readAdapterManifests();
     const availableCredentials = availableCredentialKeys();
-    const codexHealth = realCodexEnabled(runSpec) ? await codexCliAdapter.getHealth() : undefined;
+    const codexHealth = realCodexEnabled(runSpec) ? await codexCliAdapter.refreshHealth() : undefined;
     const useRealCodex = Boolean(
       codexHealth?.status === "healthy"
       && nodeSpec.capability_requirements.every((capability) => codexCliRealAdapterManifest.capabilities.includes(capability))
@@ -2477,41 +2613,6 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       };
     }
 
-    if (existingIntent?.state === "prepared"
-      && activeRetry
-      && retryRemainingBudgetMs !== undefined
-      && Math.floor(retryRemainingBudgetMs) < existingIntent.invocation.runtime_control.timeout_ms) {
-      const adjustedInvocation = createAdapterInvocation({
-        runSpec,
-        workflow: lockedBundle.workflow,
-        nodeRun: targetNodeRun,
-        createdAt: dispatchedAt,
-        adapterKind: invocationAdapter?.kind,
-        adapterId: invocationAdapter?.id,
-        resolvedInputs,
-        operationId: existingIntent.invocation.operation_id,
-        attemptNumber: existingIntent.invocation.attempt_number ?? activeRetry.attempt_number,
-        remainingTotalBudgetMs: retryRemainingBudgetMs
-      });
-      existingIntent = {
-        ...existingIntent,
-        invocation: adjustedInvocation,
-        decision: {
-          reason_code: decision.reason_code,
-          resolved_input_count: resolvedInputs.length,
-          resolved_input_ids: resolvedInputs.map((input) => input.input_id)
-        },
-        event: nodeInputsResolvedEvent({
-          runId,
-          nodeRunId,
-          invocation: adjustedInvocation,
-          reasonCode: decision.reason_code
-        }),
-        prepared_at: dispatchedAt
-      };
-      await writeJsonAtomically(dispatchIntentPath, existingIntent);
-    }
-
     let invocation = existingIntent?.invocation ?? createAdapterInvocation({
       runSpec,
       workflow: lockedBundle.workflow,
@@ -2537,7 +2638,8 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
         },
         event: inputEvent,
         state: "prepared",
-        prepared_at: dispatchedAt
+        prepared_at: dispatchedAt,
+        ...(retryRuntimeDeadlineAt ? { operation_deadline_at: retryRuntimeDeadlineAt } : {})
       };
       await writeJsonAtomically(dispatchIntentPath, dispatchIntent);
     }
@@ -2552,7 +2654,12 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     await writeJson(`runs/${runId}/nodes.json`, nodeRuns);
     let rawResult: AdapterResult;
     if (adapter?.id === "codex-cli-real") {
-      const executed = await executeRealCodexAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun });
+      const executed = await executeRealCodexAdapter({
+        invocation,
+        workflow: lockedBundle.workflow,
+        nodeRun: targetNodeRun,
+        operationDeadlineAt: dispatchIntent.operation_deadline_at
+      });
       invocation = executed.invocation;
       rawResult = executed.result;
     } else {
@@ -2703,6 +2810,7 @@ function nextActionsForNodeDecision(input: {
   if (input.decision === "execute") return ["run_scheduler_tick"];
   if (input.retryDecision?.phase === "waiting_for_retry") return ["wait_for_retry"];
   if (input.decision === "pause_for_gate") return ["review_pending_gates"];
+  if (input.reasonCode === "required_gate_rejected") return ["inspect_gate", "create_rework"];
   if (input.reasonCode === "required_input_missing") {
     return ["restore_required_artifact", "rerun_upstream_node", "retry_manually"];
   }
@@ -2751,7 +2859,11 @@ async function calculateRetryAwareSchedulerPlan(
   });
   const decisions: SchedulerDecision[] = executionPlan.decisions.map((decision) => {
     const retryDecision = retryProjections.get(decision.node_run_id);
-    const retryOverride = retryDecision?.phase === "waiting_for_retry"
+    const nodeRun = nodeRuns.find((node) => node.node_run_id === decision.node_run_id);
+    const migrationBlocked = nodeRun ? retryStateMigrationBlockedOperation(nodeRun) : undefined;
+    const retryOverride = migrationBlocked
+      ? { decision: "blocked" as const, reason_code: "retry_state_migration_failed" }
+      : retryDecision?.phase === "waiting_for_retry"
         ? { decision: "wait" as const, reason_code: "waiting_for_retry" }
         : retryDecision?.phase === "exhausted" || retryDecision?.phase === "blocked"
           ? { decision: "blocked" as const, reason_code: retryDecision.reason_code }
@@ -3021,7 +3133,10 @@ function schedulerNextActions(plan: Awaited<ReturnType<typeof buildSchedulerPlan
       retryDecision: executable.retry_decision
     });
   }
-  const primary = plan.decisions.find((decision) => decision.decision === "blocked")
+  const primary = plan.decisions.find((decision) =>
+    decision.decision === "blocked" && decision.reason_code === "required_gate_rejected"
+  )
+    ?? plan.decisions.find((decision) => decision.decision === "blocked")
     ?? plan.decisions.find((decision) => decision.retry_decision?.phase === "waiting_for_retry")
     ?? plan.decisions.find((decision) => decision.decision === "pause_for_gate")
     ?? plan.decisions.find((decision) => decision.decision === "wait");
@@ -3034,9 +3149,10 @@ function schedulerNextActions(plan: Awaited<ReturnType<typeof buildSchedulerPlan
 
 function schedulerStopReason(plan: Awaited<ReturnType<typeof buildSchedulerPlan>>): "no_executable_nodes" | "paused_for_gate" | "waiting_for_retry" | "attention_required" {
   const blocked = plan.decisions.filter((decision) => decision.decision === "blocked");
+  if (blocked.some((decision) => decision.reason_code === "required_gate_rejected")) return "paused_for_gate";
   if (blocked.some((decision) => decision.reason_code !== "required_gate_rejected")) return "attention_required";
   if (plan.decisions.some((decision) => decision.retry_decision?.phase === "waiting_for_retry")) return "waiting_for_retry";
-  return plan.paused.length > 0 || blocked.some((decision) => decision.reason_code === "required_gate_rejected")
+  return plan.paused.length > 0
     ? "paused_for_gate"
     : "no_executable_nodes";
 }
@@ -3881,6 +3997,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       return sendJson(res, 200, await runSchedulerUntilStop(runId, maxTicks, maxNodesPerTick));
     }
     if (parts[4] === "nodes" && parts[5]) {
+      if (req.method === "GET" && parts.length === 6) await reconcileRetryState(runId);
       const bundle = await readRunBundle(runId);
       const runSpec = bundle.run as unknown as RunSpec;
       const nodeRunId = getId(parts, 5);

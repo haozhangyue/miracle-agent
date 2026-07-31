@@ -127,6 +127,12 @@ describe("CodexCliAdapter health", () => {
     expect(health).toMatchObject({ status: "blocked", authenticated: false, reasons: ["credential_missing"] });
   });
 
+  it("distinguishes an authentication check failure from missing credentials", async () => {
+    const health = await createAdapter({ FAKE_CODEX_LOGIN: "error" }).refreshHealth();
+
+    expect(health).toMatchObject({ status: "blocked", authenticated: false, reasons: ["authentication_failed"] });
+  });
+
   it("bounds health-check stderr without returning its contents", async () => {
     const health = await createAdapter({ FAKE_CODEX_HEALTH_STDERR: "huge" }).refreshHealth();
 
@@ -317,6 +323,31 @@ describe("CodexCliAdapter process lifecycle", () => {
     const handle = await adapter.startOperation({ invocation: invocation(attempt, "op_spawn_missing"), attempt_workspace: attempt });
 
     await expect(handle.result).resolves.toMatchObject({ status: "failed", error: { code: "process_spawn_failed" } });
+  });
+
+  it("classifies health and operation spawn EACCES as non-recoverable permission denial", async () => {
+    const deniedExecutable = path.join(tempRoot, "denied-codex");
+    await writeFile(deniedExecutable, "#!/bin/sh\nexit 0\n", { encoding: "utf8", mode: 0o600 });
+    const adapter = new CodexCliAdapter({
+      repository_root: repoRoot,
+      workspace_dir: workspaceDir,
+      executable_path: deniedExecutable
+    });
+    const attempt = await createWorkspace(adapter, "attempt_spawn_denied");
+
+    await expect(adapter.refreshHealth()).resolves.toMatchObject({
+      status: "blocked",
+      authenticated: false,
+      reasons: ["permission_denied"]
+    });
+    const handle = await adapter.startOperation({
+      invocation: invocation(attempt, "op_spawn_denied"),
+      attempt_workspace: attempt
+    });
+    await expect(handle.result).resolves.toMatchObject({
+      status: "failed",
+      error: { code: "permission_denied", recoverable: false }
+    });
   });
 
   it("uses the invocation sandbox argument rather than a hard-coded sandbox", async () => {
@@ -539,6 +570,103 @@ describe("CodexCliAdapter process lifecycle", () => {
       });
       await expect(handle.result).resolves.toMatchObject({ status, error: { code } });
     }
+  });
+
+  it("reclassifies a non-zero exit when live login status is no longer valid", async () => {
+    const adapter = createAdapter({ FAKE_CODEX_MODE: "nonzero", FAKE_CODEX_LOGIN: "missing" });
+    const attempt = await createWorkspace(adapter, "attempt_auth_expired");
+    const handle = await adapter.startOperation({
+      invocation: invocation(attempt, "op_auth_expired"),
+      attempt_workspace: attempt
+    });
+
+    await expect(handle.result).resolves.toMatchObject({
+      status: "failed",
+      error: { code: "credential_missing", recoverable: false }
+    });
+  });
+
+  it("keeps an ordinary non-zero exit retryable when live login remains valid", async () => {
+    const adapter = createAdapter({ FAKE_CODEX_MODE: "nonzero" });
+    const attempt = await createWorkspace(adapter, "attempt_retryable_nonzero");
+    const handle = await adapter.startOperation({
+      invocation: invocation(attempt, "op_retryable_nonzero"),
+      attempt_workspace: attempt
+    });
+
+    await expect(handle.result).resolves.toMatchObject({
+      status: "failed",
+      error: { code: "process_exit_nonzero", recoverable: true }
+    });
+  });
+
+  it("returns a confirmed timeout without spawning when the deadline expires during preparation", async () => {
+    const preparedAt = Date.parse("2026-07-13T08:00:00.000Z");
+    let nowCalls = 0;
+    const marker = path.join(tempRoot, "deadline-expired-spawn-marker");
+    const adapter = new CodexCliAdapter({
+      workspace_dir: workspaceDir,
+      repository_root: repoRoot,
+      executable_path: process.execPath,
+      command_prefix_args: [fakeCodex],
+      execution_environment: { FAKE_CODEX_EXEC_MARKER: marker },
+      now: () => new Date(preparedAt + (nowCalls++ === 0 ? 0 : 100)).toISOString(),
+      terminate_grace_ms: 25
+    });
+    const attempt = await createWorkspace(adapter, "attempt_deadline_expired");
+    const handle = await adapter.startOperation({
+      invocation: invocation(attempt, "op_deadline_expired"),
+      attempt_workspace: attempt,
+      operation_deadline_at: new Date(preparedAt + 50).toISOString()
+    });
+
+    await expect(handle.result).resolves.toMatchObject({
+      status: "timed_out",
+      error: { code: "process_timeout", recoverable: true }
+    });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("clips the actual process timeout to the remaining deadline immediately before spawn", async () => {
+    const marker = path.join(tempRoot, "deadline-clipped-spawn-marker");
+    const slowCodex = path.join(tempRoot, "slow-codex.mjs");
+    await writeFile(slowCodex, `
+      import { appendFileSync } from "node:fs";
+      if (process.argv.includes("exec")) {
+        appendFileSync(process.env.FAKE_CODEX_EXEC_MARKER, "exec\\n", "utf8");
+        process.on("SIGTERM", () => {});
+        setInterval(() => {}, 1000);
+      }
+    `, "utf8");
+    const adapter = new CodexCliAdapter({
+      workspace_dir: workspaceDir,
+      repository_root: repoRoot,
+      executable_path: process.execPath,
+      command_prefix_args: [slowCodex],
+      execution_environment: { FAKE_CODEX_EXEC_MARKER: marker },
+      terminate_grace_ms: 25
+    });
+    const attempt = await createWorkspace(adapter, "attempt_deadline_clipped");
+    const handle = await adapter.startOperation({
+      invocation: invocation(attempt, "op_deadline_clipped"),
+      attempt_workspace: attempt,
+      timeout_ms: 1_000,
+      operation_deadline_at: new Date(Date.now() + 120).toISOString()
+    });
+    const observed = await Promise.race([
+      handle.result,
+      wait(500).then(() => "still_running" as const)
+    ]);
+    if (observed === "still_running") {
+      await handle.cancel();
+      await handle.result;
+    }
+
+    expect(observed).toMatchObject({
+      status: "timed_out",
+      error: { code: "process_timeout", recoverable: true }
+    });
+    expect(await readFile(marker, "utf8")).toBe("exec\n");
   });
 
   it("reserves an operation id before asynchronous startup so concurrent dispatch has one owner", async () => {

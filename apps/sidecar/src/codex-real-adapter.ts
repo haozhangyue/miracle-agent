@@ -4,7 +4,13 @@ import { ArtifactInputResolverError } from "./artifact-input-resolver";
 import { NodeOutputContractError } from "./node-output-contract";
 
 type CodexOperationStarter = {
-  startOperation(input: { invocation: AdapterInvocation; attempt_workspace: AttemptWorkspace; timeout_ms?: number; prompt?: string }): Promise<CodexProcessHandle>;
+  startOperation(input: {
+    invocation: AdapterInvocation;
+    attempt_workspace: AttemptWorkspace;
+    timeout_ms?: number;
+    operation_deadline_at?: string;
+    prompt?: string;
+  }): Promise<CodexProcessHandle>;
   cleanupAttemptWorkspace(attempt: AttemptWorkspace): Promise<void>;
 };
 
@@ -37,9 +43,15 @@ export async function startCodexOperation(input: {
   invocation: AdapterInvocation;
   attempt: AttemptWorkspace;
   prompt: string;
+  operation_deadline_at?: string;
 }): Promise<AdapterResult> {
   try {
-    const handle = await input.adapter.startOperation({ invocation: input.invocation, attempt_workspace: input.attempt, prompt: input.prompt });
+    const handle = await input.adapter.startOperation({
+      invocation: input.invocation,
+      attempt_workspace: input.attempt,
+      prompt: input.prompt,
+      operation_deadline_at: input.operation_deadline_at
+    });
     return await handle.result;
   } catch (error) {
     await input.adapter.cleanupAttemptWorkspace(input.attempt).catch(() => undefined);

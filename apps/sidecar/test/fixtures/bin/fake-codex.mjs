@@ -6,6 +6,10 @@ import path from "node:path";
 const args = process.argv.slice(2);
 
 if (args.length === 1 && args[0] === "--version") {
+  if (process.env.FAKE_CODEX_PERMISSION === "denied") {
+    process.stderr.write("Permission denied\n");
+    process.exit(126);
+  }
   if (process.env.FAKE_CODEX_HEALTH_STDERR === "huge") process.stderr.write(`${"x".repeat(16 * 1024)}\n`);
   process.stdout.write("codex-cli 0.142.1\n");
   process.exit(0);
@@ -15,6 +19,10 @@ if (args[0] === "login" && args[1] === "status") {
   if (process.env.FAKE_CODEX_LOGIN === "missing") {
     process.stderr.write("Not logged in\n");
     process.exit(1);
+  }
+  if (process.env.FAKE_CODEX_LOGIN === "error") {
+    process.stderr.write("Login status check failed\n");
+    process.exit(2);
   }
   process.stdout.write("Authenticated\n");
   process.exit(0);

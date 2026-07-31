@@ -421,11 +421,13 @@ async function fakeCodexDispatchCount() {
   }
 }
 
-async function writeFakeCodexWrapper(login: "healthy" | "missing" = "healthy") {
+async function writeFakeCodexWrapper(mode: "healthy" | "missing" | "authentication_error" | "permission" = "healthy") {
   await writeFile(
     fakeCodexWrapper,
     `process.env.FAKE_CODEX_EXEC_MARKER = ${JSON.stringify(fakeCodexMarker)};\n`
-      + (login === "missing" ? 'process.env.FAKE_CODEX_LOGIN = "missing";\n' : "")
+      + (mode === "missing" ? 'process.env.FAKE_CODEX_LOGIN = "missing";\n' : "")
+      + (mode === "authentication_error" ? 'process.env.FAKE_CODEX_LOGIN = "error";\n' : "")
+      + (mode === "permission" ? 'process.env.FAKE_CODEX_PERMISSION = "denied";\n' : "")
       + `await import(${JSON.stringify(pathToFileURL(fakeCodex).href)});\n`,
     "utf8"
   );
@@ -502,8 +504,10 @@ function preparedRetryIntent(input: {
 }) {
   const startedAt = input.attempt.started_at ?? input.attempt.dispatched_at ?? input.attempt.created_at;
   if (!startedAt) throw new Error("Expected retry source timing");
-  const remainingTotalBudgetMs = shortBudgetRetryingWorkflow.nodes[0]!.failure_policy.retry_policy!.total_time_budget_ms
-    - (Date.parse(input.preparedAt) - Date.parse(startedAt));
+  const operationDeadlineAt = new Date(
+    Date.parse(startedAt) + shortBudgetRetryingWorkflow.nodes[0]!.failure_policy.retry_policy!.total_time_budget_ms
+  ).toISOString();
+  const remainingTotalBudgetMs = Date.parse(operationDeadlineAt) - Date.parse(input.preparedAt);
   const invocation = createAdapterInvocation({
     runSpec: input.run,
     workflow: shortBudgetRetryingWorkflow,
@@ -533,7 +537,8 @@ function preparedRetryIntent(input: {
       created_at: input.preparedAt
     },
     state: "prepared",
-    prepared_at: input.preparedAt
+    prepared_at: input.preparedAt,
+    operation_deadline_at: operationDeadlineAt
   };
 }
 
@@ -952,12 +957,20 @@ describe("P6-07 Codex real single-node execution", () => {
     expect(await fakeCodexDispatchCount()).toBe(dispatchCountBeforeRecovery);
   });
 
-  it("turns missing Codex credentials into one blocked root cause without starting an external process", async () => {
+  it.each([
+    { mode: "missing", expectedCode: "credential_missing" },
+    { mode: "authentication_error", expectedCode: "authentication_failed" },
+    { mode: "permission", expectedCode: "permission_denied" }
+  ] as const)("refreshes healthy Codex state before dispatch and blocks a live $expectedCode failure without restarting", async ({ mode, expectedCode }) => {
+    await writeFakeCodexWrapper();
+    const healthy = await fetchJson<{ status: string }>("/api/v0/adapters/codex-cli/health/refresh", {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    expect(healthy.status).toBe("healthy");
     const launched = await launchConfirmedRun(workflow.id);
     const markerBefore = await fakeCodexDispatchCount();
-    await stopSidecar();
-    await writeFakeCodexWrapper("missing");
-    await startSidecar();
+    await writeFakeCodexWrapper(mode);
     try {
       const scheduled = await fetchJson<{
         stop_reason: string;
@@ -993,12 +1006,12 @@ describe("P6-07 Codex real single-node execution", () => {
             adapter_kind: "codex",
             adapter_id: "codex-cli-real"
           }),
-          error: expect.objectContaining({ code: "credential_missing", recoverable: false })
+          error: expect.objectContaining({ code: expectedCode, recoverable: false })
         })
       ]);
       expect(attention.attention).toEqual([
         expect.objectContaining({
-          root_cause_key: `run:${launched.run_id}:node:${node.node_run_id}:retry:credential_missing`,
+          root_cause_key: `run:${launched.run_id}:node:${node.node_run_id}:retry:${expectedCode}`,
           status: "open",
           safe_actions: expect.arrayContaining(["configure_credentials", "repair_permissions"])
         })
@@ -1007,16 +1020,28 @@ describe("P6-07 Codex real single-node execution", () => {
       expect(detail.execution_decision).toMatchObject({ decision: "blocked", reason_code: "error_not_retryable" });
       expect(scheduled.stop_reason).toBe("attention_required");
       expect(scheduled.next_suggested_actions).toEqual(detail.next_suggested_actions);
+      const retry = await fetch(`${baseUrl}/api/v0/runs/${launched.run_id}/nodes/${node.node_run_id}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      });
+      expect(retry.status).toBe(409);
+      expect(await fakeCodexDispatchCount()).toBe(markerBefore);
     } finally {
-      await stopSidecar();
       await writeFakeCodexWrapper();
-      await startSidecar();
+      await fetchJson("/api/v0/adapters/codex-cli/health/refresh", {
+        method: "POST",
+        body: JSON.stringify({})
+      });
     }
   }, 30_000);
 
-  it("resumes a prepared retry intent after time advances and atomically shortens only its runtime timeout", async () => {
+  it("resumes a prepared retry intent without mutating its absolute deadline or prepared timeout", async () => {
     const markerBefore = await fakeCodexDispatchCount();
-    const launched = await launchConfirmedRun(shortBudgetRetryingWorkflow.id, { force_fail_first_attempt: true });
+    const launched = await launchConfirmedRun(shortBudgetRetryingWorkflow.id, {
+      force_fail_first_attempt: true,
+      force_slow_output: true
+    });
     await fetchJson(`/api/v0/runs/${launched.run_id}/scheduler/tick`, {
       method: "POST",
       body: JSON.stringify({ max_nodes: 1 })
@@ -1044,7 +1069,7 @@ describe("P6-07 Codex real single-node execution", () => {
     await new Promise((resolve) => setTimeout(resolve, 2_300));
     await stopSidecar();
     await startSidecar();
-    const result = await fetchJson<{
+    const execution = fetchJson<{
       invocation: {
         operation_id: string;
         attempt_id: string;
@@ -1055,14 +1080,31 @@ describe("P6-07 Codex real single-node execution", () => {
       method: "POST",
       body: JSON.stringify({})
     });
+    let observedDeadline: string | undefined;
+    for (let index = 0; index < 100; index += 1) {
+      try {
+        const persistedIntent = JSON.parse(await readFile(intentPath, "utf8")) as {
+          state?: string;
+          operation_deadline_at?: string;
+        };
+        if (persistedIntent.state === "dispatched_unknown") {
+          observedDeadline = persistedIntent.operation_deadline_at;
+          break;
+        }
+      } catch {
+        // The retry has not entered the Adapter dispatch window yet.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const result = await execution;
 
     expect(result.invocation).toMatchObject({
       operation_id: intent.invocation.operation_id,
       attempt_id: intent.invocation.attempt_id,
       resolved_inputs: []
     });
-    expect(result.invocation.runtime_control.timeout_ms).toBeGreaterThan(0);
-    expect(result.invocation.runtime_control.timeout_ms).toBeLessThan(intent.invocation.runtime_control.timeout_ms);
+    expect(result.invocation.runtime_control.timeout_ms).toBe(intent.invocation.runtime_control.timeout_ms);
+    expect(observedDeadline).toBe(intent.operation_deadline_at);
     expect(await fakeCodexDispatchCount()).toBe(markerBefore + 2);
     expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${launched.run_id}`)).attempts).toHaveLength(2);
   }, 30_000);

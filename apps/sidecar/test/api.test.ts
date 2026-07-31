@@ -363,6 +363,25 @@ describe("sidecar api", () => {
       body: JSON.stringify({ decision: "reject", actor: "api-test", comment: "需要补充事实来源" })
     });
 
+    const rejectedPlan = await fetchJson<{
+      stop_reason: string;
+      next_suggested_actions: string[];
+      execution_plan: { decisions: Array<{ node_run_id: string; reason_code: string }> };
+    }>(`/api/v0/runs/${created.run_id}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const rejectedDecision = rejectedPlan.execution_plan.decisions.find((decision) => decision.reason_code === "required_gate_rejected");
+    if (!rejectedDecision) throw new Error("Expected a rejected gate Scheduler decision");
+    const rejectedDetail = await fetchJson<{
+      execution_decision: { reason_code: string };
+      next_suggested_actions: string[];
+    }>(`/api/v0/runs/${created.run_id}/nodes/${rejectedDecision.node_run_id}`);
+    expect(rejectedPlan.stop_reason).toBe("paused_for_gate");
+    expect(rejectedPlan.next_suggested_actions).toEqual(["inspect_gate", "create_rework"]);
+    expect(rejectedDetail.execution_decision.reason_code).toBe("required_gate_rejected");
+    expect(rejectedDetail.next_suggested_actions).toEqual(["inspect_gate", "create_rework"]);
+
     const rework = await fetchJson<{
       accepted: boolean;
       rework_attempt_id: string;

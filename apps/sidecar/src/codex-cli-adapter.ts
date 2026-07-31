@@ -123,6 +123,25 @@ function outputForError(error: unknown) {
   return error instanceof Error ? error.message.replace(/\s+/g, " ").slice(0, 240) : "Codex CLI process failed";
 }
 
+function isPermissionError(error: unknown) {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EACCES" || code === "EPERM";
+}
+
+function blockedHealthError(health: CodexCliHealth) {
+  const reasons = health.reasons.map((reason) => reason.toLowerCase());
+  if (reasons.some((reason) => reason.includes("credential"))) {
+    return { code: "credential_missing", recoverable: false } as const;
+  }
+  if (reasons.some((reason) => reason.includes("permission") || reason.includes("access_denied"))) {
+    return { code: "permission_denied", recoverable: false } as const;
+  }
+  if (reasons.some((reason) => reason.includes("auth") || reason.includes("login"))) {
+    return { code: "authentication_failed", recoverable: false } as const;
+  }
+  return undefined;
+}
+
 export class CodexCliAdapter {
   private readonly executablePath: string;
   private readonly maxOutputBytes: number;
@@ -155,7 +174,18 @@ export class CodexCliAdapter {
         adapter_id: adapterId,
         status: "blocked",
         authenticated: false,
-        reasons: ["runtime_not_found"],
+        reasons: [isPermissionError(error) ? "permission_denied" : "runtime_not_found"],
+        checked_at: checkedAt
+      };
+      return this.health;
+    }
+    if (versionRun.exit_code === 126) {
+      this.health = {
+        adapter_id: adapterId,
+        status: "blocked",
+        executable_path: safeBasename(this.executablePath),
+        authenticated: false,
+        reasons: ["permission_denied"],
         checked_at: checkedAt
       };
       return this.health;
@@ -172,27 +202,41 @@ export class CodexCliAdapter {
       return this.health;
     }
     const version = versionRun.stdout.match(/\d+(?:\.\d+){1,3}/)?.[0];
-    const login = await this.runCommand(["login", "status"]).catch(() => undefined);
-    if (login?.timed_out) {
+    let login: CommandResult;
+    try {
+      login = await this.runCommand(["login", "status"]);
+    } catch (error) {
       this.health = {
         adapter_id: adapterId,
-        status: "degraded",
+        status: "blocked",
         executable_path: safeBasename(this.executablePath),
         ...(version ? { version } : {}),
         authenticated: false,
-        reasons: ["login_status_check_timeout"],
+        reasons: [isPermissionError(error) ? "permission_denied" : "authentication_failed"],
         checked_at: checkedAt
       };
       return this.health;
     }
-    const authenticated = Boolean(login && !login.output_limited && login.exit_code === 0);
+    if (login.timed_out || login.output_limited) {
+      this.health = {
+        adapter_id: adapterId,
+        status: "blocked",
+        executable_path: safeBasename(this.executablePath),
+        ...(version ? { version } : {}),
+        authenticated: false,
+        reasons: ["authentication_failed"],
+        checked_at: checkedAt
+      };
+      return this.health;
+    }
+    const authenticated = login.exit_code === 0;
     this.health = {
       adapter_id: adapterId,
       status: authenticated ? "healthy" : "blocked",
       executable_path: safeBasename(this.executablePath),
       ...(version ? { version } : {}),
       authenticated,
-      reasons: authenticated ? [] : [login?.output_limited ? "login_status_check_failed" : "credential_missing"],
+      reasons: authenticated ? [] : [login.exit_code === 1 ? "credential_missing" : "authentication_failed"],
       checked_at: checkedAt
     };
     return this.health;
@@ -331,7 +375,13 @@ export class CodexCliAdapter {
     }
   }
 
-  async startOperation(input: { invocation: AdapterInvocation; attempt_workspace: AttemptWorkspace; timeout_ms?: number; prompt?: string }): Promise<CodexProcessHandle> {
+  async startOperation(input: {
+    invocation: AdapterInvocation;
+    attempt_workspace: AttemptWorkspace;
+    timeout_ms?: number;
+    operation_deadline_at?: string;
+    prompt?: string;
+  }): Promise<CodexProcessHandle> {
     const { invocation, attempt_workspace: attempt } = input;
     if (!isSafeId(invocation.attempt_id)) throw new CodexCliAdapterError("invalid_attempt_id", "attempt_id may only contain letters, numbers, underscore and hyphen");
     if (!isSafeOperationId(invocation.operation_id)) throw new CodexCliAdapterError("invalid_operation_id", "operation_id may only contain letters, numbers, underscore and hyphen");
@@ -345,6 +395,11 @@ export class CodexCliAdapter {
       await this.verifyFrozenInputHashes(canonicalAttempt);
       await this.verifyFrozenSchema(canonicalAttempt);
 
+      const runtimeWindow = this.runtimeWindow(input);
+      if (runtimeWindow.remaining_ms !== undefined && runtimeWindow.remaining_ms <= 0) {
+        this.operationReservations.delete(invocation.operation_id);
+        return this.deadlineExpiredHandle(invocation, canonicalAttempt, runtimeWindow.checked_at);
+      }
       const child = spawn(this.executablePath, [
         ...(this.options.command_prefix_args ?? []),
         "exec",
@@ -418,8 +473,13 @@ export class CodexCliAdapter {
       };
       if (this.flushPendingProcessEvents(operation)) return handle;
       child.stdin.end(input.prompt ?? "P6-06 fake lifecycle probe only. Do not execute a content task.\n");
-      const timeoutMs = input.timeout_ms ?? invocation.runtime_control.timeout_ms;
-      operation.timeout = setTimeout(() => void this.requestTermination(operation, "timed_out"), timeoutMs);
+      const timeoutMs = runtimeWindow.timeout_at_ms === undefined
+        ? runtimeWindow.timeout_ms
+        : Math.max(0, runtimeWindow.timeout_at_ms - Date.parse(this.now()));
+      operation.timeout = setTimeout(
+        () => void this.requestTermination(operation, "timed_out"),
+        timeoutMs
+      );
 
       return handle;
     } catch (error) {
@@ -560,7 +620,24 @@ export class CodexCliAdapter {
     if (operation.intent === "cancelled") return this.settleOperation(operation, "cancelled", "operation_cancelled", false, "Operation cancelled by user");
     if (operation.intent === "timed_out") return this.settleOperation(operation, "timed_out", "process_timeout", true, "Codex CLI operation timed out");
     if (operation.intent === "aborted") return this.settleOperation(operation, "aborted", "adapter_output_too_large", false, "Codex CLI output exceeded the configured limit");
-    if (code !== 0) return this.settleOperation(operation, "failed", "process_exit_nonzero", true, `Codex CLI exited with code ${String(code)}`);
+    if (code !== 0) {
+      if (operation.timeout) {
+        clearTimeout(operation.timeout);
+        operation.timeout = undefined;
+      }
+      const currentHealth = await this.refreshHealth();
+      const blocked = blockedHealthError(currentHealth);
+      if (blocked) {
+        return this.settleOperation(
+          operation,
+          "failed",
+          blocked.code,
+          blocked.recoverable,
+          `Codex CLI authorization is no longer valid after process exit ${String(code)}`
+        );
+      }
+      return this.settleOperation(operation, "failed", "process_exit_nonzero", true, `Codex CLI exited with code ${String(code)}`);
+    }
     const parsed = this.parseJsonl(operation.stdout);
     if (!parsed.ok) return this.settleOperation(operation, "failed", "invalid_adapter_output", true, "Codex CLI emitted invalid JSONL");
     operation.events = parsed.events;
@@ -572,7 +649,87 @@ export class CodexCliAdapter {
       operation.pending_error = error;
       return;
     }
-    void this.settleOperation(operation, "failed", "process_spawn_failed", true, outputForError(error));
+    void this.settleOperation(
+      operation,
+      "failed",
+      isPermissionError(error) ? "permission_denied" : "process_spawn_failed",
+      !isPermissionError(error),
+      outputForError(error)
+    );
+  }
+
+  private runtimeWindow(input: {
+    invocation: AdapterInvocation;
+    timeout_ms?: number;
+    operation_deadline_at?: string;
+  }) {
+    const invocationTimeoutMs = input.timeout_ms ?? input.invocation.runtime_control.timeout_ms;
+    if (!input.operation_deadline_at) {
+      return {
+        checked_at: this.now(),
+        timeout_ms: invocationTimeoutMs,
+        remaining_ms: undefined,
+        timeout_at_ms: undefined
+      };
+    }
+    const deadlineMs = Date.parse(input.operation_deadline_at);
+    if (!Number.isFinite(deadlineMs)) throw new Error("operation_deadline_at must be a valid timestamp");
+    const checkedAt = this.now();
+    const checkedAtMs = Date.parse(checkedAt);
+    const remainingMs = deadlineMs - checkedAtMs;
+    const timeoutMs = Math.min(invocationTimeoutMs, Math.max(0, remainingMs));
+    return {
+      checked_at: checkedAt,
+      timeout_ms: timeoutMs,
+      remaining_ms: remainingMs,
+      timeout_at_ms: checkedAtMs + timeoutMs
+    };
+  }
+
+  private async deadlineExpiredHandle(
+    invocation: AdapterInvocation,
+    attempt: AttemptWorkspace,
+    completedAt: string
+  ): Promise<CodexProcessHandle> {
+    const result: AdapterResult = {
+      operation_id: invocation.operation_id,
+      attempt_id: invocation.attempt_id,
+      node_run_id: invocation.node_run_id,
+      status: "timed_out",
+      provider_receipt: {
+        provider: invocation.provider,
+        adapter_kind: "codex",
+        adapter_id: adapterId,
+        operation_id: invocation.operation_id,
+        raw_receipt_id: `receipt_${invocation.operation_id}`,
+        latency_ms: 0,
+        event_count: 0
+      },
+      artifact_descriptors: [],
+      error: {
+        code: "process_timeout",
+        message: "Codex CLI operation deadline expired before process spawn",
+        recoverable: true
+      },
+      received_at: completedAt
+    };
+    await this.safeWriteOperationReceipt({
+      operation_id: invocation.operation_id,
+      attempt_id: invocation.attempt_id,
+      node_run_id: invocation.node_run_id,
+      pid: -1,
+      status: "timed_out",
+      started_at: completedAt,
+      completed_at: completedAt,
+      error: { code: "process_timeout", recoverable: true }
+    });
+    await this.safeWriteAttemptMetadata(attempt, "timed_out");
+    return {
+      operation_id: invocation.operation_id,
+      pid: -1,
+      cancel: async () => "already_finished",
+      result: Promise.resolve(result)
+    };
   }
 
   private flushPendingProcessEvents(operation: ActiveOperation) {
