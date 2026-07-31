@@ -21,6 +21,7 @@ const rateLimitError = {
 function failedAttempt(input: {
   attemptNumber: number;
   createdAt: string;
+  dispatchedAt?: string;
   cost?: number;
   operationId?: string;
 }) {
@@ -33,6 +34,8 @@ function failedAttempt(input: {
     status: "failed" as const,
     provider_receipt: input.cost === undefined ? {} : { cost: input.cost },
     error: rateLimitError,
+    started_at: input.dispatchedAt ?? input.createdAt,
+    dispatched_at: input.dispatchedAt ?? input.createdAt,
     created_at: input.createdAt
   };
 }
@@ -52,7 +55,8 @@ describe("RetryPolicy", () => {
       operation_id: "op_retry",
       next_attempt_number: 2,
       delay_ms: 1_000,
-      scheduled_for: "2026-07-31T00:00:02.000Z"
+      scheduled_for: "2026-07-31T00:00:02.000Z",
+      budget_snapshot: expect.objectContaining({ cost_budget: 5 })
     });
   });
 
@@ -115,6 +119,35 @@ describe("RetryPolicy", () => {
       reason_code: "error_not_retryable",
       operation_id: "op_retry"
     });
+  });
+
+  it("measures total time from the first real dispatch rather than the received result", () => {
+    const attempts = [failedAttempt({
+      attemptNumber: 1,
+      dispatchedAt: "2026-07-31T00:00:00.000Z",
+      createdAt: "2026-07-31T00:00:59.000Z"
+    })];
+
+    expect(decideRetry({
+      policy: { ...basePolicy, total_time_budget_ms: 30_000 },
+      error: rateLimitError,
+      attempts,
+      now: "2026-07-31T00:01:00.000Z"
+    })).toMatchObject({
+      action: "require_attention",
+      reason_code: "time_budget_exhausted",
+      budget_snapshot: {
+        elapsed_ms: 60_000,
+        cost_budget: 5
+      }
+    });
+  });
+
+  it("rejects a RetryPolicy without a finite cost budget", () => {
+    const { cost_budget: _costBudget, ...withoutCostBudget } = basePolicy;
+    expect(() => retryPolicySchema.parse(withoutCostBudget)).toThrow();
+    expect(() => retryPolicySchema.parse({ ...basePolicy, cost_budget: Number.NaN })).toThrow();
+    expect(() => retryPolicySchema.parse({ ...basePolicy, cost_budget: Number.POSITIVE_INFINITY })).toThrow();
   });
 
   it.each([

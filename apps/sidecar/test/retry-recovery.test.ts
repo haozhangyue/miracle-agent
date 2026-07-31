@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { RetryScheduleStore } from "../src/retry-store";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -44,6 +45,16 @@ const retryWorkflow = {
   },
   layouts: { dag: { transient_node: { x: 0, y: 0 } } },
   registry_meta: { source: "test", status: "stable" }
+};
+
+const costOverrideWorkflow = {
+  ...retryWorkflow,
+  id: "retry-cost-override-v0",
+  name: "Retry cost override test",
+  nodes: retryWorkflow.nodes.map((node) => ({
+    ...node,
+    failure_policy: { ...node.failure_policy, cost_budget: 0 }
+  }))
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -93,11 +104,86 @@ async function stopSidecar() {
   sidecar = undefined;
 }
 
-async function launchRun() {
+async function launchRun(workflowId = retryWorkflow.id) {
   return fetchJson<{ run_id: string }>("/api/v0/runs", {
     method: "POST",
-    body: JSON.stringify({ workflow_id: retryWorkflow.id, execution_policy: "auto" })
+    body: JSON.stringify({ workflow_id: workflowId, execution_policy: "auto" })
   });
+}
+
+function retrySchedulePath(runId: string) {
+  return path.join(tempWorkspace, "runs", runId, "retry_schedule.json");
+}
+
+function attemptsPath(runId: string) {
+  return path.join(tempWorkspace, "runs", runId, "attempts.json");
+}
+
+function eventsPath(runId: string) {
+  return path.join(tempWorkspace, "runs", runId, "events.jsonl");
+}
+
+function dispatchIntentPath(runId: string, nodeRunId: string) {
+  const prefix = nodeRunId.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 48) || "node";
+  const suffix = createHash("sha256").update(nodeRunId).digest("hex").slice(0, 16);
+  return path.join(tempWorkspace, "runs", runId, "dispatches", `${prefix}_${suffix}.json`);
+}
+
+async function readEvents(runId: string) {
+  return (await readFile(eventsPath(runId), "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown> & { event_id: string; type: string });
+}
+
+async function writeEvents(runId: string, events: Array<Record<string, unknown>>) {
+  await writeFile(eventsPath(runId), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
+}
+
+async function failFirstAttempt(workflowId = retryWorkflow.id) {
+  const { run_id: runId } = await launchRun(workflowId);
+  const tick = await fetchJson<{
+    executed: Array<{
+      result: {
+        invocation: {
+          operation_id: string;
+          attempt_id: string;
+          attempt_number: number;
+          run_id: string;
+          node_run_id: string;
+          node_id: string;
+          resolved_inputs: Array<{ input_id: string }>;
+          dispatched_at: string;
+        };
+        retry_decision?: { action: string; reason_code: string };
+      };
+    }>;
+  }>(`/api/v0/runs/${runId}/scheduler/tick`, {
+    method: "POST",
+    body: JSON.stringify({ max_nodes: 1 })
+  });
+  const bundle = await fetchJson<{
+    nodes: Array<{ node_run_id: string }>;
+    attempts: Array<{
+      attempt_id: string;
+      operation_id: string;
+      attempt_number: number;
+      status: string;
+      started_at?: string;
+      dispatched_at?: string;
+      created_at: string;
+      provider_receipt: Record<string, unknown>;
+    }>;
+  }>(`/api/v0/runs/${runId}`);
+  const schedules = await new RetryScheduleStore({ workspace_dir: tempWorkspace }).list(runId);
+  return {
+    runId,
+    nodeRunId: bundle.nodes[0]!.node_run_id,
+    attempt: bundle.attempts[0]!,
+    invocation: tick.executed[0]!.result.invocation,
+    retryDecision: tick.executed[0]!.result.retry_decision,
+    schedules
+  };
 }
 
 describe("RetryScheduleStore", () => {
@@ -147,6 +233,11 @@ describe("P7-05 retry recovery", () => {
       `${JSON.stringify(retryWorkflow, null, 2)}\n`,
       "utf8"
     );
+    await writeFile(
+      path.join(tempWorkspace, "workflows", `${costOverrideWorkflow.id}.json`),
+      `${JSON.stringify(costOverrideWorkflow, null, 2)}\n`,
+      "utf8"
+    );
     port = 6200 + Math.floor(Math.random() * 300);
     baseUrl = `http://127.0.0.1:${port}`;
     await startSidecar();
@@ -157,68 +248,195 @@ describe("P7-05 retry recovery", () => {
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
   });
 
-  it("waits until due, recovers after restart, and dispatches the retry once", async () => {
-    const { run_id: runId } = await launchRun();
-    await fetchJson(`/api/v0/runs/${runId}/scheduler/tick`, {
-      method: "POST",
-      body: JSON.stringify({ max_nodes: 1 })
+  it("persists real dispatch timing, finite legacy cost budget, and restores a missing schedule event", async () => {
+    const failure = await failFirstAttempt();
+    expect(failure.attempt).toMatchObject({
+      started_at: failure.invocation.dispatched_at,
+      dispatched_at: failure.invocation.dispatched_at
     });
-    const afterFailure = await fetchJson<{
-      attempts: Array<{ operation_id: string; attempt_number: number; status: string }>;
-    }>(`/api/v0/runs/${runId}`);
-    expect(afterFailure.attempts).toHaveLength(1);
-
-    const notDue = await fetchJson<{ executed: unknown[] }>(`/api/v0/runs/${runId}/scheduler/tick`, {
-      method: "POST",
-      body: JSON.stringify({ max_nodes: 1 })
-    });
-    expect(notDue.executed).toEqual([]);
-
-    const schedulePath = path.join(tempWorkspace, "runs", runId, "retry_schedule.json");
-    const schedules = JSON.parse(await readFile(schedulePath, "utf8")) as Array<Record<string, unknown>>;
-    schedules[0] = { ...schedules[0], scheduled_for: "2020-01-01T00:00:00.000Z" };
-    await writeFile(schedulePath, `${JSON.stringify(schedules, null, 2)}\n`, "utf8");
-    await stopSidecar();
-    await startSidecar();
-
-    await fetchJson(`/api/v0/runs/${runId}/scheduler/tick`, {
-      method: "POST",
-      body: JSON.stringify({ max_nodes: 1 })
-    });
-    const recovered = await fetchJson<{
-      attempts: Array<{ operation_id: string; attempt_number: number; status: string }>;
-    }>(`/api/v0/runs/${runId}`);
-    expect(recovered.attempts).toHaveLength(2);
-    expect(recovered.attempts.map((attempt) => attempt.operation_id)).toEqual([
-      recovered.attempts[0]?.operation_id,
-      recovered.attempts[0]?.operation_id
+    expect(failure.schedules).toEqual([
+      expect.objectContaining({
+        operation_id: failure.attempt.operation_id,
+        budget_snapshot: expect.objectContaining({ cost_budget: 5 })
+      })
     ]);
-    expect(recovered.attempts.map((attempt) => attempt.attempt_number)).toEqual([1, 2]);
 
-    await stopSidecar();
-    await startSidecar();
-    await fetchJson(`/api/v0/runs/${runId}/scheduler/tick`, {
+    const originalEvents = await readEvents(failure.runId);
+    const scheduledEvent = originalEvents.find((event) => event.type === "retry_scheduled");
+    expect(scheduledEvent).toBeDefined();
+    await writeFile(
+      retrySchedulePath(failure.runId),
+      `${JSON.stringify([{ ...failure.schedules[0], scheduled_for: "2100-01-01T00:00:00.000Z" }], null, 2)}\n`,
+      "utf8"
+    );
+    await writeEvents(failure.runId, originalEvents.filter((event) => event.type !== "retry_scheduled"));
+
+    await fetchJson(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
       method: "POST",
       body: JSON.stringify({ max_nodes: 1 })
     });
-    const afterSecondRestart = await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${runId}`);
-    expect(afterSecondRestart.attempts).toHaveLength(2);
+    const restored = (await readEvents(failure.runId)).filter((event) => event.type === "retry_scheduled");
+    expect(restored).toHaveLength(1);
+    expect(restored[0]?.event_id).toBe(scheduledEvent?.event_id);
+    expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${failure.runId}`)).attempts).toHaveLength(1);
+  });
 
-    const events = await fetchJson<{ events: Array<{ type: string }> }>(`/api/v0/runs/${runId}/events`);
-    expect(events.events.filter((event) => event.type === "retry_scheduled")).toHaveLength(1);
-    expect(events.events.filter((event) => event.type === "retry_exhausted")).toHaveLength(1);
-    const attention = await fetchJson<{ attention: Array<{ root_cause_key: string; safe_actions: string[] }> }>(`/api/v0/attention?run_id=${runId}`);
-    const retryAttention = attention.attention.filter((item) => item.root_cause_key.includes(runId));
-    expect(retryAttention).toHaveLength(1);
-    expect(retryAttention[0]?.safe_actions).toContain("retry_manually");
-
-    const nodes = await fetchJson<{ nodes: Array<{ node_run_id: string }> }>(`/api/v0/runs/${runId}`);
-    const detail = await fetchJson<{ retry_decision: { action: string; reason_code: string } }>(
-      `/api/v0/runs/${runId}/nodes/${nodes.nodes[0]?.node_run_id}`
-    );
-    expect(detail.retry_decision).toMatchObject({
+  it("honors an explicit NodeSpec cost budget override", async () => {
+    const failure = await failFirstAttempt(costOverrideWorkflow.id);
+    expect(failure.retryDecision).toMatchObject({
       action: "require_attention",
-      reason_code: "attempt_budget_exhausted"
+      reason_code: "cost_budget_exhausted"
     });
+    expect(failure.schedules).toEqual([]);
+    const attention = await fetchJson<{ attention: unknown[] }>(`/api/v0/attention?run_id=${failure.runId}`);
+    expect(attention.attention).toHaveLength(1);
+  });
+
+  it("rechecks elapsed time at Scheduler consumption and does not dispatch an exhausted retry", async () => {
+    const failure = await failFirstAttempt();
+    const attempts = JSON.parse(await readFile(attemptsPath(failure.runId), "utf8")) as Array<Record<string, unknown>>;
+    attempts[0] = {
+      ...attempts[0],
+      started_at: "2020-01-01T00:00:00.000Z",
+      dispatched_at: "2020-01-01T00:00:00.000Z"
+    };
+    await writeFile(attemptsPath(failure.runId), `${JSON.stringify(attempts, null, 2)}\n`, "utf8");
+    await writeFile(
+      retrySchedulePath(failure.runId),
+      `${JSON.stringify([{ ...failure.schedules[0], scheduled_for: "2020-01-01T00:00:01.000Z" }], null, 2)}\n`,
+      "utf8"
+    );
+    const dispatchesBefore = (await readEvents(failure.runId)).filter((event) => event.type === "runner_operation_dispatched").length;
+
+    const tick = await fetchJson<{ executed: unknown[] }>(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ max_nodes: 1 })
+    });
+    expect(tick.executed).toEqual([]);
+    expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${failure.runId}`)).attempts).toHaveLength(1);
+    expect((await readEvents(failure.runId)).filter((event) => event.type === "runner_operation_dispatched")).toHaveLength(dispatchesBefore);
+    expect(await new RetryScheduleStore({ workspace_dir: tempWorkspace }).list(failure.runId)).toEqual([]);
+    expect((await readEvents(failure.runId)).filter((event) => event.type === "retry_exhausted")).toHaveLength(1);
+  });
+
+  it("rechecks cost inside direct execute and blocks before adapter dispatch", async () => {
+    const failure = await failFirstAttempt();
+    const attempts = JSON.parse(await readFile(attemptsPath(failure.runId), "utf8")) as Array<Record<string, unknown>>;
+    attempts[0] = {
+      ...attempts[0],
+      provider_receipt: { ...(attempts[0]?.provider_receipt as Record<string, unknown>), cost: 5 }
+    };
+    await writeFile(attemptsPath(failure.runId), `${JSON.stringify(attempts, null, 2)}\n`, "utf8");
+    await writeFile(
+      retrySchedulePath(failure.runId),
+      `${JSON.stringify([{ ...failure.schedules[0], scheduled_for: "2020-01-01T00:00:01.000Z" }], null, 2)}\n`,
+      "utf8"
+    );
+    const dispatchesBefore = (await readEvents(failure.runId)).filter((event) => event.type === "runner_operation_dispatched").length;
+
+    const response = await fetch(`${baseUrl}/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: "retry_budget_exhausted", reason_code: "cost_budget_exhausted" }
+    });
+    expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${failure.runId}`)).attempts).toHaveLength(1);
+    expect((await readEvents(failure.runId)).filter((event) => event.type === "runner_operation_dispatched")).toHaveLength(dispatchesBefore);
+    expect(await new RetryScheduleStore({ workspace_dir: tempWorkspace }).list(failure.runId)).toEqual([]);
+  });
+
+  it("projects unknown and invalid dispatch intents as blockers instead of scheduled retry", async () => {
+    const failure = await failFirstAttempt();
+    await writeFile(
+      retrySchedulePath(failure.runId),
+      `${JSON.stringify([{ ...failure.schedules[0], scheduled_for: "2100-01-01T00:00:00.000Z" }], null, 2)}\n`,
+      "utf8"
+    );
+    const intentPath = dispatchIntentPath(failure.runId, failure.nodeRunId);
+    await mkdir(path.dirname(intentPath), { recursive: true });
+    const baseIntent = {
+      node_run_id: failure.nodeRunId,
+      invocation: failure.invocation,
+      decision: {
+        reason_code: "retryable_error",
+        resolved_input_count: failure.invocation.resolved_inputs.length,
+        resolved_input_ids: failure.invocation.resolved_inputs.map((input) => input.input_id)
+      },
+      event: {
+        event_id: `evt_${failure.invocation.attempt_id}_inputs_resolved`,
+        run_id: failure.runId,
+        type: "node_inputs_resolved",
+        subject: { type: "NodeRun", id: failure.nodeRunId },
+        message: "Retry inputs resolved",
+        created_at: failure.invocation.dispatched_at
+      },
+      prepared_at: failure.invocation.dispatched_at
+    };
+    await writeFile(intentPath, `${JSON.stringify({
+      ...baseIntent,
+      state: "dispatched_unknown",
+      dispatched_at: failure.invocation.dispatched_at
+    }, null, 2)}\n`, "utf8");
+    const unknown = await fetchJson<{ retry_decision: { action: string; reason_code: string } }>(
+      `/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`
+    );
+    expect(unknown.retry_decision).toMatchObject({
+      action: "require_attention",
+      reason_code: "dispatch_result_unknown"
+    });
+
+    await writeFile(intentPath, `${JSON.stringify({
+      ...baseIntent,
+      state: "invalid_result",
+      error: { code: "adapter_result_invalid", message: "Receipt association failed." }
+    }, null, 2)}\n`, "utf8");
+    const invalid = await fetchJson<{ retry_decision: { action: string; reason_code: string } }>(
+      `/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`
+    );
+    expect(invalid.retry_decision).toMatchObject({
+      action: "fail_terminal",
+      reason_code: "adapter_result_invalid"
+    });
+  });
+
+  it("recovers a committed retry attempt behind a stale schedule without duplicate dispatch", async () => {
+    const failure = await failFirstAttempt();
+    const staleSchedule = { ...failure.schedules[0], scheduled_for: "2020-01-01T00:00:00.000Z" };
+    await writeFile(retrySchedulePath(failure.runId), `${JSON.stringify([staleSchedule], null, 2)}\n`, "utf8");
+    await stopSidecar();
+    await startSidecar();
+    await fetchJson(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ max_nodes: 1 })
+    });
+    const afterRetry = await fetchJson<{
+      attempts: Array<{ operation_id: string; attempt_number: number }>;
+    }>(`/api/v0/runs/${failure.runId}`);
+    expect(afterRetry.attempts.map((attempt) => attempt.attempt_number)).toEqual([1, 2]);
+    expect(new Set(afterRetry.attempts.map((attempt) => attempt.operation_id))).toEqual(new Set([failure.attempt.operation_id]));
+    const afterRetryEvents = await readEvents(failure.runId);
+    expect(afterRetryEvents.filter((event) => event.type === "runner_operation_dispatched")).toHaveLength(2);
+
+    await writeFile(retrySchedulePath(failure.runId), `${JSON.stringify([staleSchedule], null, 2)}\n`, "utf8");
+    await writeEvents(failure.runId, afterRetryEvents.filter((event) => event.type !== "retry_exhausted" && event.type !== "attention_item_created"));
+    await writeFile(path.join(tempWorkspace, "runs", failure.runId, "attention.json"), "[]\n", "utf8");
+    await stopSidecar();
+    await startSidecar();
+    await fetchJson(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ max_nodes: 1 })
+    });
+
+    const recovered = await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${failure.runId}`);
+    expect(recovered.attempts).toHaveLength(2);
+    const recoveredEvents = await readEvents(failure.runId);
+    expect(recoveredEvents.filter((event) => event.type === "runner_operation_dispatched")).toHaveLength(2);
+    expect(recoveredEvents.filter((event) => event.type === "retry_exhausted")).toHaveLength(1);
+    expect(await new RetryScheduleStore({ workspace_dir: tempWorkspace }).list(failure.runId)).toEqual([]);
+    const attention = await fetchJson<{ attention: unknown[] }>(`/api/v0/attention?run_id=${failure.runId}`);
+    expect(attention.attention).toHaveLength(1);
   }, 30_000);
 });

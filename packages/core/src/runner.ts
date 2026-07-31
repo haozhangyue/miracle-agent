@@ -162,7 +162,11 @@ export function executeMockAdapter(input: {
   });
 }
 
-export function createNodeAttemptFromAdapterResult(result: AdapterResult, attemptNumber = 1): NodeAttempt {
+export function createNodeAttemptFromAdapterResult(
+  result: AdapterResult,
+  attemptNumber = 1,
+  timing?: { startedAt: string; dispatchedAt: string }
+): NodeAttempt {
   const parsedResult = adapterResultSchema.parse(result);
   if (!Number.isSafeInteger(attemptNumber) || attemptNumber < 1) throw new Error("attemptNumber must be a positive integer");
   return {
@@ -174,6 +178,8 @@ export function createNodeAttemptFromAdapterResult(result: AdapterResult, attemp
     status: parsedResult.status,
     provider_receipt: parsedResult.provider_receipt,
     error: parsedResult.error,
+    started_at: timing?.startedAt,
+    dispatched_at: timing?.dispatchedAt,
     created_at: parsedResult.received_at
   };
 }

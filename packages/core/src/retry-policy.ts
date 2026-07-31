@@ -14,7 +14,8 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
     "mock_failure"
   ],
   attempt_timeout_ms: 1_800_000,
-  total_time_budget_ms: 3_600_000
+  total_time_budget_ms: 3_600_000,
+  cost_budget: 5
 };
 
 type RetryError = {
@@ -32,6 +33,21 @@ function timestamp(value: string | undefined, field: string) {
 function receiptCost(attempt: NodeAttempt) {
   const cost = attempt.provider_receipt?.cost;
   return typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : 0;
+}
+
+function operationDispatchTimestamp(operationId: string) {
+  const match = operationId.match(/_(\d+)$/);
+  if (!match) return undefined;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function attemptDispatchTimestamp(attempt: NodeAttempt) {
+  const explicit = attempt.dispatched_at ?? attempt.started_at;
+  if (explicit) return timestamp(explicit, "attempt.dispatched_at");
+  const operationTimestamp = operationDispatchTimestamp(attempt.operation_id);
+  if (operationTimestamp !== undefined) return operationTimestamp;
+  throw new Error("Retry attempts require a real dispatch timestamp");
 }
 
 function backoffDelay(policy: RetryPolicy, nextAttemptNumber: number) {
@@ -75,7 +91,7 @@ export function decideRetry(input: {
   if (latestAttempt.status !== "failed") throw new Error("Only an explicit failed NodeAttempt may be retried");
 
   const attemptsUsed = Math.max(...input.attempts.map((attempt) => attempt.attempt_number ?? 1));
-  const firstAttemptAt = Math.min(...input.attempts.map((attempt) => timestamp(attempt.created_at, "attempt.created_at")));
+  const firstAttemptAt = Math.min(...input.attempts.map(attemptDispatchTimestamp));
   const elapsedMs = Math.max(0, nowMs - firstAttemptAt);
   const costUsed = input.attempts.reduce((total, attempt) => total + receiptCost(attempt), 0);
   const budgetSnapshot: RetryBudgetSnapshot = {
@@ -84,7 +100,7 @@ export function decideRetry(input: {
     cost_used: costUsed,
     max_attempts: policy.max_attempts,
     total_time_budget_ms: policy.total_time_budget_ms,
-    ...(policy.cost_budget === undefined ? {} : { cost_budget: policy.cost_budget })
+    cost_budget: policy.cost_budget
   };
 
   if (!input.error.recoverable || !policy.retryable_error_codes.includes(input.error.code)) {
@@ -103,7 +119,7 @@ export function decideRetry(input: {
       budgetSnapshot
     });
   }
-  if (policy.cost_budget !== undefined && costUsed >= policy.cost_budget) {
+  if (costUsed >= policy.cost_budget) {
     return decision({
       action: "require_attention",
       reasonCode: "cost_budget_exhausted",

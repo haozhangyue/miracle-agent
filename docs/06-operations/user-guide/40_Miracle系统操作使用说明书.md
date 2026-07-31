@@ -340,7 +340,8 @@ Provider fallback 仍属于 P7-08，当前 Scheduler 不会自动切换 Provider
    重派。先检查 dispatch intent 和外部回执，再决定人工恢复。
 
 默认自动 Attempt 总数不超过 3。策略只允许 fixed/exponential 退避，并拒绝负数、NaN、
-Infinity 和无上限配置。当前版本不实现 Provider fallback，也不调用真实第三方模型 API。
+Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5，模板可显式覆盖。
+当前版本不实现 Provider fallback，也不调用真实第三方模型 API。
 
 ## 6. 当前版本新增能力
 

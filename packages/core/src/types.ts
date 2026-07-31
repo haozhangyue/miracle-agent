@@ -61,6 +61,7 @@ export interface NodeSpec {
   review_gate_ref?: string;
   failure_policy: {
     retry: number;
+    cost_budget?: number;
     on_missing_input: "blocked" | "failed";
     on_provider_failure: "blocked" | "failed";
   };
@@ -206,6 +207,8 @@ export interface NodeAttempt {
     message: string;
     recoverable: boolean;
   };
+  started_at?: string;
+  dispatched_at?: string;
   created_at?: string;
 }
 
@@ -328,7 +331,7 @@ export interface RetryPolicy {
   retryable_error_codes: string[];
   attempt_timeout_ms: number;
   total_time_budget_ms: number;
-  cost_budget?: number;
+  cost_budget: number;
   manual_confirmation_after?: number;
 }
 
@@ -338,7 +341,7 @@ export interface RetryBudgetSnapshot {
   cost_used: number;
   max_attempts: number;
   total_time_budget_ms: number;
-  cost_budget?: number;
+  cost_budget: number;
 }
 
 export interface RetryDecision {

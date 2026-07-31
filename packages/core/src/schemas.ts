@@ -37,6 +37,7 @@ export const nodeSpecSchema = z.object({
   review_gate_ref: z.string().optional(),
   failure_policy: z.object({
     retry: z.number().int().min(0),
+    cost_budget: z.number().finite().min(0).optional(),
     on_missing_input: z.enum(["blocked", "failed"]),
     on_provider_failure: z.enum(["blocked", "failed"])
   })
@@ -359,7 +360,7 @@ export const retryPolicySchema: z.ZodType<RetryPolicy> = z.object({
   retryable_error_codes: z.array(z.string().min(1)),
   attempt_timeout_ms: finitePositiveNumber,
   total_time_budget_ms: finitePositiveNumber,
-  cost_budget: finiteNonNegativeNumber.optional(),
+  cost_budget: finiteNonNegativeNumber,
   manual_confirmation_after: z.number().finite().int().min(1).max(3).optional()
 }).superRefine((policy, context) => {
   if (policy.max_delay_ms < policy.initial_delay_ms) {
@@ -384,7 +385,7 @@ export const retryBudgetSnapshotSchema = z.object({
   cost_used: finiteNonNegativeNumber,
   max_attempts: z.number().int().min(1).max(3),
   total_time_budget_ms: finitePositiveNumber,
-  cost_budget: finiteNonNegativeNumber.optional()
+  cost_budget: finiteNonNegativeNumber.default(5)
 });
 
 export const retryScheduleRecordSchema: z.ZodType<RetryScheduleRecord> = z.object({

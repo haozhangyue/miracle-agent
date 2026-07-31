@@ -252,13 +252,16 @@ interface RetryPolicy {
   retryable_error_codes: string[];
   attempt_timeout_ms: number;
   total_time_budget_ms: number;
-  cost_budget?: number;
+  cost_budget: number;
   manual_confirmation_after?: number;
 }
 ```
 
 P7 默认 `max_attempts <= 3`。如果超过时间、次数或成本预算，Orchestrator
 必须停止自动执行并创建 Attention Item。
+
+默认和 legacy NodeSpec 映射使用保守有限 `cost_budget = 5`，模板可以显式覆盖；
+任何有效 RetryPolicy 都必须具有有限 cost budget。
 
 ## 6. 通用模型 API Adapter
 

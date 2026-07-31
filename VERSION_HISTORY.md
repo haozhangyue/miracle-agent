@@ -109,6 +109,10 @@
   预算展示；预算耗尽按 root cause 聚合单一 Attention，并提供检查根因、调整预算和人工重试动作。
 - 同步 task-baseline：`P7-05` 标记完成，`current_node_id` 推进到 `p7-06`；Provider fallback
   保持 P7-08 范围，本轮不接真实第三方 API。
+- P7-05 修复轮 1：RetryPolicy 强制有限 `cost_budget`，legacy NodeSpec 默认 5；NodeAttempt
+  持久化真实派发时间，Scheduler/直接 execute 在锁内按最新时间、成本和次数权威复核。
+  重启恢复会补齐缺失的 `retry_scheduled`，unknown/invalid intent 在 Node detail 明确阻断，
+  已提交 Attempt 后的陈旧 schedule 不会产生重复 dispatch。
 
 ## 4. v0.8.0 发布记录
 
