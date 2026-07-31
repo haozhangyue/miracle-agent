@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isOriginRelativeApiPath } from "./model-api";
 import type {
   AdapterInvocation,
   AdapterResult,
@@ -242,7 +243,7 @@ export const providerProfileSchema: z.ZodType<ProviderProfile> = z.object({
     const url = new URL(value);
     return url.username.length === 0 && url.password.length === 0;
   }, "base_url must not contain credentials"),
-  api_path: z.string().startsWith("/").optional(),
+  api_path: z.string().refine(isOriginRelativeApiPath, "api_path must be an origin-relative path with one leading slash").optional(),
   credential_ref: z.string().min(1),
   verification_status: z.enum(["configured_unverified", "healthy", "degraded", "unavailable"])
 }).strict();

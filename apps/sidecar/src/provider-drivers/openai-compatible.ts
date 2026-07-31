@@ -19,11 +19,39 @@ function tokenCount(value: unknown) {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
+function isOriginRelativeApiPath(value: string) {
+  if (!value.startsWith("/") || value.startsWith("//")) return false;
+  const origin = new URL("https://miracle.invalid");
+  try {
+    const resolved = new URL(value, origin);
+    return resolved.origin === origin.origin && resolved.username.length === 0 && resolved.password.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+function compatibleEndpoint(input: ModelApiRequest) {
+  const baseUrl = new URL(input.profile.base_url);
+  const apiPath = input.profile.api_path ?? "/v1/chat/completions";
+  if (!isOriginRelativeApiPath(apiPath)) throw new Error("provider_api_path_invalid");
+  const endpoint = new URL(apiPath, baseUrl);
+  if (
+    endpoint.origin !== baseUrl.origin
+    || endpoint.username.length > 0
+    || endpoint.password.length > 0
+    || baseUrl.username.length > 0
+    || baseUrl.password.length > 0
+  ) {
+    throw new Error("provider_api_path_invalid");
+  }
+  return endpoint;
+}
+
 export const openAiCompatibleDriver: ProviderDriver = {
   id: "openai-compatible",
 
   buildRequest(input: ModelApiRequest) {
-    const url = new URL(input.profile.api_path ?? "/v1/chat/completions", input.profile.base_url);
+    const url = compatibleEndpoint(input);
     const prompt = input.prompt ?? `Execute Miracle operation ${input.invocation.operation_id} for node ${input.invocation.node_id}.`;
     return {
       url: url.toString(),

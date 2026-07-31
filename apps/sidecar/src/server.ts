@@ -78,6 +78,15 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
 const serverInstanceId = randomUUID();
 const eventWriteQueues = new Map<string, Promise<void>>();
+const modelApiOperations = new Map<string, {
+  operation_id: string;
+  run_id: string;
+  node_run_id: string;
+  adapter_id: string;
+  provider: string;
+  started_at: string;
+  controller: AbortController;
+}>();
 const runtimeWorkspaceDir = process.env.MIRACLE_RUNTIME_WORKSPACE_DIR ?? path.join(homedir(), ".miracle-agent");
 const workflowRegistryDir = process.env.MIRACLE_WORKFLOW_REGISTRY_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle/workflows");
 const port = Number(process.env.MIRACLE_SIDECAR_PORT ?? 4317);
@@ -1549,12 +1558,26 @@ async function executeSidecarAdapter(input: {
         receivedAt
       });
     }
-    return new ModelApiAdapter({ driver: openAiCompatibleDriver }).execute({
-      invocation: input.invocation,
-      profile,
-      credential,
-      signal: new AbortController().signal
+    const controller = new AbortController();
+    modelApiOperations.set(input.invocation.operation_id, {
+      operation_id: input.invocation.operation_id,
+      run_id: input.invocation.run_id,
+      node_run_id: input.invocation.node_run_id,
+      adapter_id: input.invocation.adapter_id,
+      provider: input.invocation.provider,
+      started_at: new Date().toISOString(),
+      controller
     });
+    try {
+      return await new ModelApiAdapter({ driver: openAiCompatibleDriver }).execute({
+        invocation: input.invocation,
+        profile,
+        credential,
+        signal: controller.signal
+      });
+    } finally {
+      modelApiOperations.delete(input.invocation.operation_id);
+    }
   }
   if (input.adapter.execution_mode !== "mock-compatible") {
     return {
@@ -3690,12 +3713,22 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
 
   if (req.method === "POST" && parts[0] === "api" && parts[1] === "v0" && parts[2] === "operations" && parts[3] && parts[4] === "cancel") {
-    const result = await codexCliAdapter.cancelOperation(getId(parts, 3));
-    return sendJson(res, 200, { operation_id: getId(parts, 3), status: result });
+    const operationId = getId(parts, 3);
+    const modelApiOperation = modelApiOperations.get(operationId);
+    if (modelApiOperation) {
+      modelApiOperation.controller.abort();
+      return sendJson(res, 200, { operation_id: operationId, status: "cancel_requested" });
+    }
+    const result = await codexCliAdapter.cancelOperation(operationId);
+    return sendJson(res, 200, { operation_id: operationId, status: result });
   }
 
   if (req.method === "GET" && url.pathname === "/api/v0/operations") {
-    return sendJson(res, 200, { operations: codexCliAdapter.listActiveOperations(url.searchParams.get("run_id") ?? undefined) });
+    const runId = url.searchParams.get("run_id") ?? undefined;
+    const activeModelApiOperations = Array.from(modelApiOperations.values())
+      .filter((operation) => runId === undefined || operation.run_id === runId)
+      .map(({ controller: _controller, ...operation }) => ({ ...operation, status: "running" }));
+    return sendJson(res, 200, { operations: [...codexCliAdapter.listActiveOperations(runId), ...activeModelApiOperations] });
   }
 
   if (req.method === "GET" && url.pathname === "/api/v0/domains") {

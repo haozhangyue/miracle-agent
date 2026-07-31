@@ -73,6 +73,34 @@ describe("model API contract", () => {
     expect(JSON.stringify(manifest)).not.toContain("fixture-secret");
   });
 
+  it.each(["//provider.example/v1/chat", "//user@provider.example/v1/chat", "https://provider.example/v1/chat", "v1/chat/completions"])("rejects unsafe provider api_path %s", (apiPath) => {
+    const manifest = {
+      id: "model-api-compatible-adapter",
+      kind: "model-api",
+      display_name: "Model API Compatible Adapter",
+      version: "0.1.0",
+      status: "experimental",
+      description: "A generic compatible transport contract.",
+      execution_mode: "external",
+      capabilities: ["model.call"],
+      supported_providers: ["fixture-compatible"],
+      default_provider: "fixture-compatible",
+      required_credentials: [],
+      provider_profiles: [{
+        id: "fixture-compatible-default",
+        provider: "fixture-compatible",
+        model: "fixture-chat",
+        base_url: "https://provider.example",
+        api_path: apiPath,
+        credential_ref: "MODEL_API_FIXTURE_CREDENTIAL",
+        verification_status: "configured_unverified"
+      }],
+      runtime: { local_executor: "external-api", can_execute: true }
+    };
+
+    expect(() => adapterManifestSchema.parse(manifest)).toThrow(/api_path/i);
+  });
+
   it("uses the compatible adapter identity when an invocation selects model-api", () => {
     const workflow = {
       id: "model-api-workflow",

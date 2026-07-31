@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AdapterInvocation } from "@miracle/core";
+import type { AdapterInvocation, ProviderDriver } from "@miracle/core";
 
 const fixtureServer = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures/provider-server.mjs");
 let providerServer: ChildProcessWithoutNullStreams | undefined;
@@ -91,10 +91,14 @@ describe("ModelApiAdapter", () => {
     expect(JSON.stringify(result)).not.toContain("fixture-secret");
   });
 
-  it.each([401, 429, 500])("maps HTTP %s into a stable provider error", async (status) => {
+  it.each([
+    ["401-oversized", "authentication_failed", false],
+    ["429-invalid", "provider_rate_limited", true],
+    ["500-hang", "provider_unavailable", true]
+  ] as const)("maps HTTP %s after headers without reading an unsafe body", async (mode, code, recoverable) => {
     const adapter = await loadAdapter();
-    const result = await adapter.execute({ invocation, profile: profile(String(status)), credential: "fixture-secret", signal: new AbortController().signal });
-    expect(result).toMatchObject({ status: "failed", error: { code: expect.any(String) } });
+    const result = await adapter.execute({ invocation, profile: profile(mode), credential: "fixture-secret", signal: new AbortController().signal });
+    expect(result).toMatchObject({ status: "failed", error: { code, recoverable } });
     expect(JSON.stringify(result)).not.toContain("fixture-secret");
   });
 
@@ -115,5 +119,49 @@ describe("ModelApiAdapter", () => {
     const result = await adapter.execute({ invocation, profile: profile("missing-usage"), credential: "fixture-secret", signal: new AbortController().signal });
     expect(result.status).toBe("succeeded");
     expect(result.provider_receipt).not.toHaveProperty("usage");
+  });
+
+  it("redacts credential echoes from provider receipts and driver errors", async () => {
+    const adapter = await loadAdapter();
+    const echoedReceipt = await adapter.execute({ invocation, profile: profile("credential-echo"), credential: "fixture-secret", signal: new AbortController().signal });
+    const { openAiCompatibleDriver } = await import("../src/provider-drivers/openai-compatible");
+    const echoingDriver: ProviderDriver = {
+      ...openAiCompatibleDriver,
+      mapError: () => ({ code: "fixture-secret", message: "fixture-secret", recoverable: true })
+    };
+    const echoedError = await new (await import("../src/model-api-adapter")).ModelApiAdapter({ driver: echoingDriver })
+      .execute({ invocation, profile: profile("401"), credential: "fixture-secret", signal: new AbortController().signal });
+    const echoedThrownError = await new (await import("../src/model-api-adapter")).ModelApiAdapter({
+      driver: {
+        ...echoingDriver,
+        buildRequest: () => {
+          throw new Error("fixture transport failure");
+        }
+      }
+    }).execute({ invocation, profile: profile(), credential: "fixture-secret", signal: new AbortController().signal });
+
+    expect(echoedReceipt.provider_receipt).not.toHaveProperty("raw_receipt_id");
+    expect(echoedError).toMatchObject({ error: { code: "provider_response_redacted", recoverable: false } });
+    expect(echoedThrownError).toMatchObject({ error: { code: "provider_response_redacted", recoverable: false } });
+    expect(JSON.stringify([echoedReceipt, echoedError, echoedThrownError])).not.toContain("fixture-secret");
+  });
+
+  it("maps malformed UTF-8 to provider_response_invalid", async () => {
+    const adapter = await loadAdapter();
+    const result = await adapter.execute({ invocation, profile: profile("invalid-utf8"), credential: "fixture-secret", signal: new AbortController().signal });
+    expect(result).toMatchObject({ status: "failed", error: { code: "provider_response_invalid", recoverable: false } });
+  });
+
+  it("honors a direct external AbortSignal", async () => {
+    const adapter = await loadAdapter();
+    const controller = new AbortController();
+    const pending = adapter.execute({ invocation, profile: profile("slow"), credential: "fixture-secret", signal: controller.signal });
+    setTimeout(() => controller.abort(), 20);
+    await expect(pending).resolves.toMatchObject({ status: "cancelled", error: { code: "operation_cancelled" } });
+  });
+
+  it.each(["//provider.example/v1/chat", "//user@provider.example/v1/chat", "https://provider.example/v1/chat"])("rejects unsafe api_path in the driver: %s", async (apiPath) => {
+    const { openAiCompatibleDriver } = await import("../src/provider-drivers/openai-compatible");
+    expect(() => openAiCompatibleDriver.buildRequest({ invocation, profile: { ...profile(), api_path: apiPath }, credential: "fixture-secret" })).toThrow(/api_path/i);
   });
 });

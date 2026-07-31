@@ -17,6 +17,9 @@ const defaultMaxResponseBytes = 1_048_576;
 
 type AbortKind = "timeout" | "cancelled";
 
+class ProviderResponseTooLargeError extends Error {}
+class ProviderResponseInvalidError extends Error {}
+
 function abortSignals(input: { signal: AbortSignal; timeout_ms: number }) {
   const controller = new AbortController();
   let kind: AbortKind | undefined;
@@ -49,7 +52,7 @@ async function readLimitedText(response: Response, limit: number) {
     total += value.byteLength;
     if (total > limit) {
       await reader.cancel();
-      throw new Error("provider_response_too_large");
+      throw new ProviderResponseTooLargeError();
     }
     chunks.push(value);
   }
@@ -59,7 +62,24 @@ async function readLimitedText(response: Response, limit: number) {
     output.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(output);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(output);
+  } catch {
+    throw new ProviderResponseInvalidError();
+  }
+}
+
+function containsCredential(value: string | undefined, credential: string) {
+  return credential.length > 0 && value?.includes(credential) === true;
+}
+
+function sanitizeDriverError(error: AdapterError, credential: string): AdapterError {
+  if (!containsCredential(error.code, credential) && !containsCredential(error.message, credential)) return error;
+  return {
+    code: "provider_response_redacted",
+    message: "Provider response contained sensitive credential material.",
+    recoverable: false
+  };
 }
 
 export class ModelApiAdapter {
@@ -98,8 +118,11 @@ export class ModelApiAdapter {
     try {
       const request = this.driver.buildRequest(input);
       const response = await fetch(request.url, { ...request.init, signal: control.signal });
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => undefined);
+        return failure("failed", sanitizeDriverError(this.driver.mapError({ response }), input.credential));
+      }
       const text = await readLimitedText(response, this.maxResponseBytes);
-      if (!response.ok) return failure("failed", this.driver.mapError({ response }));
       let body: unknown;
       try {
         body = JSON.parse(text) as unknown;
@@ -119,8 +142,8 @@ export class ModelApiAdapter {
         status: "succeeded",
         provider_receipt: receipt({
           ...(normalized.usage ? { usage: normalized.usage } : {}),
-          ...(normalized.external_session_id ? { external_session_id: normalized.external_session_id } : {}),
-          ...(normalized.raw_receipt_id ? { raw_receipt_id: normalized.raw_receipt_id } : {})
+          ...(normalized.external_session_id && !containsCredential(normalized.external_session_id, input.credential) ? { external_session_id: normalized.external_session_id } : {}),
+          ...(normalized.raw_receipt_id && !containsCredential(normalized.raw_receipt_id, input.credential) ? { raw_receipt_id: normalized.raw_receipt_id } : {})
         }),
         artifact_descriptors: [],
         received_at: new Date().toISOString()
@@ -132,10 +155,13 @@ export class ModelApiAdapter {
       if (control.abortKind() === "cancelled") {
         return failure("cancelled", { code: "operation_cancelled", message: "Provider request was cancelled.", recoverable: false });
       }
-      if (error instanceof Error && error.message === "provider_response_too_large") {
+      if (error instanceof ProviderResponseTooLargeError) {
         return failure("failed", { code: "provider_response_too_large", message: "Provider response exceeded the configured size limit.", recoverable: false });
       }
-      return failure("failed", this.driver.mapError({ error }));
+      if (error instanceof ProviderResponseInvalidError) {
+        return failure("failed", { code: "provider_response_invalid", message: "Provider returned invalid UTF-8.", recoverable: false });
+      }
+      return failure("failed", sanitizeDriverError(this.driver.mapError({ error }), input.credential));
     } finally {
       control.cleanup();
     }

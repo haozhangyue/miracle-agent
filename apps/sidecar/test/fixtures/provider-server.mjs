@@ -26,7 +26,19 @@ const server = createServer(async (req, res) => {
   if (mode === "401") return json(res, 401, { error: { message: "unauthorized" } });
   if (mode === "429") return json(res, 429, { error: { message: "rate limited" } });
   if (mode === "500") return json(res, 500, { error: { message: "provider failure" } });
+  if (mode === "401-oversized") return statusWithBody(res, 401, oversizedBody);
+  if (mode === "429-invalid") return statusWithBody(res, 429, Buffer.from([0xff]));
+  if (mode === "500-hang") {
+    res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+    res.flushHeaders();
+    return;
+  }
   if (mode === "slow") return setTimeout(() => json(res, 200, successBody()), 300);
+  if (mode === "invalid-utf8") {
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    res.end(Buffer.from([0xff]));
+    return;
+  }
   if (mode === "invalid-json") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
     res.end("{not-json");
@@ -37,12 +49,17 @@ const server = createServer(async (req, res) => {
     res.end(oversizedBody);
     return;
   }
-  return json(res, 200, successBody(mode !== "missing-usage"));
+  return json(res, 200, successBody(mode !== "missing-usage", mode === "credential-echo"));
 });
 
-function successBody(withUsage = true) {
+function statusWithBody(res, status, body) {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.end(body);
+}
+
+function successBody(withUsage = true, echoCredential = false) {
   return {
-    id: "fixture-chatcmpl-001",
+    id: echoCredential ? "fixture-secret" : "fixture-chatcmpl-001",
     choices: [{ message: { content: "fixture completion" } }],
     ...(withUsage ? { usage: { prompt_tokens: 3, completion_tokens: 5, total_tokens: 8 } } : {})
   };
