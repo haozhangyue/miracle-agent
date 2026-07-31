@@ -290,14 +290,100 @@ describe("provider fallback orchestration", () => {
     const run = await runResponse.json() as { run_id: string; initial_node_runs: string[] };
     await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/execute`, { method: "POST" });
 
-    const stopped = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/retry/stop`, { method: "POST" });
-    expect(stopped.status).toBe(200);
-    expect(await stopped.json()).toMatchObject({ status: "stopped", operation_id: expect.any(String), reason_code: "auto_retry_stopped" });
+    const nodeRunId = run.initial_node_runs[0]!;
+    const scheduled = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/observability`)).json() as {
+      retry_schedules: Array<{ operation_id: string; node_run_id: string }>;
+    };
+    expect(scheduled.retry_schedules).toEqual([
+      expect.objectContaining({ operation_id: expect.any(String), node_run_id: nodeRunId })
+    ]);
 
-    const node = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}`)).json() as {
+    const stopped = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}/retry/stop`, { method: "POST" });
+    expect(stopped.status).toBe(200);
+    const stoppedBody = await stopped.json() as {
+      status: string;
+      operation_id: string;
+      reason_code: string;
+      attention_items: Array<{ status: string; related_objects: Array<{ type: string; id: string }> }>;
+      created_events: string[];
+    };
+    expect(stoppedBody).toMatchObject({
+      status: "stopped",
+      operation_id: scheduled.retry_schedules[0]!.operation_id,
+      reason_code: "auto_retry_stopped"
+    });
+    expect(stoppedBody.attention_items).toHaveLength(1);
+    expect(stoppedBody.attention_items[0]).toMatchObject({ status: "open" });
+    expect(stoppedBody.attention_items[0]!.related_objects).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "NodeRun", id: nodeRunId }),
+      expect.objectContaining({ type: "Operation", id: scheduled.retry_schedules[0]!.operation_id })
+    ]));
+
+    const node = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}`)).json() as {
       retry_decision?: { phase?: string; reason_code?: string };
     };
     expect(node.retry_decision).toMatchObject({ phase: "exhausted", reason_code: "auto_retry_stopped" });
+
+    const retrySchedules = JSON.parse(await readFile(path.join(workspace, `runs/${run.run_id}/retry_schedule.json`), "utf8")) as unknown[];
+    expect(retrySchedules).toEqual([]);
+    const retryStates = JSON.parse(await readFile(path.join(workspace, `runs/${run.run_id}/retry_state.json`), "utf8")) as Array<Record<string, unknown>>;
+    expect(retryStates).toContainEqual(expect.objectContaining({
+      operation_id: stoppedBody.operation_id,
+      node_run_id: nodeRunId,
+      phase: "exhausted",
+      reason_code: "auto_retry_stopped",
+      effects_committed: true
+    }));
+
+    const events = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/events`)).json() as {
+      events: Array<{ type: string; subject?: { type: string; id: string } }>;
+    };
+    expect(events.events.filter((event) => event.type === "retry_exhausted")).toEqual([
+      expect.objectContaining({ subject: { type: "NodeRun", id: nodeRunId } })
+    ]);
+    const attention = await (await fetch(`${baseUrl}/api/v0/attention?run_id=${run.run_id}`)).json() as {
+      attention: Array<{ status: string; related_objects: Array<{ type: string; id: string }> }>;
+    };
+    const resultingAttention = attention.attention.find((item) =>
+      item.related_objects.some((object) => object.type === "Operation" && object.id === stoppedBody.operation_id)
+    );
+    expect(resultingAttention).toMatchObject({ status: "open" });
+    expect(resultingAttention?.related_objects).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "NodeRun", id: nodeRunId }),
+      expect.objectContaining({ type: "Operation", id: stoppedBody.operation_id })
+    ]));
+  });
+
+  it("rejects retry stop with 409 while another mutation owns the Run lock", async () => {
+    const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow_id: fallbackWorkflow.id, execution_policy: "auto" })
+    });
+    const run = await runResponse.json() as { run_id: string; initial_node_runs: string[] };
+    const nodeRunId = run.initial_node_runs[0]!;
+    await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}/execute`, { method: "POST" });
+    const lockDir = path.join(workspace, "runs", run.run_id, "locks", `${run.run_id}.mutation.lock`);
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(path.join(lockDir, "owner.json"), `${JSON.stringify({
+      instance_id: "review-contention",
+      owner_token: "retry-stop-test",
+      pid: process.pid,
+      created_at: new Date().toISOString()
+    })}\n`, "utf8");
+
+    try {
+      const stopped = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${nodeRunId}/retry/stop`, { method: "POST" });
+      expect(stopped.status).toBe(409);
+      expect(await stopped.json()).toMatchObject({ error: { code: "operation_in_progress" } });
+    } finally {
+      await rm(lockDir, { recursive: true, force: true });
+    }
+
+    const observability = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/observability`)).json() as {
+      retry_schedules: Array<{ node_run_id: string }>;
+    };
+    expect(observability.retry_schedules).toContainEqual(expect.objectContaining({ node_run_id: nodeRunId }));
   });
 
   it("reuses the operation id and creates a new Attempt when falling back from DeepSeek 429 to Kimi", async () => {
