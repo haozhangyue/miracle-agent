@@ -1,0 +1,23 @@
+{
+  "id": "kimi",
+  "display_name": "Kimi",
+  "driver_id": "kimi",
+  "profile": {
+    "id": "kimi-default",
+    "provider": "kimi",
+    "model": "kimi-k2.6",
+    "base_url": "https://api.moonshot.cn",
+    "api_path": "/v1/chat/completions",
+    "credential_ref": "MOONSHOT_API_KEY",
+    "verification_status": "configured_unverified",
+    "verified_at": "2026-07-31T00:00:00.000Z",
+    "docs_url": "https://platform.kimi.com/docs/api/chat"
+  },
+  "credential": { "key": "MOONSHOT_API_KEY", "source": "env" },
+  "documentation": {
+    "official_url": "https://platform.kimi.com/docs/api/chat",
+    "verified_at": "2026-07-31T00:00:00.000Z"
+  },
+  "capabilities": ["model.call"],
+  "cancellation": "http_abort"
+}

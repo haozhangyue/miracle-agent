@@ -14,4 +14,14 @@ describe("ProviderDriverRegistry", () => {
     expect(registry.resolveByDriverId("not-registered")).toBeUndefined();
     expect(registry.resolveByProvider("not-registered")).toBeUndefined();
   });
+
+  it.each([
+    ["deepseek", "deepseek"],
+    ["kimi", "kimi"],
+    ["minimax", "minimax"]
+  ])("registers %s with its own Driver", (provider, driverId) => {
+    const registry = createProviderDriverRegistry();
+    expect(registry.resolveByProvider(provider)?.id).toBe(driverId);
+    expect(registry.resolveByDriverId(driverId)?.id).toBe(driverId);
+  });
 });

@@ -7,16 +7,13 @@
   "description": "通用兼容协议 Model API Adapter。仅使用原生 HTTP transport，不绑定任何官方 SDK 或厂商服务。",
   "execution_mode": "external",
   "capabilities": ["model.call"],
-  "supported_providers": ["fixture-compatible"],
+  "supported_providers": ["fixture-compatible", "deepseek", "kimi", "minimax"],
   "default_provider": "fixture-compatible",
   "required_credentials": [
-    {
-      "key": "MODEL_API_FIXTURE_CREDENTIAL",
-      "label": "Model API fixture credential",
-      "source": "env",
-      "required": true,
-      "providers": ["fixture-compatible"]
-    }
+    { "key": "MODEL_API_FIXTURE_CREDENTIAL", "label": "Model API fixture credential", "source": "env", "required": true, "providers": ["fixture-compatible"] },
+    { "key": "DEEPSEEK_API_KEY", "label": "DeepSeek API key", "source": "env", "required": true, "providers": ["deepseek"] },
+    { "key": "MOONSHOT_API_KEY", "label": "Kimi API key", "source": "env", "required": true, "providers": ["kimi"] },
+    { "key": "MINIMAX_API_KEY", "label": "MiniMax API key", "source": "env", "required": true, "providers": ["minimax"] }
   ],
   "provider_profiles": [
     {
@@ -27,6 +24,39 @@
       "api_path": "/v1/chat/completions",
       "credential_ref": "MODEL_API_FIXTURE_CREDENTIAL",
       "verification_status": "configured_unverified"
+    },
+    {
+      "id": "deepseek-v4-flash-default",
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash",
+      "base_url": "https://api.deepseek.com",
+      "api_path": "/chat/completions",
+      "credential_ref": "DEEPSEEK_API_KEY",
+      "verification_status": "configured_unverified",
+      "verified_at": "2026-07-31T00:00:00.000Z",
+      "docs_url": "https://api-docs.deepseek.com/api/create-chat-completion"
+    },
+    {
+      "id": "kimi-default",
+      "provider": "kimi",
+      "model": "kimi-k2.6",
+      "base_url": "https://api.moonshot.cn",
+      "api_path": "/v1/chat/completions",
+      "credential_ref": "MOONSHOT_API_KEY",
+      "verification_status": "configured_unverified",
+      "verified_at": "2026-07-31T00:00:00.000Z",
+      "docs_url": "https://platform.kimi.com/docs/api/chat"
+    },
+    {
+      "id": "minimax-default",
+      "provider": "minimax",
+      "model": "MiniMax-M2.7",
+      "base_url": "https://api.minimaxi.com",
+      "api_path": "/v1/chat/completions",
+      "credential_ref": "MINIMAX_API_KEY",
+      "verification_status": "configured_unverified",
+      "verified_at": "2026-07-31T00:00:00.000Z",
+      "docs_url": "https://platform.minimaxi.com/docs/api-reference/text-chat-openai"
     }
   ],
   "runtime": {

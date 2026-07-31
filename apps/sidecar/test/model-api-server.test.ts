@@ -52,6 +52,7 @@ async function writeModelProfile(mode: string) {
   manifest.supported_providers = ["fixture-compatible"];
   manifest.default_provider = "fixture-compatible";
   manifest.required_credentials = [{ key: "MODEL_API_FIXTURE_CREDENTIAL", label: "Model API fixture credential", source: "env", required: true }];
+  manifest.provider_profiles = [profiles[0]!];
   profiles[0]!.provider = "fixture-compatible";
   profiles[0]!.base_url = providerBaseUrl;
   profiles[0]!.api_path = `/v1/chat/completions?mode=${mode}`;
@@ -66,6 +67,7 @@ async function writeProviderScopeMismatchModelProfile() {
   manifest.supported_providers = ["provider-b"];
   manifest.default_provider = "provider-b";
   manifest.required_credentials = [{ key: "MODEL_API_FIXTURE_CREDENTIAL", label: "Model API fixture credential", source: "env", required: true, providers: ["provider-a"] }];
+  manifest.provider_profiles = [profiles[0]!];
   profiles[0]!.base_url = providerBaseUrl;
   profiles[0]!.api_path = "/v1/chat/completions?mode=record-authorization";
   profiles[0]!.provider = "provider-b";
@@ -77,6 +79,20 @@ async function writeProviderCatalog(entry: Record<string, unknown>) {
   const directory = path.join(workspace, "providers");
   await mkdir(directory, { recursive: true });
   await writeFile(path.join(directory, "fixture-compatible.json"), `${JSON.stringify(entry, null, 2)}\n`, "utf8");
+}
+
+async function pointMiniMaxCatalogAtFakeServer() {
+  const catalogPath = path.join(workspace, "providers", "minimax.json");
+  const entry = JSON.parse(await readFile(catalogPath, "utf8")) as { profile: Record<string, unknown> };
+  entry.profile.base_url = providerBaseUrl;
+  entry.profile.api_path = "/v1/chat/completions?mode=record-authorization";
+  await writeFile(catalogPath, `${JSON.stringify(entry, null, 2)}\n`, "utf8");
+
+  const manifestPath = path.join(workspace, "adapters", "model-api.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { required_credentials: Array<Record<string, unknown>>; supported_providers: string[] };
+  manifest.required_credentials.push({ key: "MINIMAX_API_KEY", label: "MiniMax API key", source: "env", required: true, providers: ["minimax"] });
+  manifest.supported_providers = ["fixture-compatible", "minimax"];
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
 async function createModelRun(provider = "fixture-compatible") {
@@ -136,7 +152,15 @@ describe("Model API Sidecar integration", () => {
     baseUrl = `http://127.0.0.1:${port}`;
     sidecar = spawn("npm", ["run", "dev", "-w", "apps/sidecar"], {
       cwd: repoRoot,
-      env: { ...process.env, MIRACLE_WORKSPACE_DIR: workspace, MIRACLE_SIDECAR_PORT: String(port), MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret" }
+      env: {
+        ...process.env,
+        MIRACLE_WORKSPACE_DIR: workspace,
+        MIRACLE_SIDECAR_PORT: String(port),
+        MODEL_API_FIXTURE_CREDENTIAL: "fixture-secret",
+        DEEPSEEK_API_KEY: "",
+        MOONSHOT_API_KEY: "",
+        MINIMAX_API_KEY: ""
+      }
     });
     sidecar.stdout.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
     sidecar.stderr.on("data", (chunk) => { sidecarOutput += chunk.toString(); });
@@ -159,6 +183,24 @@ describe("Model API Sidecar integration", () => {
 
     expect(response.status).toBe(200);
     expect(JSON.stringify([body, persisted, events, sidecarOutput])).not.toContain("fixture-secret");
+  });
+
+  it("projects registered catalog Drivers and rejects missing MiniMax credentials before fetch", async () => {
+    const providersResponse = await fetch(`${baseUrl}/api/v0/providers`);
+    const providers = await providersResponse.json() as { providers: Array<{ id: string; driver_registered: boolean; health_status: string }> };
+    expect(providersResponse.status).toBe(200);
+    expect(providers.providers.filter((provider) => ["deepseek", "kimi", "minimax"].includes(provider.id))).toMatchObject([
+      { id: "deepseek", driver_registered: true, health_status: "missing_credential" },
+      { id: "kimi", driver_registered: true, health_status: "missing_credential" },
+      { id: "minimax", driver_registered: true, health_status: "missing_credential" }
+    ]);
+
+    await pointMiniMaxCatalogAtFakeServer();
+    const outputBefore = providerOutput;
+    const { runId, nodeRunId } = await createModelRun("minimax");
+    const response = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
+    expect(await response.json()).toMatchObject({ adapter_result: { status: "failed", error: { code: "no_executable_adapter" } } });
+    expect(providerOutput.slice(outputBefore.length)).not.toContain("provider-authorization:");
   });
 
   it("refuses a declared credential outside its provider scope without sending it", async () => {
@@ -317,14 +359,14 @@ describe("Model API Sidecar integration", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
-      providers: [expect.objectContaining({
+      providers: expect.arrayContaining([expect.objectContaining({
         id: "fixture-compatible",
         profile: expect.objectContaining({ provider: "fixture-compatible" }),
         driver_registered: false,
         credential: expect.objectContaining({ configured: true }),
         verification_status: "configured_unverified",
         health_status: "driver_unregistered"
-      })]
+      })])
     });
     expect(JSON.stringify(body)).not.toContain("fixture-secret");
   });

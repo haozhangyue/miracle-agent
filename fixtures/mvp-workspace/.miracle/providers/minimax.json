@@ -1,0 +1,23 @@
+{
+  "id": "minimax",
+  "display_name": "MiniMax",
+  "driver_id": "minimax",
+  "profile": {
+    "id": "minimax-default",
+    "provider": "minimax",
+    "model": "MiniMax-M2.7",
+    "base_url": "https://api.minimaxi.com",
+    "api_path": "/v1/chat/completions",
+    "credential_ref": "MINIMAX_API_KEY",
+    "verification_status": "configured_unverified",
+    "verified_at": "2026-07-31T00:00:00.000Z",
+    "docs_url": "https://platform.minimaxi.com/docs/api-reference/text-chat-openai"
+  },
+  "credential": { "key": "MINIMAX_API_KEY", "source": "env" },
+  "documentation": {
+    "official_url": "https://platform.minimaxi.com/docs/api-reference/text-chat-openai",
+    "verified_at": "2026-07-31T00:00:00.000Z"
+  },
+  "capabilities": ["model.call"],
+  "cancellation": "http_abort"
+}

@@ -1,4 +1,7 @@
 import type { ProviderDriver } from "@miracle/core";
+import { deepseekDriver } from "./provider-drivers/deepseek";
+import { kimiDriver } from "./provider-drivers/kimi";
+import { minimaxDriver } from "./provider-drivers/minimax";
 import { openAiCompatibleDriver } from "./provider-drivers/openai-compatible";
 
 export interface ProviderDriverRegistration {
@@ -35,8 +38,9 @@ export class ProviderDriverRegistry {
 }
 
 export function createProviderDriverRegistry() {
-  return new ProviderDriverRegistry().register({
-    driver: openAiCompatibleDriver,
-    providers: ["fixture-compatible"]
-  });
+  return new ProviderDriverRegistry()
+    .register({ driver: openAiCompatibleDriver, providers: ["fixture-compatible"] })
+    .register({ driver: deepseekDriver, providers: ["deepseek"] })
+    .register({ driver: kimiDriver, providers: ["kimi"] })
+    .register({ driver: minimaxDriver, providers: ["minimax"] });
 }
