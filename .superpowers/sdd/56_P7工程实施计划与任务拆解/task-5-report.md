@@ -58,3 +58,47 @@ P7-06 已完成。功能提交：`dc4195d7f91721f44f11a12e4f4de0b5f2d281b3`（`�
 - 本任务不实现 DeepSeek、Kimi、MiniMax 的真实 Driver；该工作属于 P7-07。
 - 不实现 ProviderRouter 或 fallback；该工作属于 P7-08。
 - Model API 成功结果当前只归一化为 AdapterResult/receipt；真实厂商的提示词、输出 Artifact 约定与验证将在后续 Driver 接入中完成。
+
+## 审查修复（2026-07-31）
+
+修复提交：`c8cd62fc20a8c78e8d943f24ab100bb8398104e4`（`修复Model API安全与取消边界`）。
+
+### RED
+
+1. `npm run test -w packages/core -- model-api.test.ts`
+   - 结果：失败；`//provider.example/v1/chat` 与 `//user@provider.example/v1/chat` 被 schema 错误接受。
+2. `npm run test -w apps/sidecar -- model-api-adapter.test.ts`
+   - 结果：失败；401 的超大 body 覆盖为 `provider_response_too_large`，429 的无效 body 覆盖为 `provider_network_error`，500 的挂起 body 覆盖为超时；credential echo 被写入 `raw_receipt_id`；非法 UTF-8 被误映射为 network error；三种危险 `api_path` 未被 Driver 拒绝。
+3. `npm run test -w apps/sidecar -- model-api-server.test.ts`
+   - 结果：失败；credential 同时出现在执行 API 返回和持久化 attempt；Model API operation 未被 `/api/v0/operations` 列出，取消集成测试超时。
+4. `npm run test -w apps/sidecar -- model-api-adapter.test.ts`
+   - 结果：失败；补充自审用例证明 `driver.mapError({ error })` 的异常分支仍可回显 credential。
+
+### GREEN
+
+1. `npm run test -w packages/core -- model-api.test.ts`
+   - 结果：通过，7 tests。
+2. `npm run test -w apps/sidecar -- model-api-adapter.test.ts model-api-server.test.ts`
+   - 结果：通过，2 files、14 tests。
+3. `npm run typecheck -w packages/core` 与 `npm run typecheck -w apps/sidecar`
+   - 结果：均通过。
+4. `npm run test -w packages/core`
+   - 结果：通过，8 files、121 tests。
+5. `npm run test -w apps/sidecar`
+   - 结果：通过，12 files、203 tests。
+6. `git diff --check`
+   - 结果：通过。
+
+### 修复文件
+
+- 修改 `packages/core/src/model-api.ts`、`packages/core/src/schemas.ts`、`packages/core/test/model-api.test.ts`：`api_path` 仅接受单斜杠 origin-relative path，拒绝 scheme-relative、userinfo、绝对 URL 和无前导斜杠。
+- 修改 `apps/sidecar/src/provider-drivers/openai-compatible.ts`：Driver 再次校验 path 和解析后的 origin，避免绕过 schema 的调用改变目标主机。
+- 修改 `apps/sidecar/src/model-api-adapter.ts`：非 2xx 在 headers 到达后立刻稳定映射并取消 body；非法 UTF-8 固定映射为 `provider_response_invalid`；超大响应保持专用错误；所有进入 `AdapterResult` 的 Driver receipt/error 字符串均做 credential 检测并删除或替换为固定脱敏错误。
+- 修改 `apps/sidecar/src/server.ts`：维护 Model API `operation_id -> AbortController` 注册表，执行前注册、`finally` 清理；操作列表可见 active Model API operation，既有取消端点可中止它。
+- 修改 `apps/sidecar/test/fixtures/provider-server.mjs`、`apps/sidecar/test/model-api-adapter.test.ts`，新增 `apps/sidecar/test/model-api-server.test.ts`：覆盖 credential echo、日志/持久化/API 无明文、external abort、API cancel、挂起/损坏/超大非 2xx body、非法 UTF-8 与危险路径。
+
+### 接口与安全结论
+
+- `ProviderProfile` 仍只持久化 `credential_ref`，执行期 credential 不进入 `AdapterResult`、receipt、错误、事务、API 返回或 Sidecar 日志；fake provider 的 `credential-echo` 场景已由 Adapter 与 API 集成测试证明。
+- Model API 使用 Node.js 原生 `fetch`；`AbortController` 同时承接 timeout、直接外部 abort 与按 `operation_id` 的 API cancel。Adapter 不写 NodeAttempt 或其他运行事实。
+- 保持 `official-api` 兼容，并保留 `model-api` 可执行 kind。未引入 OpenAI SDK 或 OpenAI 官方服务，也未实现真实厂商 Driver、ProviderRouter 或 fallback。
