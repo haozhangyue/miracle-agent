@@ -3889,6 +3889,108 @@ function schedulerNextActions(plan: Awaited<ReturnType<typeof buildSchedulerPlan
   }) : ["refresh_run"];
 }
 
+function observabilityNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function observabilityUsage(receipt: Record<string, unknown>) {
+  const usage = receipt.usage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return undefined;
+  const value = usage as Record<string, unknown>;
+  return {
+    ...(observabilityNumber(value.input_tokens) !== undefined ? { input_tokens: observabilityNumber(value.input_tokens) } : {}),
+    ...(observabilityNumber(value.output_tokens) !== undefined ? { output_tokens: observabilityNumber(value.output_tokens) } : {}),
+    ...(observabilityNumber(value.total_tokens) !== undefined ? { total_tokens: observabilityNumber(value.total_tokens) } : {})
+  };
+}
+
+function observabilityAttempt(attempt: NodeAttempt, estimatedCost?: { currency: string; min: number; max: number }) {
+  const receipt = attempt.provider_receipt ?? {};
+  return {
+    attempt_id: attempt.attempt_id,
+    node_run_id: attempt.node_run_id,
+    operation_id: attempt.operation_id,
+    attempt_number: attempt.attempt_number ?? 1,
+    attempt_kind: attempt.attempt_kind ?? "execute",
+    status: attempt.status,
+    ...(typeof receipt.adapter_kind === "string" ? { adapter_kind: receipt.adapter_kind } : {}),
+    ...(typeof receipt.adapter_id === "string" ? { adapter_id: receipt.adapter_id } : {}),
+    ...(typeof receipt.provider === "string" ? { provider: receipt.provider } : {}),
+    ...(typeof receipt.provider_profile_id === "string" ? { provider_profile_id: receipt.provider_profile_id } : {}),
+    ...(typeof receipt.model === "string" ? { model: receipt.model } : {}),
+    ...(observabilityNumber(receipt.latency_ms) !== undefined ? { latency_ms: observabilityNumber(receipt.latency_ms) } : {}),
+    ...(observabilityUsage(receipt) ? { usage: observabilityUsage(receipt) } : {}),
+    ...(estimatedCost ? { estimated_cost: estimatedCost } : {}),
+    actual_cost: providerCostFromAttempt(attempt),
+    ...(attempt.error ? { error: { code: attempt.error.code, recoverable: attempt.error.recoverable } } : {}),
+    created_at: attempt.created_at ?? attempt.dispatched_at ?? attempt.started_at
+  };
+}
+
+async function buildRunObservabilityProjection(runId: string) {
+  const bundle = await readRunBundle(runId);
+  const attempts = bundle.attempts as NodeAttempt[];
+  const routingDecisions = await readRoutingDecisions(runId);
+  const routingByOperation = new Map(routingDecisions.map((decision) => [decision.operation_id, decision]));
+  const operations = Array.from(new Set(attempts.map((attempt) => attempt.operation_id))).map((operationId) => ({
+    operation_id: operationId,
+    attempts: attempts
+      .filter((attempt) => attempt.operation_id === operationId)
+      .sort((left, right) => (left.attempt_number ?? 1) - (right.attempt_number ?? 1))
+      .map((attempt) => observabilityAttempt(attempt, routingByOperation.get(operationId)?.estimated_cost))
+  }));
+  const schedulerPlan = await calculateRetryAwareSchedulerPlan(runId, bundle, Math.max(1, (bundle.nodes as NodeRun[]).length));
+  const events = await readEvents(runId);
+  const latestTick = events
+    .filter((event) => event.type === "scheduler_tick_started" || event.type === "scheduler_tick_completed")
+    .sort((left, right) => Date.parse(String(left.created_at)) - Date.parse(String(right.created_at)))
+    .at(-1);
+  const artifactSpecs = new Map(bundle.workflow.artifacts.map((artifact) => [artifact.id, artifact]));
+  return {
+    run_id: runId,
+    operations,
+    routing_decisions: routingDecisions.map((decision) => ({
+      decision_id: decision.decision_id,
+      revision: decision.revision,
+      operation_id: decision.operation_id,
+      node_run_id: decision.node_run_id,
+      target_attempt_number: decision.target_attempt_number,
+      current_adapter_kind: decision.current_adapter_kind,
+      selected_adapter_kind: decision.selected_adapter_kind,
+      selected_provider_profile_id: decision.selected_provider_profile_id,
+      reason_codes: decision.reason_codes,
+      estimated_cost: decision.estimated_cost,
+      requires_confirmation: decision.requires_confirmation
+    })),
+    retry_schedules: (await retryScheduleStore.list(runId)).map((schedule) => ({
+      operation_id: schedule.operation_id,
+      node_run_id: schedule.node_run_id,
+      attempt_number: schedule.attempt_number,
+      reason_code: schedule.reason_code,
+      scheduled_for: schedule.scheduled_for,
+      budget_snapshot: schedule.budget_snapshot
+    })),
+    artifacts: (bundle.artifacts as ArtifactManifest[]).map((artifact) => ({
+      artifact_id: artifact.artifact_id,
+      node_run_id: artifact.node_run_id,
+      type: artifact.type,
+      version: artifact.version,
+      hash: artifact.hash,
+      status: artifact.status,
+      review_status: artifact.review_status,
+      consumers: artifactSpecs.get(artifact.artifact_spec_ref ?? "")?.required_for ?? []
+    })),
+    scheduler: {
+      ...(latestTick ? { last_tick_id: String(latestTick.event_id).replace(/^evt_/, "").replace(/_(started|completed)$/, ""), last_tick_at: latestTick.created_at } : {}),
+      ready_node_run_ids: schedulerPlan.executionPlan.ready_node_run_ids,
+      paused: schedulerPlan.decisions
+        .filter((decision) => decision.decision === "pause_for_gate" || decision.decision === "blocked")
+        .map((decision) => ({ node_run_id: decision.node_run_id, node_id: decision.node_id, reason_code: decision.reason_code })),
+      next_suggested_actions: schedulerNextActions(schedulerPlan)
+    }
+  };
+}
+
 function schedulerStopReason(plan: Awaited<ReturnType<typeof buildSchedulerPlan>>): "no_executable_nodes" | "paused_for_gate" | "waiting_for_retry" | "attention_required" {
   const blocked = plan.decisions.filter((decision) => decision.decision === "blocked");
   if (blocked.some((decision) => decision.reason_code !== "required_gate_rejected")) return "attention_required";
@@ -4735,6 +4837,9 @@ async function route(req: IncomingMessage, res: ServerResponse) {
         fallback_confirmations: await readFallbackConfirmations(runId)
       });
     }
+    if (req.method === "GET" && parts[4] === "observability") {
+      return sendJson(res, 200, await buildRunObservabilityProjection(runId));
+    }
     if (req.method === "GET" && parts[4] === "dag") {
       const bundle = await readRunBundle(runId);
       return sendJson(res, 200, { dag: buildDagProjection(bundle.workflow, bundle.nodes as NodeRun[]) });
@@ -4849,6 +4954,53 @@ async function route(req: IncomingMessage, res: ServerResponse) {
         await lock.release();
       }
       return sendJson(res, responseStatus, responseBody);
+    }
+    if (req.method === "POST" && parts[4] === "nodes" && parts[5] && parts[6] === "retry" && parts[7] === "stop") {
+      const nodeRunId = getId(parts, 5);
+      const lock = await acquireRunMutationLock(runId);
+      if (!lock) return sendError(res, 409, "operation_in_progress", "Run already has a state mutation in progress.");
+      try {
+        const bundle = await readRunBundle(runId);
+        const nodeRun = (bundle.nodes as NodeRun[]).find((node) => node.node_run_id === nodeRunId);
+        const schedule = (await retryScheduleStore.list(runId)).find((item) => item.node_run_id === nodeRunId);
+        if (!nodeRun || !schedule) return sendError(res, 409, "retry_not_active", "NodeRun has no active automatic retry to stop.");
+        const latestAttempt = (bundle.attempts as NodeAttempt[])
+          .filter((attempt) => attempt.operation_id === schedule.operation_id && attempt.node_run_id === nodeRunId)
+          .sort((left, right) => (right.attempt_number ?? 1) - (left.attempt_number ?? 1))
+          .at(0);
+        if (!latestAttempt?.error) return sendError(res, 409, "retry_not_active", "Active retry has no failed NodeAttempt fact.");
+        const now = new Date().toISOString();
+        const decision: RetryDecision = {
+          action: "require_attention",
+          reason_code: "auto_retry_stopped",
+          operation_id: schedule.operation_id,
+          next_attempt_number: schedule.attempt_number,
+          budget_snapshot: schedule.budget_snapshot
+        };
+        const terminalState: TerminalRetryState = {
+          operation_id: schedule.operation_id,
+          node_run_id: nodeRunId,
+          attempt_id: latestAttempt.attempt_id,
+          attempt_number: latestAttempt.attempt_number ?? 1,
+          phase: "exhausted",
+          reason_code: "auto_retry_stopped",
+          decision,
+          error: latestAttempt.error,
+          effects_committed: false,
+          updated_at: now
+        };
+        await retryStateStore.upsert(runId, terminalState);
+        const committed = await commitTerminalRetryEffects({ runId, nodeRun, state: terminalState, completedAt: now });
+        return sendJson(res, 200, {
+          status: "stopped",
+          operation_id: schedule.operation_id,
+          reason_code: "auto_retry_stopped",
+          attention_items: committed.attention_items,
+          created_events: committed.created_events
+        });
+      } finally {
+        await lock.release();
+      }
     }
     if (req.method === "POST" && parts[4] === "scheduler" && parts[5] === "tick") {
       const body = await parseBody(req);

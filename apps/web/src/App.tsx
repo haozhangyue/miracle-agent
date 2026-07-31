@@ -30,6 +30,7 @@ import { useEffect, useMemo, useState } from "react";
 import { artifactPreviewCapability, confidenceLabel, eventSortDescending, gapLabel, isHistoricalRun } from "./historical";
 import { canConfirmRunDraft, runDraftModeLabel, summarizeBranchImpact } from "./run-drafts";
 import { canExecuteNode, retryBudgetLabel } from "./retry-ui";
+import { availableRecoveryActions, buildAttemptTimeline, costSummary, recoveryActionLabel, runtimeBadge } from "./run-observability";
 
 type Page = "home" | "new" | "dryrun" | "run" | "attention" | "agents" | "artifacts" | "review" | "canvas" | "sync" | "evolution";
 type ApiState<T> = { loading: boolean; data?: T; error?: string; refreshing?: boolean; updatedAt?: number };
@@ -172,6 +173,13 @@ function executionFeedback(status: string) {
 function formatUpdatedAt(value?: number) {
   if (!value) return "尚未刷新";
   return new Date(value).toLocaleTimeString();
+}
+
+function retryCountdown(scheduledFor?: string) {
+  if (!scheduledFor) return "未排期";
+  const remaining = Math.max(0, Date.parse(scheduledFor) - Date.now());
+  const seconds = Math.ceil(remaining / 1000);
+  return seconds > 0 ? `${seconds}s 后可重试` : "已到重试时间";
 }
 
 export function App() {
@@ -557,6 +565,7 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
   const dag = useApi<any>(`/runs/${runId}/dag`, [runId, refresh]);
   const events = useApi<any>(`/runs/${runId}/events`, [runId, refresh]);
   const operations = useApi<{ operations: any[] }>(`/operations?run_id=${runId}`, [runId, refresh]);
+  const observability = useApi<any>(`/runs/${runId}/observability`, [runId, refresh]);
   const attention = useApi<any>(`/attention?run_id=${runId}`, [runId, refresh]);
   const nodesForRun = (dag.data?.dag.nodes ?? []).filter((item: any) => String(item.node_run_id ?? "").startsWith(`nr_${runId}_`));
   const selectedNodeForRun = selectedNode.startsWith(`nr_${runId}_`) && nodesForRun.some((item: any) => item.node_run_id === selectedNode) ? selectedNode : (nodesForRun[0]?.node_run_id ?? "");
@@ -660,6 +669,13 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
     }
   }
   const selectedStatus = String(node.data?.node?.status ?? "");
+  const selectedTimeline = buildAttemptTimeline(
+    observability.data?.operations?.find((operation: any) => operation.attempts?.some((attempt: any) => attempt.node_run_id === selectedNodeForRun))?.attempts ?? [],
+    observability.data?.routing_decisions?.filter((decision: any) => decision.node_run_id === selectedNodeForRun) ?? []
+  );
+  const selectedRetry = observability.data?.retry_schedules?.find((schedule: any) => schedule.node_run_id === selectedNodeForRun);
+  const latestObservedAttempt = selectedTimeline.flatMap((operation: any) => operation.attempts).at(-1);
+  const selectedRuntime = latestObservedAttempt ? runtimeBadge(latestObservedAttempt) : undefined;
   const executable = canExecuteNode({
     status: selectedStatus,
     retryPhase: node.data?.retry_decision?.phase,
@@ -706,6 +722,16 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
         <StatusCounter label="succeeded" value={statusSummary.succeeded} />
       </div>
       {schedulerState && <div className="receiptLine">{schedulerState}</div>}
+      <Panel title="Scheduler 观察">
+        <DataState state={observability}>
+          <div className="schedulerObservation">
+            <div><strong>Tick</strong><span>{observability.data?.scheduler?.last_tick_id ?? "尚无 tick"}</span></div>
+            <div><strong>就绪节点</strong><span>{observability.data?.scheduler?.ready_node_run_ids?.join(", ") || "无"}</span></div>
+            <div><strong>下一动作</strong><span>{observability.data?.scheduler?.next_suggested_actions?.join(" · ") || "refresh_run"}</span></div>
+            <div className="schedulerPauses"><strong>暂停理由</strong>{(observability.data?.scheduler?.paused ?? []).length === 0 ? <span>无</span> : observability.data.scheduler.paused.map((item: any) => <span key={item.node_run_id}>{item.node_id} · {item.reason_code}</span>)}</div>
+          </div>
+        </DataState>
+      </Panel>
       <div className="stageTabs">{stages.map((stage) => <span key={String(stage)}>{String(stage)}</span>)}</div>
       <div className="runGrid">
         <Panel title="执行流程视图">
@@ -736,7 +762,7 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
                   <strong>{node.data?.node?.node_id ?? selectedNodeForRun}</strong>
                   <span>{node.data?.node?.node_run_id}</span>
                 </div>
-                <Pill value={selectedStatus} />
+                <Pill value={`NodeRun · ${selectedStatus || "unknown"}`} />
               </div>
               <ExecutionFeedback status={selectedStatus} go={go} onRefresh={() => setRefresh((value) => value + 1)} />
               <div className="safeActions">
@@ -760,6 +786,12 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
                   <small>budget · {retryBudgetLabel(node.data.retry_decision.budget_snapshot)}</small>
                 </div>
               )}
+              <div className="runtimeSummary">
+                <div><strong>Runtime</strong><span>{selectedRuntime?.runtime ?? "等待 NodeAttempt"}</span></div>
+                <div><strong>Provider Profile</strong><span>{selectedRuntime?.provider_profile ?? "-"}</span></div>
+                <div><strong>Model</strong><span>{selectedRuntime?.model ?? "-"}</span></div>
+                <div><strong>Retry</strong><span>{selectedRetry ? `${retryCountdown(selectedRetry.scheduled_for)} · ${retryBudgetLabel(selectedRetry.budget_snapshot)}` : "无自动重试"}</span></div>
+              </div>
               {selectedGateForNode && (
                 <div className="gateInline">
                   <strong>{selectedGateForNode.gate_spec_id}</strong>
@@ -772,17 +804,22 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
               <h3>NodeRun</h3>
               <pre className="jsonBlock compact">{JSON.stringify(node.data?.node, null, 2)}</pre>
               <h3>NodeAttempt</h3>
-              {(node.data?.attempts ?? []).length === 0 ? (
+              {selectedTimeline.length === 0 ? (
                 <div className="previewEmpty"><Archive size={24} /><strong>暂无 Attempt</strong><span>执行当前节点后会显示 AdapterResult 对账记录。</span></div>
               ) : (
-                <div className="attemptList">
-                  {node.data.attempts.map((attempt: any) => (
-                    <div key={attempt.attempt_id}>
-                      <strong>{attempt.attempt_id}</strong>
-                      <Pill value={attempt.status} />
-                      <span>attempt {attempt.attempt_number ?? 1} · {attempt.provider_receipt?.adapter_id ?? "-"} · {attempt.provider_receipt?.provider ?? "-"}</span>
-                      <small>{attempt.operation_id} · {attempt.provider_receipt?.latency_ms ?? 0} ms · cost {attempt.provider_receipt?.cost ?? "-"}</small>
-                      <small>隔离工作区元数据：{attempt.attempt_id}（不显示外部 runtime 绝对路径）</small>
+                <div className="operationTimeline">
+                  {selectedTimeline.map((operation: any) => (
+                    <div className="operationTimelineGroup" key={operation.operation_id}>
+                      <div className="operationTimelineHeader"><strong>Operation · {operation.operation_id}</strong><span>估算 {operation.cost.estimated} / 实际 {operation.cost.actual} {operation.cost.currency} · tokens {operation.cost.usage.total_tokens}</span></div>
+                      {operation.fallback && <div className="fallbackLine">Fallback · {operation.fallback.from_provider} → {operation.fallback.to_provider} · {operation.fallback.reason_code ?? "路由策略"}{operation.fallback.requires_confirmation ? " · 需要确认" : ""}</div>}
+                      {operation.attempts.map((attempt: any) => (
+                        <div className="attemptList" key={attempt.attempt_id}>
+                          <strong>{attempt.attempt_id}</strong>
+                          <Pill value={attempt.status_label} />
+                          <span>attempt {attempt.attempt_number} · {attempt.runtime} · {attempt.provider} · {attempt.provider_profile} · {attempt.model}</span>
+                          <small>{attempt.error_code ? `error · ${attempt.error_code}` : "Adapter receipt 已对账"} · usage {attempt.usage?.total_tokens ?? "-"} · 估算 {attempt.estimated_cost ?? "-"} / 实际 {attempt.actual_cost ?? "-"}</small>
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>
@@ -830,7 +867,14 @@ function ExecutionFeedback({ status, go, onRefresh }: { status: string; go: (pag
 }
 
 function AttentionPage({ runId, selected, setSelected, setSelectedGate, go }: { runId: string; selected: string; setSelected: (id: string) => void; setSelectedGate: (id: string) => void; go: (page: Page) => void }) {
-  const attention = useApi<{ attention: any[] }>(`/attention?run_id=${runId}`, [runId]);
+  const [refresh, setRefresh] = useState(0);
+  const [showBudget, setShowBudget] = useState(false);
+  const [showCredentialGuide, setShowCredentialGuide] = useState(false);
+  const [pendingFallback, setPendingFallback] = useState<any>();
+  const [actionState, setActionState] = useState("");
+  const run = useApi<any>(`/runs/${runId}`, [runId]);
+  const attention = useApi<{ attention: any[] }>(`/attention?run_id=${runId}`, [runId, refresh]);
+  const observability = useApi<any>(`/runs/${runId}/observability`, [runId, refresh]);
   const current = attention.data?.attention.find((item) => item.attention_id === selected) ?? attention.data?.attention[0];
   useEffect(() => {
     if (attention.data?.attention[0] && !attention.data.attention.some((item) => item.attention_id === selected)) setSelected(attention.data.attention[0].attention_id);
@@ -839,6 +883,51 @@ function AttentionPage({ runId, selected, setSelected, setSelectedGate, go }: { 
     const gateObject = current?.related_objects.find((object: any) => object.type === "GateInstance");
     if (gateObject?.id) setSelectedGate(gateObject.id);
     go("review");
+  }
+  const relatedNodeIds = current?.related_objects.filter((object: any) => object.type === "NodeRun").map((object: any) => object.id) ?? [];
+  const retrySchedule = observability.data?.retry_schedules?.find((schedule: any) => relatedNodeIds.includes(schedule.node_run_id));
+  const fallback = observability.data?.routing_decisions
+    ?.filter((decision: any) => relatedNodeIds.includes(decision.node_run_id) && decision.requires_confirmation)
+    .sort((left: any, right: any) => Number(right.revision ?? 0) - Number(left.revision ?? 0))[0];
+  const credentialIssue = /credential|authentication|permission/i.test(`${current?.root_cause_key ?? ""} ${current?.title ?? ""}`);
+  const historical = isHistoricalRun(run.data?.run, run.data?.view_meta);
+  const recoveryActions = availableRecoveryActions({
+    historical,
+    hasRetrySchedule: Boolean(retrySchedule),
+    hasFallback: Boolean(fallback),
+    credentialIssue
+  });
+  async function stopAutoRetry() {
+    if (historical || !retrySchedule) return;
+    setActionState("正在停止自动重试");
+    try {
+      const result = await api<any>(`/runs/${runId}/nodes/${retrySchedule.node_run_id}/retry/stop`, { method: "POST", body: JSON.stringify({}) });
+      setActionState(`Operation · ${result.operation_id} · 自动重试已停止`);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setActionState(error instanceof Error ? error.message : "停止自动重试失败");
+    }
+  }
+  async function confirmFallback() {
+    if (historical || !pendingFallback) return;
+    setActionState("正在确认 fallback");
+    try {
+      const result = await api<any>(`/runs/${runId}/nodes/${pendingFallback.node_run_id}/fallback-confirmation`, {
+        method: "POST",
+        body: JSON.stringify({
+          decision_id: pendingFallback.decision_id,
+          operation_id: pendingFallback.operation_id,
+          expected_current_adapter_kind: pendingFallback.current_adapter_kind,
+          target_provider_profile_id: pendingFallback.selected_provider_profile_id,
+          actor: "local-operator"
+        })
+      });
+      setActionState(`Fallback · ${result.confirmation?.confirmation_id ?? "已确认"}`);
+      setPendingFallback(undefined);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setActionState(error instanceof Error ? error.message : "确认 fallback 失败");
+    }
   }
   return (
     <section className="page">
@@ -861,13 +950,24 @@ function AttentionPage({ runId, selected, setSelected, setSelectedGate, go }: { 
               <h3>{current.title}</h3>
               <p>{current.root_cause_key}</p>
               <div className="objectList">{current.related_objects.map((object: any) => <span key={`${object.type}-${object.id}`}>{object.type} · {object.label ?? object.id}</span>)}</div>
+              {historical && <div className="readOnlyNote">Historical Run 仅供查看，恢复操作已隐藏。</div>}
               <div className="safeActions">
-                {current.safe_actions.map((action: string) => (
-                  <button key={action} onClick={() => action.includes("gate") && openReviewFromAttention()} disabled={!action.includes("gate")}>
-                    {action}
-                  </button>
-                ))}
+                {recoveryActions.includes("inspect_retry_budget") && <button onClick={() => setShowBudget((value) => !value)}>{recoveryActionLabel("inspect_retry_budget")}</button>}
+                {recoveryActions.includes("stop_auto_retry") && <button className="dangerAction" onClick={stopAutoRetry}>{recoveryActionLabel("stop_auto_retry")}</button>}
+                {recoveryActions.includes("confirm_fallback") && <button onClick={() => setPendingFallback(fallback)}>{recoveryActionLabel("confirm_fallback")}</button>}
+                {recoveryActions.includes("open_credential_guide") && <button onClick={() => setShowCredentialGuide((value) => !value)}>{recoveryActionLabel("open_credential_guide")}</button>}
+                {current.related_objects.some((object: any) => object.type === "GateInstance") && <button onClick={openReviewFromAttention}><ClipboardCheck size={15} /> 查看 Gate</button>}
+                {recoveryActions.includes("return_to_run") && <button onClick={() => go("run")}>{recoveryActionLabel("return_to_run")}</button>}
               </div>
+              {showBudget && retrySchedule && <div className="attentionDisclosure"><strong>Retry budget</strong><span>{retryBudgetLabel(retrySchedule.budget_snapshot)} · {retryCountdown(retrySchedule.scheduled_for)}</span></div>}
+              {showCredentialGuide && <div className="attentionDisclosure"><strong>凭证配置</strong><span>在本地 Sidecar 进程环境中配置 Provider Profile 引用的环境变量；不把 API Key 写入 Run、日志或截图。</span></div>}
+              {pendingFallback && <div className="fallbackConfirm">
+                <strong>确认跨运行时 fallback</strong>
+                <span>Decision · {pendingFallback.decision_id} · Operation · {pendingFallback.operation_id}</span>
+                <span>{pendingFallback.current_adapter_kind} → {pendingFallback.selected_adapter_kind} · Profile · {pendingFallback.selected_provider_profile_id}</span>
+                <div><button className="dangerAction" onClick={confirmFallback}>确认并提交</button><button onClick={() => setPendingFallback(undefined)}>取消</button></div>
+              </div>}
+              {actionState && <div className="receiptLine">{actionState}</div>}
             </div>
           )}
         </Panel>
@@ -905,6 +1005,7 @@ function AgentsPage({ runId }: { runId: string }) {
 
 function ArtifactsPage({ runId, selectedArtifact, setSelectedArtifact }: { runId: string; selectedArtifact: string; setSelectedArtifact: (id: string) => void }) {
   const artifacts = useApi<{ artifacts: any[] }>(`/artifacts?run_id=${runId}`, [runId]);
+  const observability = useApi<any>(`/runs/${runId}/observability`, [runId]);
   const selectedArtifactForRun = artifacts.data?.artifacts.some((item) => item.artifact_id === selectedArtifact) ? selectedArtifact : (artifacts.data?.artifacts[0]?.artifact_id ?? "");
   const detail = useApi<any>(`/artifacts/${selectedArtifactForRun}?run_id=${runId}`, [runId, selectedArtifactForRun], Boolean(selectedArtifactForRun));
   useEffect(() => {
@@ -944,6 +1045,10 @@ function ArtifactsPage({ runId, selectedArtifact, setSelectedArtifact }: { runId
                 <Metric label="版本" value={`v${detail.data?.artifact.version}`} />
                 <Metric label="Hash" value={String(detail.data?.artifact.hash).replace("sha256:", "")} />
               </div>
+              {(() => {
+                const handoff = observability.data?.artifacts?.find((artifact: any) => artifact.artifact_id === selectedArtifactForRun);
+                return handoff && <div className="artifactHandoff"><strong>Artifact 交接</strong><span>v{handoff.version} · {handoff.hash}</span><span>消费者 · {handoff.consumers.join(", ") || "无"}</span></div>;
+              })()}
               <ArtifactPreviewBox detail={detail.data} />
             </div>
           </DataState>

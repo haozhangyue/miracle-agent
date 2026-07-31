@@ -250,6 +250,56 @@ function nodeDispatchIntentPath(runId: string, nodeRunId: string) {
 }
 
 describe("provider fallback orchestration", () => {
+  it("returns a read-only observability projection with complete fallback attempts and no secrets", async () => {
+    const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow_id: fallbackWorkflow.id, execution_policy: "auto" })
+    });
+    const run = await runResponse.json() as { run_id: string; initial_node_runs: string[] };
+    expect(runResponse.status).toBe(201);
+    await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/execute`, { method: "POST" });
+    await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/execute`, { method: "POST" });
+
+    const response = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/observability`);
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      operations: Array<{ operation_id: string; attempts: Array<{ provider: string; provider_profile_id?: string; model?: string }> }>;
+      scheduler: { next_suggested_actions: string[] };
+    };
+    expect(body.operations).toEqual([
+      expect.objectContaining({
+        attempts: [
+          expect.objectContaining({ provider: "deepseek", provider_profile_id: "deepseek-default" }),
+          expect.objectContaining({ provider: "kimi", provider_profile_id: "kimi-default", model: "kimi-fixture" })
+        ]
+      })
+    ]);
+    expect(body.scheduler.next_suggested_actions).toEqual(expect.any(Array));
+    expect(JSON.stringify(body)).not.toContain("fixture-key");
+    expect(JSON.stringify(body)).not.toContain("prompt_path");
+    expect(JSON.stringify(body)).not.toContain("attempt_workspace");
+  });
+
+  it("stops an active automatic retry through the Orchestrator and leaves an auditable terminal state", async () => {
+    const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow_id: fallbackWorkflow.id, execution_policy: "auto" })
+    });
+    const run = await runResponse.json() as { run_id: string; initial_node_runs: string[] };
+    await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/execute`, { method: "POST" });
+
+    const stopped = await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}/retry/stop`, { method: "POST" });
+    expect(stopped.status).toBe(200);
+    expect(await stopped.json()).toMatchObject({ status: "stopped", operation_id: expect.any(String), reason_code: "auto_retry_stopped" });
+
+    const node = await (await fetch(`${baseUrl}/api/v0/runs/${run.run_id}/nodes/${run.initial_node_runs[0]}`)).json() as {
+      retry_decision?: { phase?: string; reason_code?: string };
+    };
+    expect(node.retry_decision).toMatchObject({ phase: "exhausted", reason_code: "auto_retry_stopped" });
+  });
+
   it("reuses the operation id and creates a new Attempt when falling back from DeepSeek 429 to Kimi", async () => {
     const runResponse = await fetch(`${baseUrl}/api/v0/runs`, {
       method: "POST",

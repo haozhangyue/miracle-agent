@@ -26,8 +26,8 @@ Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与
 真实工作流工程接入基线。`P7-01` 总体设计、`P7-02` 多节点 ExecutionPlan 与输入解析和
 `P7-03` Codex 多节点 Artifact 真实交接、`P7-04` Scheduler 连续执行、`P7-05`
 Retry 与故障恢复、`P7-06` 通用 Model API Adapter 和 `P7-07` DeepSeek/Kimi/MiniMax
-Provider Driver 工程接入和 `P7-08` Provider fallback 与灵活路由已完成，当前主线推进到
-`P7-09` 多运行时 UI 与可观测性：
+Provider Driver 工程接入、`P7-08` Provider fallback 与灵活路由和 `P7-09` 多运行时 UI
+与可观测性已完成，当前主线推进到 `P7-10` 回归验收与版本收口：
 Codex CLI 已可按 ExecutionPlan 连续执行、在 Gate 暂停后批准恢复，并对明确 failed 或
 已确认终止的 timed_out AdapterResult 按节点策略、fixed/exponential 退避和
 attempt/time/cost 预算创建新 NodeAttempt；
@@ -42,7 +42,11 @@ Provider scope 授权；显式选择只按 `profile.provider` 匹配，不接受
 默认 smoke Artifact 写入仓库外的系统临时 workspace；若临时目录解析到仓库内，会在联网前
 清理并拒绝。显式设置 `MIRACLE_WORKSPACE_DIR` 时才写入用户指定目录。P7-08 已支持确定性
 ProviderRoutingDecision、同类 Model API fallback 和跨 kind 人工确认；只有真实 `healthy`
-Provider 才可执行，内置三家仍不会被自动选中。P7 不接入 OpenAI SDK 或官方 API。
+Provider 才可执行，内置三家仍不会被自动选中。P7-09 在既有 Run/Attention/Artifact 入口
+展示 runtime、Profile、model、完整 Attempt 时间线、retry/fallback、usage、估算/实际成本、
+Scheduler 暂停原因和版本/hash 交接；跨 kind fallback 必须先核对精确 Decision/Operation/Profile
+再二次确认提交，停止自动 retry 也由 Orchestrator 留下 terminal state 与审计事件。P7 不接入
+OpenAI SDK 或官方 API。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -82,6 +86,8 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - [55_P7多节点真实执行与模型Adapter扩展总体设计.md](docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md)：P7 Codex 纵向闭环、retry/fallback 和低成本模型 API 扩展评审基线。
 - [56_P7工程实施计划与任务拆解.md](docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md)：P7-02 至 P7-10 的逐文件 TDD 实施步骤、依赖、提交点和验收命令。
 - [57_P7-07模型Provider接入交付说明.md](docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md)：三家 Provider Driver、配置/检查、状态语义、安全边界与真实 smoke 未执行记录。
+- [58_P7-08Provider路由与Fallback交付说明.md](docs/05-delivery/p7-adapter-expansion/58_P7-08Provider路由与Fallback交付说明.md)：确定性 Provider Router、fallback 与跨 kind 人工确认。
+- [59_P7-09多运行时UI与可观测性交付说明.md](docs/05-delivery/p7-adapter-expansion/59_P7-09多运行时UI与可观测性交付说明.md)：Run/Attention/Artifact 观测投影、恢复动作和安全边界。
 - [40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)：启动、菜单操作、版本变化和常见问题。
 
 目录约定：

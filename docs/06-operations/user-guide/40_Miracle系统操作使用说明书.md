@@ -32,8 +32,8 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 |---|---|
 | 当前产品版本 | `v0.8.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
-| 当前阶段 | P7-02 至 P7-08 已完成，已具备 Provider Driver、确定性路由和受控 fallback；真实连通尚未验证 |
-| 当前任务焦点 | `P7-09` 多运行时 UI 与可观测性 |
+| 当前阶段 | P7-02 至 P7-09 已完成，已具备 Provider Driver、确定性路由、受控 fallback 和多运行时观测；真实连通尚未验证 |
+| 当前任务焦点 | `P7-10` 回归验收与版本收口 |
 | 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
 | P6 验收基线 | `54_P6回归验收与版本收口报告.md` |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
@@ -436,6 +436,22 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
    有多个 Profile 时，只排除 receipt 明确记录的失败 Profile；旧 Attempt 缺少 Profile ID 时，
    该 Provider 的全部 Profile 都不会自动 fallback，需要选择其他 Provider 或人工处理。
 
+### 5.16 在 Run 与 Attention 观察多运行时并恢复
+
+1. 在“任务运行”选择 Node，查看 `Runtime`、Provider Profile、model 和 `NodeAttempt · 状态`。
+   Attempt 按 operation 聚合，retry 与 fallback 不会覆盖失败历史；每个 operation 显示 usage 与
+   估算/实际成本。页面读取 `GET /api/v0/runs/<runId>/observability`，不直接读取 workspace JSON。
+2. Scheduler 观察区显示最后 tick、就绪节点、暂停 reason code 和下一动作。Artifact Board 的交接
+   卡显示版本、hash 和 WorkflowSpec 声明的消费者，不显示 Artifact 正文或 runtime 路径。
+3. Attention 仅显示当前真实可执行的动作。活动 retry 可先查看 budget/倒计时，再选择“停止自动重试”；
+   该操作会形成 `auto_retry_stopped` terminal state、`retry_exhausted` 事件和 Attention 审计，不能
+   通过手工修改 `retry_schedule.json` 替代。
+4. 若出现跨 kind fallback，先核对 UI 展开的 Decision、operation、current kind 和目标 Profile，点击
+   “确认 fallback”后还必须点击“确认并提交”。提交仍由 Sidecar 校验活动 Decision revision、Attempt
+   和 RetrySchedule；任何对象已经变化都会返回 `409 routing_decision_not_current`，不要重用旧确认。
+5. 凭证缺失时可在 Attention 打开配置说明：只在本地 Sidecar 进程环境中设置 Provider Profile 所引用
+   的环境变量。API Key、prompt、Artifact 正文和绝对 runtime 路径不会出现在 Run/Attention 截图或 API 投影。
+
 ## 6. 当前版本新增能力
 
 | 范围 | 新增或优化 | 用户可感知变化 |
@@ -446,6 +462,7 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 | P7-06 通用 Model API Adapter | 兼容协议 transport、ProviderProfile、usage/receipt、timeout/取消/大小/JSON 错误边界和 fake provider 契约 | 为三家已接入 Driver 提供共享调用层；不使用 OpenAI SDK 或官方 API |
 | P7-07 Provider 接入 | DeepSeek/Kimi/MiniMax Driver、`GET /api/v0/providers`、显式 smoke 与安全路径 | 用户可检查凭证与验证状态；三家凭证均缺失、真实 smoke 未执行，均为 `configured_unverified`，不是 healthy |
 | P7-08 Provider 路由与 fallback | 确定性候选排序、同类 Model API fallback、跨 kind 人工确认、Run 级路由审计 | 用户可查询“为什么选它/为什么拒绝”，恢复型失败可换 Provider，Codex 降级必须显式确认；未验证三家仍不会自动执行 |
+| P7-09 多运行时 UI 与可观测性 | `/observability` 只读投影、完整 Attempt 时间线、Scheduler/Artifact 观测、停止 retry 和二次确认 | 用户在既有 Run/Attention/Artifact 入口可查看 runtime、Profile、成本与交接，并只执行经 API 支持的恢复动作 |
 | Gate 审核 | approve/reject/request_changes、返工版本、决策投影 | 用户能处理审核、创建返工版本，并保留审计证据 |
 | Attention | 根因聚合和关联对象展开 | 用户能从异常直接定位 Agent、Node、Artifact、Gate |
 | Artifact Board | Artifact detail 和本地预览 | 用户能查看产物版本、审核状态和预览内容 |

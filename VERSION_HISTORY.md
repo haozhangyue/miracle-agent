@@ -9,7 +9,7 @@
 |---|---|
 | 当前大版本 | `v0.8.0` |
 | 版本名称 | 真实工作流工程接入基线 |
-| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-08 已完成，当前任务为 `P7-09` 多运行时 UI 与可观测性 |
+| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-09 已完成，当前任务为 `P7-10` 回归验收与版本收口 |
 | 基线提交 | P6-08 收口提交（见 Git HEAD） |
 | 基线日期 | 2026-07-16 |
 | 最终评审 | 通过 |
@@ -177,6 +177,14 @@
   routing decision 按追加顺序确定性补齐 `decision_id/revision`；多 Profile 场景优先依据失败
   Attempt receipt 排除精确 Profile。旧 Attempt 缺失 Profile ID 时拒绝该 Provider 的全部 Profile
   自动 fallback，避免恢复错配、旧确认失效、错误猜测或重复选择失败 Profile。
+- 完成 P7-09 多运行时 UI 与可观测性：Sidecar 新增只读 `/runs/:runId/observability` 聚合，
+  Run/Attention/Artifact 只经 `/api/v0` 展示 runtime、Provider Profile、model、完整 operation
+  Attempt 历史、retry/fallback、usage、估算/实际成本、Scheduler 暂停原因和版本/hash 消费者。
+- 新增 Orchestrator 受控“停止自动 retry”：把活动 schedule 变为 `auto_retry_stopped` terminal
+  state，并留下 retry/Attention 审计。跨 kind fallback 在 UI 中先显示精确 Decision/Operation/
+  kind/Profile，再由第二次确认提交；服务端仍拒绝陈旧路由。
+- 同步 README、文档导航、路线图、操作手册和 task-baseline：`P7-09` 标记完成，
+  `current_node_id` 推进到 `p7-10`；本次仍保持 `v0.8.0`，版本号留待 P7-10 评估。
 
 ## 4. v0.8.0 发布记录
 

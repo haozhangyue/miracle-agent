@@ -198,9 +198,10 @@ docs/
 | 原文件 | 目标目录（中文对照） | 状态 | 概念设计与原因 |
 |---|---|---|---|
 | `55_P7多节点真实执行与模型Adapter扩展总体设计.md` | `05-delivery/p7-adapter-expansion/`（交付/P7 Adapter 扩展） | ACTIVE | 已评审的 P7 总体设计：先定义 Codex 多节点纵向闭环、Artifact 交接和 retry/fallback，再以通用 Model API Adapter 接入 DeepSeek、Kimi 和 MiniMax。 |
-| `56_P7工程实施计划与任务拆解.md` | `05-delivery/p7-adapter-expansion/`（交付/P7 实施计划） | ACTIVE | P7-02 至 P7-10 的逐文件 TDD 实施计划；P7-08 已完成并移交 P7-09。 |
+| `56_P7工程实施计划与任务拆解.md` | `05-delivery/p7-adapter-expansion/`（交付/P7 实施计划） | ACTIVE | P7-02 至 P7-10 的逐文件 TDD 实施计划；P7-09 已完成并移交 P7-10。 |
 | `57_P7-07模型Provider接入交付说明.md` | `05-delivery/p7-adapter-expansion/`（交付/P7 Provider） | ACTIVE | 记录三家 Provider Driver、Profile、Provider API、错误与安全边界；凭证缺失、真实 smoke 未执行，三家仍为 `configured_unverified`。 |
-| `58_P7-08Provider路由与Fallback交付说明.md` | `05-delivery/p7-adapter-expansion/`（交付/P7 路由） | CURRENT | 记录确定性 Provider Router、同类 fallback、跨 kind 人工确认、Run 级决策审计和未验证 Provider 禁止执行边界。 |
+| `58_P7-08Provider路由与Fallback交付说明.md` | `05-delivery/p7-adapter-expansion/`（交付/P7 路由） | ACTIVE | 记录确定性 Provider Router、同类 fallback、跨 kind 人工确认、Run 级决策审计和未验证 Provider 禁止执行边界。 |
+| `59_P7-09多运行时UI与可观测性交付说明.md` | `05-delivery/p7-adapter-expansion/`（交付/P7 可观测性） | CURRENT | 记录 Run/Attention/Artifact 的只读观测投影、retry 停止审计和跨 kind fallback 二次确认。 |
 
 ### 4.10 操作、发布和仓库级资产
 
