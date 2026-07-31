@@ -229,12 +229,26 @@ export const historicalRunSpecSchema = runSpecBaseSchema.extend({
 
 export const runSpecSchema = z.union([executableRunSpecSchema, historicalRunSpecSchema]);
 
+const environmentVariableIdentifier = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function isEnvironmentVariableIdentifier(value: string) {
+  return environmentVariableIdentifier.test(value);
+}
+
 export const adapterCredentialRequirementSchema = z.object({
   key: z.string(),
   label: z.string(),
   source: z.enum(["env", "keychain", "workspace-secret"]),
   required: z.boolean(),
   providers: z.array(z.string()).optional()
+}).superRefine((credential, context) => {
+  if (credential.source === "env" && !isEnvironmentVariableIdentifier(credential.key)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["key"],
+      message: "env credential key must be a valid environment variable identifier"
+    });
+  }
 });
 
 export const providerProfileSchema: z.ZodType<ProviderProfile> = z.object({
@@ -273,6 +287,16 @@ export const providerCatalogEntrySchema: z.ZodType<ProviderCatalogEntry> = z.obj
       code: z.ZodIssueCode.custom,
       path: ["credential", "key"],
       message: "catalog credential key must match profile credential_ref"
+    });
+  }
+  if (entry.credential.source === "env" && (
+    !isEnvironmentVariableIdentifier(entry.credential.key)
+    || !isEnvironmentVariableIdentifier(entry.profile.credential_ref)
+  )) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["credential", "key"],
+      message: "env credential reference must be a valid environment variable identifier"
     });
   }
   if (entry.profile.docs_url && entry.profile.docs_url !== entry.documentation.official_url) {
@@ -318,6 +342,12 @@ export const adapterManifestSchema: z.ZodType<AdapterManifest> = adapterManifest
         code: z.ZodIssueCode.custom,
         path: ["provider_profiles", index, "credential_ref"],
         message: "provider credential_ref is not authorized for this provider by required_credentials.providers"
+      });
+    } else if (credential.source === "env" && !isEnvironmentVariableIdentifier(profile.credential_ref)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["provider_profiles", index, "credential_ref"],
+        message: "env provider credential_ref must be a valid environment variable identifier"
       });
     }
   }

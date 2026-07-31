@@ -1,5 +1,6 @@
 import type { AdapterInvocation, ProviderCatalogEntry } from "@miracle/core";
-import { mkdir, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ModelApiAdapter } from "./model-api-adapter";
@@ -7,6 +8,95 @@ import { readProviderCatalog } from "./provider-catalog";
 import { createProviderDriverRegistry, type ProviderDriverRegistry } from "./provider-driver-registry";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+
+function isPathInside(parent: string, candidate: string) {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+}
+
+async function canonicalSmokeWorkspace(workspaceDir: string) {
+  const lexicalWorkspace = path.resolve(workspaceDir);
+  const entry = await lstat(lexicalWorkspace);
+  if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error("Provider smoke workspace is not canonical or is unsafe.");
+  const canonicalWorkspace = await realpath(lexicalWorkspace);
+  return canonicalWorkspace;
+}
+
+async function canonicalSmokeArtifactRoot(workspaceRoot: string) {
+  const artifactRoot = path.join(workspaceRoot, "smoke-artifacts");
+  try {
+    await mkdir(artifactRoot, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const entry = await lstat(artifactRoot);
+  if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error("Provider smoke artifact root is unsafe.");
+  const canonicalRoot = await realpath(artifactRoot);
+  if (canonicalRoot !== artifactRoot || !isPathInside(workspaceRoot, canonicalRoot) || path.dirname(canonicalRoot) !== workspaceRoot) {
+    throw new Error("Provider smoke artifact root is not canonical.");
+  }
+  const handle = await open(canonicalRoot, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    if (!(await handle.stat()).isDirectory()) throw new Error("Provider smoke artifact root is unsafe.");
+    const current = await lstat(canonicalRoot);
+    if (current.isSymbolicLink() || !current.isDirectory() || await realpath(canonicalRoot) !== canonicalRoot) {
+      throw new Error("Provider smoke artifact root changed during verification.");
+    }
+  } finally {
+    await handle.close();
+  }
+  return canonicalRoot;
+}
+
+async function assertSmokeArtifactTargetAvailable(artifactRoot: string, targetPath: string) {
+  if (path.dirname(targetPath) !== artifactRoot || path.basename(targetPath) !== targetPath.slice(artifactRoot.length + 1)) {
+    throw new Error("Provider smoke artifact target is unsafe.");
+  }
+  try {
+    await lstat(targetPath);
+    throw new Error("Provider smoke artifact target is unsafe or already exists.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+}
+
+type SmokeArtifactDestination = {
+  workspace_root: string;
+  artifact_root: string;
+  target_path: string;
+};
+
+async function prepareSmokeArtifactDestination(workspaceDir: string, providerId: string) : Promise<SmokeArtifactDestination> {
+  const workspaceRoot = await canonicalSmokeWorkspace(workspaceDir);
+  const artifactRoot = await canonicalSmokeArtifactRoot(workspaceRoot);
+  const fileName = `${providerId.replace(/[^a-zA-Z0-9._-]/g, "_")}-${Date.now()}.md`;
+  const targetPath = path.join(artifactRoot, fileName);
+  await assertSmokeArtifactTargetAvailable(artifactRoot, targetPath);
+  return { workspace_root: workspaceRoot, artifact_root: artifactRoot, target_path: targetPath };
+}
+
+async function writeSmokeArtifact(destination: SmokeArtifactDestination, content: string) {
+  const workspaceRoot = await canonicalSmokeWorkspace(destination.workspace_root);
+  const artifactRoot = await canonicalSmokeArtifactRoot(workspaceRoot);
+  if (workspaceRoot !== destination.workspace_root || artifactRoot !== destination.artifact_root) {
+    throw new Error("Provider smoke artifact root changed during execution.");
+  }
+  await assertSmokeArtifactTargetAvailable(artifactRoot, destination.target_path);
+  const handle = await open(
+    destination.target_path,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o600
+  );
+  try {
+    const target = await handle.stat();
+    if (!target.isFile() || target.nlink !== 1) throw new Error("Provider smoke artifact target is unsafe.");
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
 
 export function assertProviderSmokeEnabled(input: { enabled?: string; provider?: string; credential?: string }) {
   if (input.enabled !== "1") throw new Error("MIRACLE_ENABLE_MODEL_API=1 is required before running a provider smoke test.");
@@ -74,6 +164,7 @@ export async function runProviderSmoke(input: {
   const registry = input.driverRegistry ?? createProviderDriverRegistry();
   const driver = registry.resolve({ driver_id: entry.driver_id, provider: entry.profile.provider });
   if (!driver) throw new Error("Provider Driver is not registered; no request was constructed.");
+  const artifactDestination = await prepareSmokeArtifactDestination(workspaceDir, entry.id);
 
   let outputText: string | undefined;
   const result = await new ModelApiAdapter({
@@ -88,8 +179,6 @@ export async function runProviderSmoke(input: {
   });
   if (result.status !== "succeeded") throw new Error(`Provider smoke failed: ${result.error?.code ?? "unknown"}`);
 
-  const artifactDir = path.join(workspaceDir, "smoke-artifacts");
-  const artifactPath = path.join(artifactDir, `${entry.id.replace(/[^a-zA-Z0-9._-]/g, "_")}-${Date.now()}.md`);
   const receipt = result.provider_receipt;
   const markdown = [
     "# Miracle Provider Smoke",
@@ -102,11 +191,10 @@ export async function runProviderSmoke(input: {
     "",
     redact(outputText ?? "", credential)
   ].join("\n");
-  await mkdir(artifactDir, { recursive: true });
-  await writeFile(artifactPath, markdown, { encoding: "utf8", mode: 0o600 });
+  await writeSmokeArtifact(artifactDestination, markdown);
   return {
     provider: entry.profile.provider,
-    artifact_path: artifactPath,
+    artifact_path: artifactDestination.target_path,
     ...(receipt.usage ? { usage: receipt.usage } : {}),
     ...(receipt.latency_ms !== undefined ? { latency_ms: receipt.latency_ms } : {}),
     receipt

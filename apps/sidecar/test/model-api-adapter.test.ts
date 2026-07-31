@@ -121,6 +121,39 @@ describe("ModelApiAdapter", () => {
     expect(result.provider_receipt).not.toHaveProperty("usage");
   });
 
+  it("keeps a successful terminal result and receipt stable when an observation callback throws", async () => {
+    const { openAiCompatibleDriver } = await import("../src/provider-drivers/openai-compatible");
+    const adapter = new (await import("../src/model-api-adapter")).ModelApiAdapter({
+      driver: openAiCompatibleDriver,
+      onNormalizedResponse: () => { throw new Error("observer failure"); }
+    });
+
+    const result = await adapter.execute({ invocation, profile: profile(), credential: "fixture-secret", signal: new AbortController().signal });
+
+    expect(result).toMatchObject({ status: "succeeded", provider_receipt: { usage: { total_tokens: 8 } } });
+    expect(JSON.stringify(result)).not.toContain("observer failure");
+  });
+
+  it("passes an immutable normalized copy to observers without allowing receipt mutation", async () => {
+    const { openAiCompatibleDriver } = await import("../src/provider-drivers/openai-compatible");
+    const adapter = new (await import("../src/model-api-adapter")).ModelApiAdapter({
+      driver: openAiCompatibleDriver,
+      onNormalizedResponse: (response) => {
+        try {
+          if (response.usage) (response.usage as { total_tokens?: number }).total_tokens = 999;
+          (response as { output_text?: string }).output_text = "tampered";
+        } catch {
+          // A frozen observer copy may reject mutation in strict mode.
+        }
+      }
+    });
+
+    const result = await adapter.execute({ invocation, profile: profile(), credential: "fixture-secret", signal: new AbortController().signal });
+
+    expect(result).toMatchObject({ status: "succeeded", provider_receipt: { usage: { total_tokens: 8 } } });
+    expect(JSON.stringify(result)).not.toContain("tampered");
+  });
+
   it("redacts credential echoes from provider receipts and driver errors", async () => {
     const adapter = await loadAdapter();
     const echoedReceipt = await adapter.execute({ invocation, profile: profile("credential-echo"), credential: "fixture-secret", signal: new AbortController().signal });

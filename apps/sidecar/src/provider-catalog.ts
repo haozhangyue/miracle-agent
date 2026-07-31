@@ -2,7 +2,7 @@ import { providerCatalogEntrySchema, type ProviderCatalogEntry } from "@miracle/
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-export type ProviderHealthStatus = "missing_credential" | "configured_unverified" | "healthy" | "degraded" | "unavailable";
+export type ProviderHealthStatus = "missing_credential" | "driver_unregistered" | "configured_unverified" | "healthy" | "degraded" | "unavailable";
 
 export interface ProviderHealthProjection {
   id: string;
@@ -53,7 +53,11 @@ export function buildProviderHealthProjection(
       capabilities: entry.capabilities,
       cancellation: entry.cancellation,
       verification_status: entry.profile.verification_status,
-      health_status: configured ? entry.profile.verification_status : "missing_credential"
+      health_status: !drivers.has(entry.driver_id)
+        ? "driver_unregistered"
+        : configured
+          ? entry.profile.verification_status
+          : "missing_credential"
     };
   });
 }

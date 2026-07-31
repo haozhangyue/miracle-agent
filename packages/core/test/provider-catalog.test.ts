@@ -38,4 +38,12 @@ describe("provider catalog contract", () => {
       credential: { key: "UNRELATED_SECRET", source: "env" }
     })).toThrow(/credential/i);
   });
+
+  it("rejects a suspected secret where an env credential reference belongs", () => {
+    expect(() => providerCatalogEntrySchema.parse({
+      ...entry,
+      profile: { ...entry.profile, credential_ref: "sk-live-actual-secret" },
+      credential: { key: "sk-live-actual-secret", source: "env" }
+    })).toThrow(/environment variable/i);
+  });
 });

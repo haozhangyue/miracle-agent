@@ -323,7 +323,7 @@ describe("Model API Sidecar integration", () => {
         driver_registered: false,
         credential: expect.objectContaining({ configured: true }),
         verification_status: "configured_unverified",
-        health_status: "configured_unverified"
+        health_status: "driver_unregistered"
       })]
     });
     expect(JSON.stringify(body)).not.toContain("fixture-secret");
@@ -341,5 +341,31 @@ describe("Model API Sidecar integration", () => {
     expect(body).toMatchObject({ adapter_result: { error: { code: "provider_driver_unregistered", recoverable: false } } });
     expect(providerOutput).toBe(before);
     expect(JSON.stringify(body)).not.toContain("fixture-secret");
+  });
+
+  it("rejects a suspicious env credential reference without returning it from the Provider endpoint", async () => {
+    await writeProviderCatalog({
+      id: "fixture-compatible",
+      display_name: "Fixture Compatible",
+      driver_id: "openai-compatible",
+      profile: {
+        id: "fixture-compatible-default",
+        provider: "fixture-compatible",
+        model: "fixture-chat",
+        base_url: providerBaseUrl,
+        credential_ref: "sk-live-actual-secret",
+        verification_status: "configured_unverified"
+      },
+      credential: { key: "sk-live-actual-secret", source: "env" },
+      documentation: { official_url: "https://example.invalid/provider-docs", verified_at: "2026-07-31T00:00:00.000Z" },
+      capabilities: ["model.call"],
+      cancellation: "http_abort"
+    });
+
+    const response = await fetch(`${baseUrl}/api/v0/providers`);
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(body)).not.toContain("sk-live-actual-secret");
   });
 });

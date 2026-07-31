@@ -1,9 +1,13 @@
-import type { AdapterError, AdapterInvocation, AdapterResult, ProviderDriver, ProviderProfile } from "@miracle/core";
+import type { AdapterError, AdapterInvocation, AdapterResult, ModelApiUsage, NormalizedModelResponse, ProviderDriver, ProviderProfile } from "@miracle/core";
+
+type ObservedNormalizedResponse = Readonly<Omit<NormalizedModelResponse, "usage">> & {
+  readonly usage?: Readonly<ModelApiUsage>;
+};
 
 export interface ModelApiAdapterOptions {
   driver: ProviderDriver;
   max_response_bytes?: number;
-  onNormalizedResponse?: (response: { output_text?: string; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number } }) => void;
+  onNormalizedResponse?: (response: ObservedNormalizedResponse) => void;
 }
 
 export interface ModelApiExecutionInput {
@@ -105,6 +109,16 @@ function validateDriverRequestUrl(requestUrl: string, baseUrl: string) {
   }
 }
 
+function snapshotNormalizedResponse(response: NormalizedModelResponse): ObservedNormalizedResponse {
+  const usage = response.usage ? Object.freeze({ ...response.usage }) : undefined;
+  return Object.freeze({
+    ...(response.output_text !== undefined ? { output_text: response.output_text } : {}),
+    ...(usage ? { usage } : {}),
+    ...(response.external_session_id !== undefined ? { external_session_id: response.external_session_id } : {}),
+    ...(response.raw_receipt_id !== undefined ? { raw_receipt_id: response.raw_receipt_id } : {})
+  });
+}
+
 export class ModelApiAdapter {
   private readonly driver: ProviderDriver;
   private readonly maxResponseBytes: number;
@@ -161,20 +175,26 @@ export class ModelApiAdapter {
       } catch {
         return failure("failed", { code: "provider_response_invalid", message: "Provider response did not satisfy the compatible contract.", recoverable: false });
       }
-      this.onNormalizedResponse?.(normalized);
-      return {
+      const normalizedSnapshot = snapshotNormalizedResponse(normalized);
+      const result: AdapterResult = {
         operation_id: input.invocation.operation_id,
         attempt_id: input.invocation.attempt_id,
         node_run_id: input.invocation.node_run_id,
         status: "succeeded",
         provider_receipt: receipt({
-          ...(normalized.usage ? { usage: normalized.usage } : {}),
-          ...(normalized.external_session_id && !containsCredential(normalized.external_session_id, input.credential) ? { external_session_id: normalized.external_session_id } : {}),
-          ...(normalized.raw_receipt_id && !containsCredential(normalized.raw_receipt_id, input.credential) ? { raw_receipt_id: normalized.raw_receipt_id } : {})
+          ...(normalizedSnapshot.usage ? { usage: normalizedSnapshot.usage } : {}),
+          ...(normalizedSnapshot.external_session_id && !containsCredential(normalizedSnapshot.external_session_id, input.credential) ? { external_session_id: normalizedSnapshot.external_session_id } : {}),
+          ...(normalizedSnapshot.raw_receipt_id && !containsCredential(normalizedSnapshot.raw_receipt_id, input.credential) ? { raw_receipt_id: normalizedSnapshot.raw_receipt_id } : {})
         }),
         artifact_descriptors: [],
         received_at: new Date().toISOString()
       };
+      try {
+        this.onNormalizedResponse?.(normalizedSnapshot);
+      } catch {
+        // Observation must not alter AdapterResult facts.
+      }
+      return result;
     } catch (error) {
       if (control.abortKind() === "timeout") {
         return failure("timed_out", { code: "process_timeout", message: "Provider request exceeded the configured timeout.", recoverable: true });

@@ -28,7 +28,7 @@ describe("provider catalog health projection", () => {
       driver_registered: false,
       credential: { configured: true },
       verification_status: "configured_unverified",
-      health_status: "configured_unverified"
+      health_status: "driver_unregistered"
     });
   });
 
@@ -39,5 +39,17 @@ describe("provider catalog health projection", () => {
       health_status: "missing_credential"
     });
     expect(JSON.stringify(projection)).not.toContain("fixture-secret");
+  });
+
+  it.each(["healthy", "degraded"] as const)("never projects %s as executable health without a registered Driver", (verificationStatus) => {
+    const [projection] = buildProviderHealthProjection([
+      { ...catalogEntry, profile: { ...catalogEntry.profile, verification_status: verificationStatus } }
+    ], { credentialKeys: ["MODEL_API_FIXTURE_CREDENTIAL"], registeredDriverIds: [] });
+
+    expect(projection).toMatchObject({
+      driver_registered: false,
+      verification_status: verificationStatus,
+      health_status: "driver_unregistered"
+    });
   });
 });
