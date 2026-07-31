@@ -211,6 +211,14 @@ function nodeDecision(input: CalculateExecutionPlanInput, node: NodeSpec): NodeE
   const requiredBlocked = requiredEdgeStatus.find((status) => !status.satisfied && !activeStatuses.has(nodeRunForNodeId(input.nodeRuns, status.edge_id.split("->")[0])?.status ?? "blocked"));
   const requiredWaiting = requiredEdgeStatus.some((status) => !status.satisfied && activeStatuses.has(nodeRunForNodeId(input.nodeRuns, status.edge_id.split("->")[0])?.status ?? "blocked"));
   const missingRequiredInput = node.inputs.some((nodeInput) => nodeInput.kind === "artifact" && nodeInput.required && !resolvedInputs.some((resolved) => resolved.input_id === nodeInput.id));
+  const missingRequiredInputWaiting = node.inputs.some((nodeInput) => {
+    if (nodeInput.kind !== "artifact" || !nodeInput.required || resolvedInputs.some((resolved) => resolved.input_id === nodeInput.id)) return false;
+    return incomingEdges.some((edge) => {
+      if (!inputMatchesEdge(input.workflow, nodeInput, edge) || !edge.join_policy.wait_if_active) return false;
+      const sourceRun = nodeRunForNodeId(input.nodeRuns, edge.from);
+      return Boolean(sourceRun && activeStatuses.has(sourceRun.status) && !joinTimedOut(edge, sourceRun, input.calculatedAt));
+    });
+  });
 
   const optionalStates = incomingEdges.filter((edge) => !edge.required).map((edge) => {
     if (qualifiedArtifactsForDestinationEdge(input.workflow, node, edge, input.nodeRuns, input.artifacts).length > 0) return "continue" as const;
@@ -223,7 +231,7 @@ function nodeDecision(input: CalculateExecutionPlanInput, node: NodeSpec): NodeE
   });
   const blockedOptionalIndex = optionalStates.findIndex((state) => state === "blocked");
   if (requiredBlocked) return { ...base, decision: "blocked", reason_code: missingRequiredInput ? "required_input_missing" : "required_edge_unsatisfied" };
-  if (missingRequiredInput && !requiredWaiting) return { ...base, decision: "blocked", reason_code: "required_input_missing" };
+  if (missingRequiredInput && !requiredWaiting && !missingRequiredInputWaiting) return { ...base, decision: "blocked", reason_code: "required_input_missing" };
   if (blockedOptionalIndex >= 0) {
     const blockedEdge = incomingEdges.filter((edge) => !edge.required)[blockedOptionalIndex]!;
     const sourceRun = nodeRunForNodeId(input.nodeRuns, blockedEdge.from);

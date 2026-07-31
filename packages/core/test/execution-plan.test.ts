@@ -156,6 +156,25 @@ describe("execution plan", () => {
     expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({ decision: "wait", reason_code: "optional_edge_active" });
   });
 
+  it("waits for an active optional upstream that supplies a required artifact input", () => {
+    const workflow = workflowWithOptionalVideo();
+    workflow.gates = [];
+    const downstream = workflow.nodes.find((item) => item.id === "D_platform_summary")!;
+    downstream.inputs.push(port("video_input", "artifact", "video", true, "video_artifact"));
+    const optionalEdge = workflow.edges.find((item) => item.from === "F_optional_video" && item.to === "D_platform_summary")!;
+    optionalEdge.join_policy.wait_if_active = true;
+    const activeRuns = nodeRuns().map((item) => item.node_id === "F_optional_video"
+      ? { ...item, status: "running" as const, started_at: now }
+      : item);
+
+    const plan = calculateExecutionPlan({ workflow, nodeRuns: activeRuns, artifacts: artifacts(), gates: [], calculatedAt: now });
+
+    expect(plan.decisions.find((item) => item.node_id === "D_platform_summary")).toMatchObject({
+      decision: "wait",
+      reason_code: "optional_edge_active"
+    });
+  });
+
   it("continues after an optional join times out when required inputs are ready", () => {
     const workflow = workflowWithOptionalVideo();
     workflow.gates = [];

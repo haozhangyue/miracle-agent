@@ -1,10 +1,13 @@
 export function canExecuteNode(input: {
   status: string;
   retryPhase?: string;
+  executionDecision?: string;
   historical: boolean;
 }) {
   if (input.historical) return false;
-  return ["queued", "running"].includes(input.status) || input.retryPhase === "due";
+  if (input.retryPhase === "due") return input.executionDecision === "execute";
+  return ["queued", "running"].includes(input.status)
+    && (input.executionDecision === undefined || input.executionDecision === "execute");
 }
 
 export function retryBudgetLabel(snapshot?: {

@@ -1154,7 +1154,7 @@ describe("sidecar api", () => {
     expect(events.events.map((event) => event.type)).not.toContain("attention_item_created");
   });
 
-  it("does not queue downstream optional media nodes when the artifact selector is not qualified", async () => {
+  it("waits for an active artifact producer, blocks a terminal missing input, and recovers after the artifact is restored", async () => {
     const created = await fetchJson<{
       run_id: string;
       initial_node_runs: string[];
@@ -1164,25 +1164,117 @@ describe("sidecar api", () => {
     });
 
     const nodesPath = path.join(tempWorkspace, "runs", created.run_id, "nodes.json");
-    const nodes = JSON.parse(await readFile(nodesPath, "utf8")) as Array<{ node_run_id: string; node_id: string; status: string; updated_at: string }>;
+    const nodes = JSON.parse(await readFile(nodesPath, "utf8")) as Array<{
+      node_run_id: string;
+      node_id: string;
+      status: string;
+      updated_at: string;
+      blocked_reason?: string;
+      output_artifacts: string[];
+    }>;
+    const scriptNode = nodes.find((node) => node.node_id === "C_script");
     const ttsNode = nodes.find((node) => node.node_id === "E_tts");
     const videoNode = nodes.find((node) => node.node_id === "F_video");
-    if (!ttsNode || !videoNode) throw new Error("Expected TTS and video nodes in content-production-v0");
+    if (!scriptNode || !ttsNode || !videoNode) throw new Error("Expected script, TTS, and video nodes in content-production-v0");
+    scriptNode.status = "running";
     ttsNode.status = "queued";
     videoNode.status = "waiting";
     await writeFile(nodesPath, `${JSON.stringify(nodes, null, 2)}\n`, "utf8");
 
+    const active = await fetchJson<{
+      decisions: Array<{ node_id: string; decision: string; reason_code: string }>;
+    }>(`/api/v0/runs/${created.run_id}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+    });
+    expect(active.decisions.find((decision) => decision.node_id === "E_tts")).toMatchObject({
+      decision: "wait",
+      reason_code: "optional_edge_active"
+    });
+    expect((await fetchJson<{ attention: unknown[] }>(`/api/v0/attention?run_id=${created.run_id}`)).attention).toEqual([]);
+
+    scriptNode.status = "done";
+    await writeFile(nodesPath, `${JSON.stringify(nodes, null, 2)}\n`, "utf8");
     const response = await fetch(`${baseUrl}/api/v0/runs/${created.run_id}/nodes/${ttsNode.node_run_id}/execute`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({})
     });
 
-    const run = await fetchJson<{ nodes: Array<{ node_id: string; status: string }> }>(`/api/v0/runs/${created.run_id}`);
+    const run = await fetchJson<{ nodes: Array<{ node_id: string; status: string; blocked_reason?: string }> }>(`/api/v0/runs/${created.run_id}`);
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: { code: "node_not_executable", reason_code: "required_input_missing" } });
-    expect(run.nodes.find((node) => node.node_id === "E_tts")?.status).toBe("queued");
+    expect(run.nodes.find((node) => node.node_id === "E_tts")).toMatchObject({
+      status: "blocked",
+      blocked_reason: expect.stringContaining("required_input_missing")
+    });
     expect(run.nodes.find((node) => node.node_id === "F_video")?.status).toBe("waiting");
+
+    const rootCauseKey = `run:${created.run_id}:node:${ttsNode.node_run_id}:execution_plan:required_input_missing`;
+    const blockedAttention = await fetchJson<{
+      attention: Array<{ root_cause_key: string; status: string; safe_actions: string[] }>;
+    }>(`/api/v0/attention?run_id=${created.run_id}`);
+    expect(blockedAttention.attention).toEqual([
+      expect.objectContaining({
+        root_cause_key: rootCauseKey,
+        status: "open",
+        safe_actions: expect.arrayContaining(["restore_required_artifact", "rerun_upstream_node"])
+      })
+    ]);
+
+    const artifactId = `art_${created.run_id}_script_recovered`;
+    const artifactsPath = path.join(tempWorkspace, "runs", created.run_id, "artifacts.json");
+    const artifacts = JSON.parse(await readFile(artifactsPath, "utf8")) as unknown[];
+    artifacts.push({
+      artifact_id: artifactId,
+      artifact_spec_ref: "script_artifact",
+      run_id: created.run_id,
+      node_run_id: scriptNode.node_run_id,
+      type: "script",
+      version: 1,
+      path: `artifacts/${artifactId}.md`,
+      hash: "sha256:restored-script",
+      status: "created",
+      review_status: "none",
+      producer: "content-agent",
+      created_at: new Date().toISOString()
+    });
+    await writeFile(artifactsPath, `${JSON.stringify(artifacts, null, 2)}\n`, "utf8");
+    const blockedNodes = JSON.parse(await readFile(nodesPath, "utf8")) as typeof nodes;
+    const recoveredScriptNode = blockedNodes.find((node) => node.node_id === "C_script")!;
+    recoveredScriptNode.output_artifacts = [artifactId];
+    await writeFile(nodesPath, `${JSON.stringify(blockedNodes, null, 2)}\n`, "utf8");
+
+    const recovered = await fetchJson<{
+      execution_plan: {
+        decisions: Array<{ node_id: string; decision: string; reason_code: string }>;
+        ready_node_run_ids: string[];
+        blocked_node_run_ids: string[];
+      };
+    }>(`/api/v0/runs/${created.run_id}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+    });
+    expect(recovered.execution_plan.decisions.find((decision) => decision.node_id === "E_tts")).toMatchObject({
+      decision: "execute",
+      reason_code: "ready"
+    });
+    expect(recovered.execution_plan.ready_node_run_ids).toContain(ttsNode.node_run_id);
+    expect(recovered.execution_plan.blocked_node_run_ids).not.toContain(ttsNode.node_run_id);
+
+    const detail = await fetchJson<{
+      node: { status: string; blocked_reason?: string };
+      execution_decision: { decision: string; reason_code: string };
+      next_suggested_actions: string[];
+    }>(`/api/v0/runs/${created.run_id}/nodes/${ttsNode.node_run_id}`);
+    expect(detail.node).toMatchObject({ status: "queued" });
+    expect(detail.node.blocked_reason).toBeUndefined();
+    expect(detail.execution_decision).toMatchObject({ decision: "execute", reason_code: "ready" });
+    expect(detail.next_suggested_actions).toEqual(["run_scheduler_tick"]);
+    const recoveredAttention = await fetchJson<{
+      attention: Array<{ root_cause_key: string; status: string }>;
+    }>(`/api/v0/attention?run_id=${created.run_id}`);
+    expect(recoveredAttention.attention.find((item) => item.root_cause_key === rootCauseKey)?.status).toBe("resolved");
   });
 
   it("creates, dry-runs and confirms a RunDraft without writing formal run facts", async () => {

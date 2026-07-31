@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import type { WorkflowSpec } from "@miracle/core";
 import { RetryScheduleStore } from "../src/retry-store";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -200,6 +201,7 @@ async function failFirstAttempt(workflowId = retryWorkflow.id) {
       dispatched_at?: string;
       created_at: string;
       provider_receipt: Record<string, unknown>;
+      error: { code: string; message: string; recoverable: boolean };
     }>;
   }>(`/api/v0/runs/${runId}`);
   const schedules = await new RetryScheduleStore({ workspace_dir: tempWorkspace }).list(runId);
@@ -490,6 +492,84 @@ describe("P7-05 retry recovery", () => {
     expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${failure.runId}`)).attempts).toHaveLength(1);
   });
 
+  it.each([
+    {
+      phase: "exhausted",
+      action: "require_attention",
+      reasonCode: "attempt_budget_exhausted",
+      error: { code: "mock_failure", message: "Retry budget exhausted.", recoverable: true }
+    },
+    {
+      phase: "blocked",
+      action: "fail_terminal",
+      reasonCode: "error_not_retryable",
+      error: { code: "permission_denied", message: "Adapter permission denied.", recoverable: false }
+    }
+  ] as const)("replays missing $phase effects from durable retry state after restart", async ({ phase, action, reasonCode, error }) => {
+    const failure = await failFirstAttempt(policyWorkflow.id);
+    const state = {
+      operation_id: failure.attempt.operation_id,
+      node_run_id: failure.nodeRunId,
+      attempt_id: failure.attempt.attempt_id,
+      attempt_number: failure.attempt.attempt_number,
+      phase,
+      reason_code: reasonCode,
+      decision: {
+        action,
+        reason_code: reasonCode,
+        operation_id: failure.attempt.operation_id,
+        budget_snapshot: failure.schedules[0]!.budget_snapshot
+      },
+      error,
+      effects_committed: false,
+      updated_at: new Date().toISOString()
+    };
+    await writeFile(retryStatePath(failure.runId), `${JSON.stringify([state], null, 2)}\n`, "utf8");
+    await writeEvents(failure.runId, (await readEvents(failure.runId)).filter((event) =>
+      event.type !== "retry_exhausted" && event.type !== "attention_item_created" && event.type !== "attention_item_reopened"
+    ));
+    await writeFile(path.join(tempWorkspace, "runs", failure.runId, "attention.json"), "[]\n", "utf8");
+
+    await stopSidecar();
+    await startSidecar();
+    await fetchJson(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+    });
+
+    expect(JSON.parse(await readFile(retryStatePath(failure.runId), "utf8"))).toEqual([
+      expect.objectContaining({
+        operation_id: failure.attempt.operation_id,
+        phase,
+        attempt_id: failure.attempt.attempt_id,
+        error,
+        effects_committed: true
+      })
+    ]);
+    expect((await readEvents(failure.runId)).filter((event) => event.type === "retry_exhausted")).toHaveLength(1);
+    const attention = await fetchJson<{
+      attention: Array<{ root_cause_key: string; related_objects: Array<{ type: string; id: string }> }>;
+    }>(`/api/v0/attention?run_id=${failure.runId}`);
+    expect(attention.attention).toEqual([
+      expect.objectContaining({
+        root_cause_key: `run:${failure.runId}:node:${failure.nodeRunId}:retry:${error.code}`,
+        related_objects: expect.arrayContaining([
+          { type: "NodeAttempt", id: failure.attempt.attempt_id }
+        ])
+      })
+    ]);
+    expect(await new RetryScheduleStore({ workspace_dir: tempWorkspace }).list(failure.runId)).toEqual([]);
+
+    await stopSidecar();
+    await startSidecar();
+    await fetchJson(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+    });
+    expect((await readEvents(failure.runId)).filter((event) => event.type === "retry_exhausted")).toHaveLength(1);
+    expect((await fetchJson<{ attention: unknown[] }>(`/api/v0/attention?run_id=${failure.runId}`)).attention).toHaveLength(1);
+  }, 30_000);
+
   it("projects queued time exhaustion before Scheduler reconcile and keeps Scheduler consistent", async () => {
     const failure = await failFirstAttempt(policyWorkflow.id);
     const attempts = JSON.parse(await readFile(attemptsPath(failure.runId), "utf8")) as Array<Record<string, unknown>>;
@@ -639,6 +719,216 @@ describe("P7-05 retry recovery", () => {
     });
   });
 
+  it("recalculates a due retry through missing input and Gate state before exposing it as executable", async () => {
+    const failure = await failFirstAttempt(policyWorkflow.id);
+    await writeFile(
+      retrySchedulePath(failure.runId),
+      `${JSON.stringify([{ ...failure.schedules[0], scheduled_for: "2020-01-01T00:00:00.000Z" }], null, 2)}\n`,
+      "utf8"
+    );
+    const runDir = path.join(tempWorkspace, "runs", failure.runId);
+    const snapshotPath = path.join(runDir, "workflow_snapshot.json");
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as {
+      workflow: WorkflowSpec;
+    };
+    const target = snapshot.workflow.nodes.find((node) => node.id === "transient_node")!;
+    target.inputs = [{
+      id: "required_source",
+      kind: "artifact",
+      artifact_type: "markdown",
+      artifact_spec_ref: "required_source_artifact",
+      required: true
+    }];
+    snapshot.workflow.nodes.unshift({
+      ...target,
+      id: "source_node",
+      name: "Source node",
+      inputs: [],
+      outputs: [{
+        id: "source_output",
+        kind: "artifact",
+        artifact_type: "markdown",
+        artifact_spec_ref: "required_source_artifact",
+        required: true
+      }],
+      failure_policy: { retry: 0, on_missing_input: "blocked", on_provider_failure: "failed" }
+    });
+    snapshot.workflow.edges = [{
+      from: "source_node",
+      to: "transient_node",
+      required: true,
+      artifact_selector: { artifact_type: "markdown" },
+      join_policy: {
+        wait_if_active: true,
+        on_timeout: "blocked",
+        on_no_qualified_artifact: "block_downstream"
+      }
+    }];
+    snapshot.workflow.artifacts = [{
+      id: "required_source_artifact",
+      type: "markdown",
+      produced_by: "source_node",
+      review_policy: { mode: "none" },
+      required_for: ["transient_node"],
+      versioning: { immutable: true, compare_by: "hash" }
+    }];
+    snapshot.workflow.gates = [];
+    await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+    const nodesPath = path.join(runDir, "nodes.json");
+    const nodes = JSON.parse(await readFile(nodesPath, "utf8")) as Array<Record<string, unknown>>;
+    const sourceNodeRunId = `nr_${failure.runId}_source_node`;
+    nodes.unshift({
+      node_run_id: sourceNodeRunId,
+      run_id: failure.runId,
+      node_id: "source_node",
+      status: "done",
+      updated_at: new Date().toISOString(),
+      upstream_artifacts: [],
+      output_artifacts: []
+    });
+    await writeFile(nodesPath, `${JSON.stringify(nodes, null, 2)}\n`, "utf8");
+
+    const blockedDryRun = await fetchJson<{
+      execution_plan: {
+        decisions: Array<{ node_id: string; decision: string; reason_code: string }>;
+        ready_node_run_ids: string[];
+        blocked_node_run_ids: string[];
+        terminal: boolean;
+      };
+      decisions: Array<{ node_id: string; decision: string; reason_code: string; retry_decision?: { phase: string } }>;
+      executable: unknown[];
+    }>(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+    });
+    expect(blockedDryRun.execution_plan.decisions.find((decision) => decision.node_id === "transient_node")).toMatchObject({
+      decision: "blocked",
+      reason_code: "required_input_missing"
+    });
+    expect(blockedDryRun.decisions.find((decision) => decision.node_id === "transient_node")).toMatchObject({
+      decision: "blocked",
+      reason_code: "required_input_missing",
+      retry_decision: { phase: "due" }
+    });
+    expect(blockedDryRun.execution_plan.ready_node_run_ids).not.toContain(failure.nodeRunId);
+    expect(blockedDryRun.execution_plan.blocked_node_run_ids).toContain(failure.nodeRunId);
+    expect(blockedDryRun.execution_plan.terminal).toBe(false);
+    expect(blockedDryRun.executable).toEqual([]);
+    expect((await fetchJson<{ attempts: unknown[] }>(`/api/v0/runs/${failure.runId}`)).attempts).toHaveLength(1);
+
+    const stopped = await fetchJson<{
+      stop_reason: string;
+      next_suggested_actions: string[];
+    }>(`/api/v0/runs/${failure.runId}/scheduler/run`, {
+      method: "POST",
+      body: JSON.stringify({ max_ticks: 1, max_nodes_per_tick: 1 })
+    });
+    const blockedDetail = await fetchJson<{
+      execution_decision: { decision: string; reason_code: string };
+      next_suggested_actions: string[];
+    }>(`/api/v0/runs/${failure.runId}/nodes/${failure.nodeRunId}`);
+    expect(stopped.stop_reason).toBe("attention_required");
+    expect(stopped.next_suggested_actions).toEqual(blockedDetail.next_suggested_actions);
+    expect(blockedDetail.execution_decision).toMatchObject({
+      decision: "blocked",
+      reason_code: "required_input_missing"
+    });
+
+    snapshot.workflow.artifacts[0]!.review_policy = {
+      mode: "manual",
+      gate_spec_id: "required_source_gate"
+    };
+    snapshot.workflow.gates = [{
+      id: "required_source_gate",
+      name: "Required source review",
+      target_artifact_ref: "required_source_artifact",
+      required_before: ["transient_node"],
+      actions: ["approve", "reject"]
+    }];
+    await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+    const artifactId = `art_${failure.runId}_required_source_v1`;
+    await writeFile(path.join(runDir, "artifacts.json"), `${JSON.stringify([{
+      artifact_id: artifactId,
+      artifact_spec_ref: "required_source_artifact",
+      run_id: failure.runId,
+      node_run_id: sourceNodeRunId,
+      type: "markdown",
+      version: 1,
+      path: `artifacts/${artifactId}.md`,
+      hash: "sha256:required-source",
+      status: "created",
+      review_status: "pending_review",
+      producer: "source-agent",
+      created_at: new Date().toISOString()
+    }], null, 2)}\n`, "utf8");
+    const nodesWithSourceArtifact = JSON.parse(await readFile(nodesPath, "utf8")) as Array<Record<string, unknown>>;
+    nodesWithSourceArtifact.find((node) => node.node_run_id === sourceNodeRunId)!.output_artifacts = [artifactId];
+    await writeFile(nodesPath, `${JSON.stringify(nodesWithSourceArtifact, null, 2)}\n`, "utf8");
+    const gatePath = path.join(runDir, "gates.json");
+    await writeFile(gatePath, `${JSON.stringify([{
+      gate_instance_id: `gate_${artifactId}`,
+      run_id: failure.runId,
+      gate_spec_id: "required_source_gate",
+      target: { type: "ArtifactManifest", id: artifactId },
+      status: "pending_review",
+      required_before: ["transient_node"],
+      decisions: []
+    }], null, 2)}\n`, "utf8");
+
+    const paused = await fetchJson<{
+      execution_plan: {
+        decisions: Array<{ node_id: string; decision: string; reason_code: string }>;
+        paused_node_run_ids: string[];
+        blocked_node_run_ids: string[];
+        terminal: boolean;
+      };
+    }>(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+    });
+    expect(paused.execution_plan.decisions.find((decision) => decision.node_id === "transient_node")).toMatchObject({
+      decision: "pause_for_gate",
+      reason_code: "required_gate_pending"
+    });
+    expect(paused.execution_plan.paused_node_run_ids).toContain(failure.nodeRunId);
+    expect(paused.execution_plan.blocked_node_run_ids).not.toContain(failure.nodeRunId);
+    expect(paused.execution_plan.terminal).toBe(false);
+
+    const gates = JSON.parse(await readFile(gatePath, "utf8")) as Array<Record<string, unknown>>;
+    gates[0] = {
+      ...gates[0],
+      status: "decided",
+      decisions: [{
+        decision_id: "decision_required_source_approved",
+        actor: "reviewer",
+        decision: "approve",
+        comment: "approved",
+        created_at: new Date().toISOString()
+      }]
+    };
+    await writeFile(gatePath, `${JSON.stringify(gates, null, 2)}\n`, "utf8");
+    const due = await fetchJson<{
+      execution_plan: {
+        decisions: Array<{ node_id: string; decision: string; reason_code: string }>;
+        ready_node_run_ids: string[];
+        paused_node_run_ids: string[];
+        blocked_node_run_ids: string[];
+        terminal: boolean;
+      };
+    }>(`/api/v0/runs/${failure.runId}/scheduler/tick`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: true, max_nodes: 1 })
+    });
+    expect(due.execution_plan.decisions.find((decision) => decision.node_id === "transient_node")).toMatchObject({
+      decision: "execute",
+      reason_code: "retry_due"
+    });
+    expect(due.execution_plan.ready_node_run_ids).toContain(failure.nodeRunId);
+    expect(due.execution_plan.paused_node_run_ids).not.toContain(failure.nodeRunId);
+    expect(due.execution_plan.blocked_node_run_ids).not.toContain(failure.nodeRunId);
+    expect(due.execution_plan.terminal).toBe(false);
+  }, 30_000);
+
   it("recovers a committed retry attempt behind a stale schedule without duplicate dispatch", async () => {
     const failure = await failFirstAttempt();
     const staleSchedule = { ...failure.schedules[0], scheduled_for: "2020-01-01T00:00:00.000Z" };
@@ -660,6 +950,9 @@ describe("P7-05 retry recovery", () => {
     await writeFile(retrySchedulePath(failure.runId), `${JSON.stringify([staleSchedule], null, 2)}\n`, "utf8");
     await writeEvents(failure.runId, afterRetryEvents.filter((event) => event.type !== "retry_exhausted" && event.type !== "attention_item_created"));
     await writeFile(path.join(tempWorkspace, "runs", failure.runId, "attention.json"), "[]\n", "utf8");
+    const retryStates = JSON.parse(await readFile(retryStatePath(failure.runId), "utf8")) as Array<Record<string, unknown>>;
+    retryStates[0] = { ...retryStates[0], effects_committed: false };
+    await writeFile(retryStatePath(failure.runId), `${JSON.stringify(retryStates, null, 2)}\n`, "utf8");
     await stopSidecar();
     await startSidecar();
     await fetchJson(`/api/v0/runs/${failure.runId}/scheduler/tick`, {

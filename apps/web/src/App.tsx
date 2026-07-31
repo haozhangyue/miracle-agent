@@ -663,6 +663,7 @@ function RunPage({ runId, setRunId, selectedNode, setSelectedNode, go }: { runId
   const executable = canExecuteNode({
     status: selectedStatus,
     retryPhase: node.data?.retry_decision?.phase,
+    executionDecision: node.data?.execution_decision?.decision,
     historical
   });
 

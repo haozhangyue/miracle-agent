@@ -401,9 +401,11 @@ export const retryScheduleRecordSchema: z.ZodType<RetryScheduleRecord> = z.objec
   budget_snapshot: retryBudgetSnapshotSchema
 });
 
-export const retryStateRecordSchema: z.ZodType<RetryStateRecord> = z.object({
+const replayableRetryStateRecordSchema = z.object({
   operation_id: z.string().min(1),
   node_run_id: z.string().min(1),
+  attempt_id: z.string().min(1),
+  attempt_number: z.number().int().positive(),
   phase: z.enum(["waiting_for_retry", "exhausted", "blocked"]),
   reason_code: z.string().min(1),
   decision: z.object({
@@ -416,8 +418,30 @@ export const retryStateRecordSchema: z.ZodType<RetryStateRecord> = z.object({
     scheduled_for: z.string().datetime().optional(),
     budget_snapshot: retryBudgetSnapshotSchema
   }),
+  error: z.object({
+    code: z.string().min(1),
+    message: z.string().min(1),
+    recoverable: z.boolean()
+  }),
+  effects_committed: z.boolean(),
   updated_at: z.string().datetime()
 });
+
+const completedRetryStateRecordSchema = z.object({
+  operation_id: z.string().min(1),
+  node_run_id: z.string().min(1),
+  attempt_id: z.string().min(1),
+  attempt_number: z.number().int().positive(),
+  phase: z.literal("completed"),
+  reason_code: z.literal("retry_completed"),
+  effects_committed: z.literal(true),
+  updated_at: z.string().datetime()
+});
+
+export const retryStateRecordSchema: z.ZodType<RetryStateRecord> = z.union([
+  replayableRetryStateRecordSchema,
+  completedRetryStateRecordSchema
+]);
 
 export function parseAdapterResultForInvocation(invocation: AdapterInvocation, result: AdapterResult): AdapterResult {
   const parsedInvocation = adapterInvocationSchema.parse(invocation);

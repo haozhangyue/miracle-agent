@@ -365,14 +365,33 @@ export interface RetryScheduleRecord {
   budget_snapshot: RetryBudgetSnapshot;
 }
 
-export interface RetryStateRecord {
+interface RetryStateRecordBase {
   operation_id: string;
   node_run_id: string;
-  phase: "waiting_for_retry" | "exhausted" | "blocked";
+  attempt_id: string;
+  attempt_number: number;
   reason_code: string;
-  decision: RetryDecision;
+  effects_committed: boolean;
   updated_at: string;
 }
+
+export type RetryStateRecord =
+  | (RetryStateRecordBase & {
+      phase: "waiting_for_retry" | "exhausted" | "blocked";
+      decision: RetryDecision;
+      error: {
+        code: string;
+        message: string;
+        recoverable: boolean;
+      };
+    })
+  | (RetryStateRecordBase & {
+      phase: "completed";
+      reason_code: "retry_completed";
+      effects_committed: true;
+      decision?: never;
+      error?: never;
+    });
 
 export interface TraceEvent {
   event_id: string;

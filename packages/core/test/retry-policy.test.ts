@@ -4,6 +4,7 @@ import {
   nodeSpecSchema,
   resolveNodeRetryPolicy,
   retryPolicySchema,
+  retryStateRecordSchema,
   type NodeSpec
 } from "../src";
 
@@ -61,6 +62,54 @@ function failedAttempt(input: {
 }
 
 describe("RetryPolicy", () => {
+  it("requires replay facts for terminal retry state and accepts a completed tombstone", () => {
+    const decision = {
+      action: "require_attention" as const,
+      reason_code: "attempt_budget_exhausted",
+      operation_id: "op_retry",
+      budget_snapshot: {
+        attempts_used: 2,
+        elapsed_ms: 1_000,
+        cost_used: 0,
+        max_attempts: 2,
+        total_time_budget_ms: 60_000,
+        cost_budget: 5
+      }
+    };
+    const terminal = {
+      operation_id: "op_retry",
+      node_run_id: "nr_retry",
+      attempt_id: "attempt_op_retry_2",
+      attempt_number: 2,
+      phase: "exhausted" as const,
+      reason_code: decision.reason_code,
+      decision,
+      error: rateLimitError,
+      effects_committed: false,
+      updated_at: "2026-07-31T00:00:01.000Z"
+    };
+
+    expect(retryStateRecordSchema.parse(terminal)).toEqual(terminal);
+    expect(() => retryStateRecordSchema.parse({
+      ...terminal,
+      effects_committed: undefined
+    })).toThrow();
+    expect(retryStateRecordSchema.parse({
+      operation_id: "op_retry",
+      node_run_id: "nr_retry",
+      attempt_id: "attempt_op_retry_2",
+      attempt_number: 2,
+      phase: "completed",
+      reason_code: "retry_completed",
+      effects_committed: true,
+      updated_at: "2026-07-31T00:00:02.000Z"
+    })).toMatchObject({
+      phase: "completed",
+      attempt_id: "attempt_op_retry_2",
+      effects_committed: true
+    });
+  });
+
   it("maps legacy failure policy and honors a complete validated retry_policy override", () => {
     expect(resolveNodeRetryPolicy(retryNode({
       retry: 1,

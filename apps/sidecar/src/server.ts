@@ -62,11 +62,10 @@ import {
   readHistoricalImport
 } from "./historical-importer";
 import { RunDraftStore, RunDraftStoreError } from "./run-draft-store";
-import { CodexCliAdapter, CodexCliAdapterError } from "./codex-cli-adapter";
+import { CodexCliAdapter, CodexCliAdapterError, type CodexCliHealth } from "./codex-cli-adapter";
 import { assertUniqueArtifactTargetPaths, resolveArtifactInputFiles } from "./artifact-input-resolver";
 import { NodeOutputContractError, buildNodeOutputContract } from "./node-output-contract";
 import { codexPreflightFailure, startCodexOperation } from "./codex-real-adapter";
-import { buildRunExecutionPlan } from "./execution-planner";
 import { RetryScheduleStore, RetryStateStore } from "./retry-store";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -327,7 +326,7 @@ async function readNodeDispatchIntent(
     nodeSpec: NodeSpec;
     decision: NodeExecutionDecision;
     adapter?: AdapterRegistryEntry;
-    remainingTotalBudgetMs?: number;
+    retryDeadlineAt?: string;
   }
 ) {
   const intent = await readJsonOptional<unknown>(relativePath);
@@ -344,6 +343,12 @@ async function readNodeDispatchIntent(
   const resolvedInputIds = invocation.resolved_inputs.map((input) => input.input_id);
   const expectedOutputs = nodeSpecExpectedOutputs(expected.nodeSpec);
   const expectedResolvedInputs = normalizeResolvedInputsForDispatch(expected.decision.resolved_inputs, invocation.dispatched_at);
+  const remainingTotalBudgetMs = attemptNumber > 1 && expected.retryDeadlineAt
+    ? Date.parse(expected.retryDeadlineAt) - Date.parse(invocation.dispatched_at)
+    : undefined;
+  if (remainingTotalBudgetMs !== undefined && (!Number.isFinite(remainingTotalBudgetMs) || remainingTotalBudgetMs <= 0)) {
+    invalidNodeDispatchIntent(relativePath, "persisted retry runtime deadline is not after the prepared invocation");
+  }
   const rebuiltInvocation = createAdapterInvocation({
     runSpec: expected.runSpec,
     workflow: expected.workflow,
@@ -354,7 +359,7 @@ async function readNodeDispatchIntent(
     resolvedInputs: expectedResolvedInputs,
     operationId: invocation.operation_id,
     attemptNumber,
-    remainingTotalBudgetMs: expected.remainingTotalBudgetMs
+    remainingTotalBudgetMs
   });
 
   if (intent.node_run_id !== expected.nodeRunId
@@ -1369,6 +1374,8 @@ function preferredAdapterKinds(provider: string): AdapterManifest["kind"][] {
 function buildAdapterUnavailableResult(input: {
   invocation: ReturnType<typeof createAdapterInvocation>;
   message: string;
+  errorCode?: string;
+  recoverable?: boolean;
   receivedAt?: string;
 }): AdapterResult {
   return {
@@ -1385,12 +1392,27 @@ function buildAdapterUnavailableResult(input: {
     },
     artifact_descriptors: [],
     error: {
-      code: "no_executable_adapter",
+      code: input.errorCode ?? "no_executable_adapter",
       message: input.message,
-      recoverable: true
+      recoverable: input.recoverable ?? true
     },
     received_at: input.receivedAt ?? new Date().toISOString()
   };
+}
+
+function blockedCodexHealthError(health: CodexCliHealth | undefined) {
+  if (!health || health.status === "healthy") return undefined;
+  const reasons = health.reasons.map((reason) => reason.toLowerCase());
+  if (reasons.some((reason) => reason.includes("credential"))) {
+    return { code: "credential_missing", recoverable: false };
+  }
+  if (reasons.some((reason) => reason.includes("permission") || reason.includes("access_denied"))) {
+    return { code: "permission_denied", recoverable: false };
+  }
+  if (reasons.some((reason) => reason.includes("auth") || reason.includes("login"))) {
+    return { code: "authentication_failed", recoverable: false };
+  }
+  return undefined;
 }
 
 function selectAdapterForNode(input: {
@@ -1732,6 +1754,9 @@ function retryAttentionItem(input: {
 }): AttentionItem {
   const rootCauseKey = `run:${input.runId}:node:${input.nodeRun.node_run_id}:retry:${input.error.code}`;
   const budgetAction = input.decision.reason_code.endsWith("_budget_exhausted") ? ["increase_retry_budget"] : [];
+  const credentialActions = ["credential_missing", "authentication_failed", "permission_denied"].includes(input.error.code)
+    ? ["configure_credentials", "repair_permissions"]
+    : [];
   return {
     attention_id: `att_${safeId(rootCauseKey)}`,
     root_cause_key: rootCauseKey,
@@ -1748,7 +1773,13 @@ function retryAttentionItem(input: {
       waiting_agents: input.nodeRun.agent_id ? [input.nodeRun.agent_id] : [],
       unaffected_paths: []
     },
-    safe_actions: ["inspect_node_attempt", "fix_root_cause", ...budgetAction, "retry_manually"]
+    safe_actions: [
+      "inspect_node_attempt",
+      ...credentialActions,
+      "fix_root_cause",
+      ...budgetAction,
+      "retry_manually"
+    ]
   };
 }
 
@@ -1827,6 +1858,60 @@ function isBlockedSourceAttempt(nodeRun: NodeRun, attempt: NodeAttempt | undefin
   );
 }
 
+type ReplayableRetryState = Exclude<RetryStateRecord, { phase: "completed" }>;
+type TerminalRetryState = ReplayableRetryState & { phase: "exhausted" | "blocked" };
+
+function retryAttemptFromState(state: ReplayableRetryState): NodeAttempt {
+  return {
+    attempt_id: state.attempt_id,
+    node_run_id: state.node_run_id,
+    operation_id: state.operation_id,
+    attempt_number: state.attempt_number,
+    attempt_kind: "execute",
+    status: "failed",
+    error: state.error,
+    created_at: state.updated_at
+  };
+}
+
+async function commitTerminalRetryEffects(input: {
+  runId: string;
+  nodeRun: NodeRun;
+  state: TerminalRetryState;
+  completedAt?: string;
+}) {
+  const createdAt = input.state.updated_at;
+  await retryScheduleStore.remove(input.runId, input.state.operation_id);
+  const exhaustedEvent = {
+    event_id: `evt_${safeId(input.state.operation_id)}_retry_${input.state.attempt_number}_${safeId(input.state.reason_code)}_exhausted`,
+    run_id: input.runId,
+    type: "retry_exhausted",
+    subject: { type: "NodeRun", id: input.nodeRun.node_run_id },
+    message: `Retry stopped; reason_code=${input.state.reason_code}`,
+    created_at: createdAt
+  };
+  const createdEvents = await appendEventIfMissing(input.runId, exhaustedEvent) ? [exhaustedEvent.event_id] : [];
+  const attempt = retryAttemptFromState(input.state);
+  const attention = await upsertRetryAttention({
+    runId: input.runId,
+    nodeRun: input.nodeRun,
+    attempt,
+    error: input.state.error,
+    decision: input.state.decision,
+    createdAt
+  });
+  await retryStateStore.upsert(input.runId, {
+    ...input.state,
+    effects_committed: true,
+    updated_at: input.completedAt ?? new Date().toISOString()
+  });
+  return {
+    decision: input.state.decision,
+    attention_items: attention.attention_items,
+    created_events: [...createdEvents, ...attention.created_events]
+  };
+}
+
 async function persistRetryDecisionForAttempt(input: {
   runId: string;
   nodeRun: NodeRun;
@@ -1835,9 +1920,35 @@ async function persistRetryDecisionForAttempt(input: {
   attempts: NodeAttempt[];
   now: string;
 }) {
+  const existingState = (await retryStateStore.list(input.runId))
+    .find((state) => state.operation_id === input.attempt.operation_id);
+  const existingSchedule = (await retryScheduleStore.list(input.runId))
+    .find((schedule) => schedule.operation_id === input.attempt.operation_id);
+  if (input.attempt.status === "succeeded") {
+    if ((input.attempt.attempt_number ?? 1) > 1 || existingState || existingSchedule) {
+      await retryStateStore.upsert(input.runId, {
+        operation_id: input.attempt.operation_id,
+        node_run_id: input.nodeRun.node_run_id,
+        attempt_id: input.attempt.attempt_id,
+        attempt_number: input.attempt.attempt_number ?? 1,
+        phase: "completed",
+        reason_code: "retry_completed",
+        effects_committed: true,
+        updated_at: input.now
+      });
+      await retryScheduleStore.remove(input.runId, input.attempt.operation_id);
+    }
+    return {
+      decision: undefined,
+      attention_items: [] as AttentionItem[],
+      created_events: [] as string[]
+    };
+  }
   if (!isRetrySourceAttempt(input.attempt) && !isBlockedSourceAttempt(input.nodeRun, input.attempt)) {
     await retryScheduleStore.remove(input.runId, input.attempt.operation_id);
-    await retryStateStore.remove(input.runId, input.attempt.operation_id);
+    if (existingState?.phase !== "completed") {
+      await retryStateStore.remove(input.runId, input.attempt.operation_id);
+    }
     return {
       decision: undefined,
       attention_items: [] as AttentionItem[],
@@ -1861,50 +1972,50 @@ async function persistRetryDecisionForAttempt(input: {
       budget_snapshot: decision.budget_snapshot
     };
     await retryScheduleStore.upsert(input.runId, record);
-    await retryStateStore.upsert(input.runId, {
+    const waitingState: ReplayableRetryState = {
       operation_id: decision.operation_id,
       node_run_id: input.nodeRun.node_run_id,
+      attempt_id: input.attempt.attempt_id,
+      attempt_number: input.attempt.attempt_number ?? 1,
       phase: "waiting_for_retry",
       reason_code: decision.reason_code,
       decision,
+      error: input.attempt.error,
+      effects_committed: false,
       updated_at: input.now
+    };
+    await retryStateStore.upsert(input.runId, waitingState);
+    const createdEvents = await ensureRetryScheduledEvent(input.runId, record, input.now);
+    await retryStateStore.upsert(input.runId, {
+      ...waitingState,
+      effects_committed: true
     });
     return {
       decision,
       attention_items: [] as AttentionItem[],
-      created_events: await ensureRetryScheduledEvent(input.runId, record, input.now)
+      created_events: createdEvents
     };
   }
 
-  await retryStateStore.upsert(input.runId, {
+  const terminalState: TerminalRetryState = {
     operation_id: decision.operation_id,
     node_run_id: input.nodeRun.node_run_id,
+    attempt_id: input.attempt.attempt_id,
+    attempt_number: input.attempt.attempt_number ?? 1,
     phase: decision.action === "require_attention" ? "exhausted" : "blocked",
     reason_code: decision.reason_code,
     decision,
-    updated_at: input.now
-  });
-  await retryScheduleStore.remove(input.runId, input.attempt.operation_id);
-  const exhaustedEvent = {
-    event_id: `evt_${safeId(decision.operation_id)}_retry_${input.attempt.attempt_number ?? 1}_${safeId(decision.reason_code)}_exhausted`,
-    run_id: input.runId,
-    type: "retry_exhausted",
-    subject: { type: "NodeRun", id: input.nodeRun.node_run_id },
-    message: `Retry stopped; reason_code=${decision.reason_code}`,
-    created_at: input.now
-  };
-  const createdEvents = await appendEventIfMissing(input.runId, exhaustedEvent) ? [exhaustedEvent.event_id] : [];
-  const attention = await upsertRetryAttention({
-    ...input,
     error: input.attempt.error,
-    decision,
-    createdAt: input.now
-  });
-  return {
-    decision,
-    attention_items: attention.attention_items,
-    created_events: [...createdEvents, ...attention.created_events]
+    effects_committed: false,
+    updated_at: input.now
   };
+  await retryStateStore.upsert(input.runId, terminalState);
+  return commitTerminalRetryEffects({
+    runId: input.runId,
+    nodeRun: input.nodeRun,
+    state: terminalState,
+    completedAt: input.now
+  });
 }
 
 async function reconcileRetryState(runId: string) {
@@ -1914,11 +2025,63 @@ async function reconcileRetryState(runId: string) {
     const bundle = await readRunBundle(runId);
     const nodes = bundle.nodes as NodeRun[];
     const attempts = (await readJsonOptional<NodeAttempt[]>(`runs/${runId}/attempts.json`)) ?? [];
-    const activeSchedules = await retryScheduleStore.list(runId);
-    const retryStates = await retryStateStore.list(runId);
     const now = new Date().toISOString();
+    let retryStates = await retryStateStore.list(runId);
 
+    for (const state of retryStates) {
+      if (state.phase === "completed") {
+        await retryScheduleStore.remove(runId, state.operation_id);
+        continue;
+      }
+      const nodeRun = nodes.find((node) => node.node_run_id === state.node_run_id);
+      if (!nodeRun) continue;
+      if (state.phase !== "waiting_for_retry" && !state.effects_committed) {
+        await commitTerminalRetryEffects({
+          runId,
+          nodeRun,
+          state: state as TerminalRetryState,
+          completedAt: now
+        });
+        continue;
+      }
+      if (state.phase === "waiting_for_retry" && !state.effects_committed) {
+        const schedule = (await retryScheduleStore.list(runId))
+          .find((record) => record.operation_id === state.operation_id);
+        if (schedule) {
+          await ensureRetryScheduledEvent(runId, schedule, state.updated_at);
+          await retryStateStore.upsert(runId, {
+            ...state,
+            effects_committed: true,
+            updated_at: now
+          });
+        }
+      }
+    }
+
+    let activeSchedules = await retryScheduleStore.list(runId);
+    retryStates = await retryStateStore.list(runId);
     for (const schedule of activeSchedules) {
+      const durableState = retryStates.find((state) => state.operation_id === schedule.operation_id);
+      if (durableState?.phase === "completed") {
+        await retryScheduleStore.remove(runId, schedule.operation_id);
+        continue;
+      }
+      if (durableState && durableState.phase !== "waiting_for_retry") {
+        if (!durableState.effects_committed) {
+          const nodeRun = nodes.find((node) => node.node_run_id === durableState.node_run_id);
+          if (nodeRun) {
+            await commitTerminalRetryEffects({
+              runId,
+              nodeRun,
+              state: durableState as TerminalRetryState,
+              completedAt: now
+            });
+          }
+        } else {
+          await retryScheduleStore.remove(runId, schedule.operation_id);
+        }
+        continue;
+      }
       await ensureRetryScheduledEvent(runId, schedule, now);
       const nodeRun = nodes.find((node) => node.node_run_id === schedule.node_run_id);
       const nodeSpec = nodeRun ? bundle.workflow.nodes.find((node) => node.id === nodeRun.node_id) : undefined;
@@ -1955,10 +2118,10 @@ async function reconcileRetryState(runId: string) {
       }
     }
 
-    const schedulesAfterRecovery = await retryScheduleStore.list(runId);
+    activeSchedules = await retryScheduleStore.list(runId);
+    const schedulesAfterRecovery = activeSchedules;
     const statesAfterRecovery = new Map(
-      [...retryStates, ...(await retryStateStore.list(runId))]
-        .map((record) => [record.operation_id, record] as const)
+      (await retryStateStore.list(runId)).map((record) => [record.operation_id, record] as const)
     );
     for (const nodeRun of nodes.filter((node) => ["failed", "blocked"].includes(node.status))) {
       if (schedulesAfterRecovery.some((schedule) => schedule.node_run_id === nodeRun.node_run_id)) continue;
@@ -1970,7 +2133,7 @@ async function reconcileRetryState(runId: string) {
         .sort((left, right) => Date.parse(right.created_at ?? "") - Date.parse(left.created_at ?? ""))[0];
       if (!nodeSpec || !isRetrySourceAttempt(latest)) continue;
       const durableState = statesAfterRecovery.get(latest.operation_id);
-      if (durableState && durableState.phase !== "waiting_for_retry") continue;
+      if (durableState?.phase === "completed" || (durableState && durableState.phase !== "waiting_for_retry")) continue;
       await persistRetryDecisionForAttempt({
         runId,
         nodeRun,
@@ -2059,6 +2222,14 @@ async function persistRetryForCommittedNode(input: {
   });
 }
 
+function retryDeadlineAt(policy: RetryPolicy, attempts: NodeAttempt[]) {
+  const firstAttempt = [...attempts]
+    .sort((left, right) => (left.attempt_number ?? 1) - (right.attempt_number ?? 1))[0];
+  const startedAt = firstAttempt?.started_at ?? firstAttempt?.dispatched_at ?? firstAttempt?.created_at;
+  if (!startedAt || !Number.isFinite(Date.parse(startedAt))) return undefined;
+  return new Date(Date.parse(startedAt) + policy.total_time_budget_ms).toISOString();
+}
+
 async function authorizeRetryConsumption(input: {
   runId: string;
   nodeRun: NodeRun;
@@ -2118,6 +2289,7 @@ async function authorizeRetryConsumption(input: {
 async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<NodeExecutionResult> {
   await recoverPendingNodeCommitTransactions(runId);
   await reconcileRetryState(runId);
+  await reconcileExecutionPlanState(runId);
   const lock = await acquireRunMutationLock(runId);
   if (!lock) {
     return {
@@ -2164,7 +2336,9 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     const activeRetry = (await retryScheduleStore.list(runId)).find((schedule) => schedule.node_run_id === nodeRunId);
     const durableRetryState = (await retryStateStore.list(runId)).find((state) => state.node_run_id === nodeRunId);
     let retryRemainingBudgetMs: number | undefined;
-    if (!activeRetry && durableRetryState && durableRetryState.phase !== "waiting_for_retry") {
+    let retryRuntimeDeadlineAt: string | undefined;
+    if (!activeRetry && durableRetryState && ["exhausted", "blocked"].includes(durableRetryState.phase)) {
+      const terminalRetryState = durableRetryState as ReplayableRetryState;
       return {
         accepted: false,
         status_code: 409,
@@ -2173,7 +2347,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
           message: "The retry operation is durably terminal and cannot be dispatched.",
           reason_code: durableRetryState.reason_code
         },
-        retry_decision: durableRetryState.decision,
+        retry_decision: terminalRetryState.decision,
         retry_attention_items: [],
         retry_events: []
       };
@@ -2213,14 +2387,21 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
           retry_events: authorization.created_events
         };
       }
-      retryRemainingBudgetMs = retryPolicyForNode(nodeSpec).total_time_budget_ms
-        - authorization.decision.budget_snapshot.elapsed_ms;
+      retryRuntimeDeadlineAt = retryDeadlineAt(
+        retryPolicyForNode(nodeSpec),
+        (lockedBundle.attempts as NodeAttempt[]).filter((attempt) => attempt.operation_id === activeRetry.operation_id)
+      );
+      retryRemainingBudgetMs = retryRuntimeDeadlineAt
+        ? Date.parse(retryRuntimeDeadlineAt) - Date.parse(dispatchedAt)
+        : retryPolicyForNode(nodeSpec).total_time_budget_ms - authorization.decision.budget_snapshot.elapsed_ms;
     }
     const artifacts = lockedBundle.artifacts as ArtifactManifest[];
     const gates = lockedBundle.gates as GateInstance[];
-    const planningNodeRuns = activeRetry
-      ? nodeRuns.map((node) => node.node_run_id === nodeRunId ? { ...node, status: "queued" as const } : node)
-      : nodeRuns;
+    const planningNodeRuns = nodeRuns.map((node) =>
+      node.node_run_id === nodeRunId && (activeRetry || executionPlanBlockedReason(node))
+        ? { ...node, status: "queued" as const }
+        : node
+    );
     const executionPlan = calculateExecutionPlan({
       runId,
       workflowSnapshotId: runSpec.workflow_snapshot_id,
@@ -2231,7 +2412,7 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       calculatedAt: dispatchedAt
     });
     const calculatedDecision = executionPlan.decisions.find((item) => item.node_run_id === targetNodeRun.node_run_id);
-    const decision = calculatedDecision && activeRetry
+    const decision = calculatedDecision?.decision === "execute" && activeRetry
       ? { ...calculatedDecision, reason_code: activeRetry.reason_code }
       : calculatedDecision;
     if (!decision || decision.decision !== "execute") {
@@ -2258,7 +2439,8 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     const adapter = realCodexEnabled(runSpec)
       ? (useRealCodex ? codexRealAdapterEntry() : undefined)
       : selectAdapterForNode({ manifests, node: nodeSpec, provider, availableCredentials });
-    const existingIntent = await readNodeDispatchIntent(dispatchIntentPath, {
+    const invocationAdapter = realCodexEnabled(runSpec) ? codexRealAdapterEntry() : adapter;
+    let existingIntent = await readNodeDispatchIntent(dispatchIntentPath, {
       runId,
       nodeRunId,
       nodeId: targetNodeRun.node_id,
@@ -2267,8 +2449,8 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       nodeRun: targetNodeRun,
       nodeSpec,
       decision,
-      adapter,
-      remainingTotalBudgetMs: retryRemainingBudgetMs
+      adapter: invocationAdapter,
+      retryDeadlineAt: retryRuntimeDeadlineAt
     });
     if (existingIntent?.state === "dispatched_unknown") {
       if (activeRetry) await retryScheduleStore.remove(runId, activeRetry.operation_id);
@@ -2295,13 +2477,48 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
       };
     }
 
+    if (existingIntent?.state === "prepared"
+      && activeRetry
+      && retryRemainingBudgetMs !== undefined
+      && Math.floor(retryRemainingBudgetMs) < existingIntent.invocation.runtime_control.timeout_ms) {
+      const adjustedInvocation = createAdapterInvocation({
+        runSpec,
+        workflow: lockedBundle.workflow,
+        nodeRun: targetNodeRun,
+        createdAt: dispatchedAt,
+        adapterKind: invocationAdapter?.kind,
+        adapterId: invocationAdapter?.id,
+        resolvedInputs,
+        operationId: existingIntent.invocation.operation_id,
+        attemptNumber: existingIntent.invocation.attempt_number ?? activeRetry.attempt_number,
+        remainingTotalBudgetMs: retryRemainingBudgetMs
+      });
+      existingIntent = {
+        ...existingIntent,
+        invocation: adjustedInvocation,
+        decision: {
+          reason_code: decision.reason_code,
+          resolved_input_count: resolvedInputs.length,
+          resolved_input_ids: resolvedInputs.map((input) => input.input_id)
+        },
+        event: nodeInputsResolvedEvent({
+          runId,
+          nodeRunId,
+          invocation: adjustedInvocation,
+          reasonCode: decision.reason_code
+        }),
+        prepared_at: dispatchedAt
+      };
+      await writeJsonAtomically(dispatchIntentPath, existingIntent);
+    }
+
     let invocation = existingIntent?.invocation ?? createAdapterInvocation({
       runSpec,
       workflow: lockedBundle.workflow,
       nodeRun: targetNodeRun,
       createdAt: dispatchedAt,
-      adapterKind: adapter?.kind,
-      adapterId: adapter?.id,
+      adapterKind: invocationAdapter?.kind,
+      adapterId: invocationAdapter?.id,
       resolvedInputs,
       operationId: activeRetry?.operation_id,
       attemptNumber: activeRetry?.attempt_number,
@@ -2341,13 +2558,17 @@ async function executeNodeRunOnce(runId: string, nodeRunId: string): Promise<Nod
     } else {
       rawResult = adapter
         ? executeSidecarAdapter({ invocation, workflow: lockedBundle.workflow, nodeRun: targetNodeRun, adapter, receivedAt: new Date().toISOString() })
-        : buildAdapterUnavailableResult({
-          invocation,
-          message: realCodexEnabled(runSpec) && codexHealth?.status !== "healthy"
-            ? `Codex CLI is not healthy: ${codexHealth?.reasons.join(", ") ?? "health unavailable"}`
-            : `No executable adapter supports NodeSpec ${targetNodeRun.node_id} capabilities: ${nodeSpec?.capability_requirements.join(", ") ?? "unknown"}`,
-          receivedAt: new Date().toISOString()
-        });
+        : (() => {
+          const blockedHealth = realCodexEnabled(runSpec) ? blockedCodexHealthError(codexHealth) : undefined;
+          return buildAdapterUnavailableResult({
+            invocation,
+            message: realCodexEnabled(runSpec) && codexHealth?.status !== "healthy"
+              ? `Codex CLI is not healthy: ${codexHealth?.reasons.join(", ") ?? "health unavailable"}`
+              : `No executable adapter supports NodeSpec ${targetNodeRun.node_id} capabilities: ${nodeSpec?.capability_requirements.join(", ") ?? "unknown"}`,
+            ...(blockedHealth ? { errorCode: blockedHealth.code, recoverable: blockedHealth.recoverable } : {}),
+            receivedAt: new Date().toISOString()
+          });
+        })();
     }
     let result: AdapterResult;
     try {
@@ -2466,21 +2687,40 @@ function schedulerTickLimits(value: unknown) {
   return Math.max(1, Math.min(20, Math.floor(parsed)));
 }
 
-async function buildSchedulerPlan(runId: string, maxNodes: number) {
-  await recoverPendingNodeCommitTransactions(runId);
-  await reconcileRetryState(runId);
-  const bundle = await readRunBundle(runId);
-  const executionPlan = buildRunExecutionPlan({
-    run: bundle.run as unknown as RunSpec,
-    workflow: bundle.workflow,
-    nodes: bundle.nodes as NodeRun[],
-    artifacts: bundle.artifacts as ArtifactManifest[],
-    gates: bundle.gates as GateInstance[]
-  });
-  const statuses = new Map((bundle.nodes as NodeRun[]).map((node) => [node.node_run_id, node.status]));
+const executionPlanBlockedPrefix = "ExecutionPlan:";
+
+function executionPlanBlockedReason(nodeRun: NodeRun) {
+  return nodeRun.status === "blocked" && nodeRun.blocked_reason?.startsWith(executionPlanBlockedPrefix)
+    ? nodeRun.blocked_reason.slice(executionPlanBlockedPrefix.length)
+    : undefined;
+}
+
+function nextActionsForNodeDecision(input: {
+  decision: NodeExecutionDecision["decision"];
+  reasonCode: string;
+  retryDecision?: RetryDecision;
+}) {
+  if (input.decision === "execute") return ["run_scheduler_tick"];
+  if (input.retryDecision?.phase === "waiting_for_retry") return ["wait_for_retry"];
+  if (input.decision === "pause_for_gate") return ["review_pending_gates"];
+  if (input.reasonCode === "required_input_missing") {
+    return ["restore_required_artifact", "rerun_upstream_node", "retry_manually"];
+  }
+  if (input.decision === "blocked") return ["inspect_attention", "retry_manually"];
+  if (input.decision === "wait") return ["wait_for_upstream"];
+  return ["refresh_run"];
+}
+
+async function calculateRetryAwareSchedulerPlan(
+  runId: string,
+  bundle: Awaited<ReturnType<typeof readRunBundle>>,
+  maxNodes: number
+) {
+  const nodeRuns = bundle.nodes as NodeRun[];
+  const statuses = new Map(nodeRuns.map((node) => [node.node_run_id, node.status]));
   const attempts = bundle.attempts as NodeAttempt[];
   const retryProjections = new Map(
-    (await Promise.all((bundle.nodes as NodeRun[]).map(async (nodeRun) => {
+    (await Promise.all(nodeRuns.map(async (nodeRun) => {
       const nodeSpec = bundle.workflow.nodes.find((node) => node.id === nodeRun.node_id);
       if (!nodeSpec) return [nodeRun.node_run_id, undefined] as const;
       return [
@@ -2494,21 +2734,38 @@ async function buildSchedulerPlan(runId: string, maxNodes: number) {
       ] as const;
     })))
   );
+  const planningNodeRuns = nodeRuns.map((nodeRun) => {
+    const retryDecision = retryProjections.get(nodeRun.node_run_id);
+    return retryDecision?.phase === "due" || executionPlanBlockedReason(nodeRun)
+      ? { ...nodeRun, status: "queued" as const }
+      : nodeRun;
+  });
+  const executionPlan = calculateExecutionPlan({
+    runId,
+    workflowSnapshotId: (bundle.run as unknown as RunSpec).workflow_snapshot_id,
+    workflow: bundle.workflow,
+    nodeRuns: planningNodeRuns,
+    artifacts: bundle.artifacts as ArtifactManifest[],
+    gates: bundle.gates as GateInstance[],
+    calculatedAt: new Date().toISOString()
+  });
   const decisions: SchedulerDecision[] = executionPlan.decisions.map((decision) => {
     const retryDecision = retryProjections.get(decision.node_run_id);
-    const retryOverride = retryDecision?.phase === "due"
-      ? { decision: "execute" as const, reason_code: "retry_due" }
-      : retryDecision?.phase === "waiting_for_retry"
+    const retryOverride = retryDecision?.phase === "waiting_for_retry"
         ? { decision: "wait" as const, reason_code: "waiting_for_retry" }
         : retryDecision?.phase === "exhausted" || retryDecision?.phase === "blocked"
           ? { decision: "blocked" as const, reason_code: retryDecision.reason_code }
+          : retryDecision?.phase === "due" && decision.decision === "execute"
+            ? { decision: "execute" as const, reason_code: "retry_due" }
           : undefined;
+    const projectedDecision = retryOverride?.decision ?? decision.decision;
+    const projectedReasonCode = retryOverride?.reason_code ?? decision.reason_code;
     return {
       node_run_id: decision.node_run_id,
       node_id: decision.node_id,
       status: statuses.get(decision.node_run_id) ?? "waiting",
-      decision: retryOverride?.decision ?? decision.decision,
-      reason_code: retryOverride?.reason_code ?? decision.reason_code,
+      decision: projectedDecision,
+      reason_code: projectedReasonCode,
       ...(decision.gate_instance_id ? { gate_instance_id: decision.gate_instance_id } : {}),
       ...(retryDecision ? {
         retry_operation_id: retryDecision.operation_id,
@@ -2518,23 +2775,131 @@ async function buildSchedulerPlan(runId: string, maxNodes: number) {
     };
   });
   const decisionByNodeRunId = new Map(decisions.map((decision) => [decision.node_run_id, decision]));
+  const unifiedDecisions = executionPlan.decisions.map((decision) => {
+    const unified = decisionByNodeRunId.get(decision.node_run_id);
+    return unified ? {
+      ...decision,
+      decision: unified.decision,
+      reason_code: unified.reason_code
+    } : decision;
+  });
   const unifiedExecutionPlan = {
     ...executionPlan,
-    decisions: executionPlan.decisions.map((decision) => {
-      const unified = decisionByNodeRunId.get(decision.node_run_id);
-      return unified ? {
-        ...decision,
-        decision: unified.decision,
-        reason_code: unified.reason_code
-      } : decision;
-    }),
+    decisions: unifiedDecisions,
     ready_node_run_ids: decisions.filter((decision) => decision.decision === "execute").map((decision) => decision.node_run_id),
-    blocked_node_run_ids: decisions.filter((decision) => decision.decision === "blocked").map((decision) => decision.node_run_id)
+    paused_node_run_ids: decisions.filter((decision) => decision.decision === "pause_for_gate").map((decision) => decision.node_run_id),
+    blocked_node_run_ids: decisions.filter((decision) => decision.decision === "blocked").map((decision) => decision.node_run_id),
+    terminal: !decisions.some((decision) => ["waiting_for_retry", "due"].includes(decision.retry_decision?.phase ?? ""))
+      && unifiedDecisions.every((decision) => decision.decision === "skip")
+      && (bundle.gates as GateInstance[]).every((gate) => gate.status !== "pending_review")
   };
   const executable = decisions.filter((decision) => decision.decision === "execute").slice(0, maxNodes);
   const paused = decisions.filter((decision) => decision.decision === "pause_for_gate");
   const skipped = decisions.filter((decision) => decision.decision !== "execute" && decision.decision !== "pause_for_gate");
   return { executionPlan: unifiedExecutionPlan, decisions, executable, paused, skipped };
+}
+
+function executionPlanAttentionItem(runId: string, nodeRun: NodeRun, reasonCode: string): AttentionItem {
+  const rootCauseKey = `run:${runId}:node:${nodeRun.node_run_id}:execution_plan:${reasonCode}`;
+  return {
+    attention_id: `att_${safeId(rootCauseKey)}`,
+    root_cause_key: rootCauseKey,
+    title: "Required Artifact 缺失",
+    severity: "P0",
+    status: "open",
+    related_objects: [{ type: "NodeRun", id: nodeRun.node_run_id, label: nodeRun.node_id }],
+    impact: {
+      blocked_nodes: [nodeRun.node_run_id],
+      waiting_agents: nodeRun.agent_id ? [nodeRun.agent_id] : [],
+      unaffected_paths: []
+    },
+    safe_actions: ["restore_required_artifact", "rerun_upstream_node", "retry_manually"]
+  };
+}
+
+async function reconcileExecutionPlanState(runId: string) {
+  const lock = await acquireRunMutationLock(runId);
+  if (!lock) return;
+  try {
+    const bundle = await readRunBundle(runId);
+    const nodes = bundle.nodes as NodeRun[];
+    const plan = await calculateRetryAwareSchedulerPlan(runId, bundle, Math.max(1, nodes.length));
+    const attention = Array.isArray(bundle.attention) ? (bundle.attention as AttentionItem[]) : [];
+    const attentionByRootCause = new Map(attention.map((item) => [item.root_cause_key, item]));
+    const now = new Date().toISOString();
+    let nodesChanged = false;
+    let attentionChanged = false;
+
+    for (const decision of plan.executionPlan.decisions) {
+      const nodeRun = nodes.find((node) => node.node_run_id === decision.node_run_id);
+      if (!nodeRun) continue;
+      const ownedReason = executionPlanBlockedReason(nodeRun);
+      if (decision.decision === "blocked" && decision.reason_code === "required_input_missing") {
+        if (!["done", "running", "reviewing"].includes(nodeRun.status)) {
+          const nextReason = `${executionPlanBlockedPrefix}${decision.reason_code}`;
+          if (nodeRun.status !== "blocked" || nodeRun.blocked_reason !== nextReason) {
+            nodeRun.status = "blocked";
+            nodeRun.blocked_reason = nextReason;
+            nodeRun.updated_at = now;
+            nodesChanged = true;
+          }
+          const item = executionPlanAttentionItem(runId, nodeRun, decision.reason_code);
+          const existing = attentionByRootCause.get(item.root_cause_key);
+          const merged = existing ? {
+            ...existing,
+            title: item.title,
+            severity: item.severity,
+            status: "open" as const,
+            related_objects: Array.from(new Map(
+              [...existing.related_objects, ...item.related_objects]
+                .map((object) => [`${object.type}:${object.id}`, object] as const)
+            ).values()),
+            impact: {
+              blocked_nodes: Array.from(new Set([...existing.impact.blocked_nodes, ...item.impact.blocked_nodes])),
+              waiting_agents: Array.from(new Set([...existing.impact.waiting_agents, ...item.impact.waiting_agents])),
+              unaffected_paths: Array.from(new Set([...existing.impact.unaffected_paths, ...item.impact.unaffected_paths]))
+            },
+            safe_actions: Array.from(new Set([...existing.safe_actions, ...item.safe_actions]))
+          } : item;
+          if (!existing || JSON.stringify(existing) !== JSON.stringify(merged)) {
+            attentionByRootCause.set(item.root_cause_key, merged);
+            attentionChanged = true;
+          }
+        }
+        continue;
+      }
+      if (!ownedReason) continue;
+      nodeRun.status = decision.decision === "wait" ? "waiting" : "queued";
+      nodeRun.upstream_artifacts = Array.from(new Set([
+        ...nodeRun.upstream_artifacts,
+        ...decision.resolved_inputs.flatMap((resolved) => resolved.artifact_id ? [resolved.artifact_id] : [])
+      ]));
+      delete nodeRun.blocked_reason;
+      nodeRun.updated_at = now;
+      nodesChanged = true;
+      const rootCauseKey = `run:${runId}:node:${nodeRun.node_run_id}:execution_plan:${ownedReason}`;
+      const existing = attentionByRootCause.get(rootCauseKey);
+      if (existing && existing.status !== "resolved") {
+        attentionByRootCause.set(rootCauseKey, { ...existing, status: "resolved" });
+        attentionChanged = true;
+      }
+    }
+
+    if (nodesChanged) await writeJsonAtomically(`runs/${runId}/nodes.json`, nodes);
+    if (attentionChanged) {
+      await writeJsonAtomically(`runs/${runId}/attention.json`, Array.from(attentionByRootCause.values()));
+    }
+  } finally {
+    await lock.release();
+  }
+}
+
+async function buildSchedulerPlan(runId: string, maxNodes: number) {
+  await recoverPendingNodeCommitTransactions(runId);
+  await reconcileRetryState(runId);
+  await reconcileExecutionPlanState(runId);
+  const bundle = await readRunBundle(runId);
+  return calculateRetryAwareSchedulerPlan(runId, bundle, maxNodes);
 }
 
 async function commitSchedulerTick(runId: string, maxNodes: number) {
@@ -2643,19 +3008,35 @@ async function commitSchedulerTick(runId: string, maxNodes: number) {
     skipped,
     attention_items: [...retryAttentionItems, ...attention.attention_items],
     created_events: [planEvent.event_id, startedEvent.event_id, ...retryEvents, ...attention.created_events, completedEvent.event_id],
-    next_suggested_actions: failed.length > 0 && failed.every((failure) => failure.retry_decision?.action === "schedule_retry")
-      ? ["wait_for_retry"]
-      : failed.length > 0
-        ? ["inspect_attention", "retry_manually"]
-        : paused.length > 0
-          ? ["review_pending_gates"]
-          : ["refresh_run"]
+    next_suggested_actions: schedulerNextActions(finalPlan)
   };
 }
 
-function schedulerStopReason(plan: Awaited<ReturnType<typeof buildSchedulerPlan>>): "no_executable_nodes" | "paused_for_gate" | "waiting_for_retry" {
+function schedulerNextActions(plan: Awaited<ReturnType<typeof buildSchedulerPlan>>) {
+  if (plan.executable.length > 0) {
+    const executable = plan.executable[0]!;
+    return nextActionsForNodeDecision({
+      decision: executable.decision,
+      reasonCode: executable.reason_code,
+      retryDecision: executable.retry_decision
+    });
+  }
+  const primary = plan.decisions.find((decision) => decision.decision === "blocked")
+    ?? plan.decisions.find((decision) => decision.retry_decision?.phase === "waiting_for_retry")
+    ?? plan.decisions.find((decision) => decision.decision === "pause_for_gate")
+    ?? plan.decisions.find((decision) => decision.decision === "wait");
+  return primary ? nextActionsForNodeDecision({
+    decision: primary.decision,
+    reasonCode: primary.reason_code,
+    retryDecision: primary.retry_decision
+  }) : ["refresh_run"];
+}
+
+function schedulerStopReason(plan: Awaited<ReturnType<typeof buildSchedulerPlan>>): "no_executable_nodes" | "paused_for_gate" | "waiting_for_retry" | "attention_required" {
+  const blocked = plan.decisions.filter((decision) => decision.decision === "blocked");
+  if (blocked.some((decision) => decision.reason_code !== "required_gate_rejected")) return "attention_required";
   if (plan.decisions.some((decision) => decision.retry_decision?.phase === "waiting_for_retry")) return "waiting_for_retry";
-  return plan.paused.length > 0 || plan.decisions.some((decision) => decision.reason_code === "required_gate_rejected")
+  return plan.paused.length > 0 || blocked.some((decision) => decision.reason_code === "required_gate_rejected")
     ? "paused_for_gate"
     : "no_executable_nodes";
 }
@@ -2675,10 +3056,12 @@ async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPe
   await appendEvent(runId, startedEvent);
 
   const ticks = [];
-  let stopReason: "no_executable_nodes" | "paused_for_gate" | "waiting_for_retry" | "execution_failed" | "max_ticks_reached" = "max_ticks_reached";
+  let stopReason: "no_executable_nodes" | "paused_for_gate" | "waiting_for_retry" | "attention_required" | "execution_failed" | "max_ticks_reached" = "max_ticks_reached";
   let lastExecutionPlan: Awaited<ReturnType<typeof buildSchedulerPlan>>["executionPlan"] | undefined;
+  let lastProjectedPlan: Awaited<ReturnType<typeof buildSchedulerPlan>> | undefined;
   for (let index = 0; index < maxTicks; index += 1) {
     const plan = await buildSchedulerPlan(runId, maxNodesPerTick);
+    lastProjectedPlan = plan;
     lastExecutionPlan = plan.executionPlan;
     if (plan.executable.length === 0) {
       stopReason = schedulerStopReason(plan);
@@ -2696,12 +3079,17 @@ async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPe
     lastExecutionPlan = tick.execution_plan;
     ticks.push({ tick_index: index + 1, ...tick });
     if (tick.failed.some((failure) => failure.retry_decision?.action !== "schedule_retry")) {
-      stopReason = "execution_failed";
+      const failurePlan = await buildSchedulerPlan(runId, maxNodesPerTick);
+      lastProjectedPlan = failurePlan;
+      lastExecutionPlan = failurePlan.executionPlan;
+      const projectedStopReason = schedulerStopReason(failurePlan);
+      stopReason = projectedStopReason === "no_executable_nodes" ? "execution_failed" : projectedStopReason;
       break;
     }
   }
   if (stopReason === "max_ticks_reached") {
     const terminalPlan = await buildSchedulerPlan(runId, maxNodesPerTick);
+    lastProjectedPlan = terminalPlan;
     lastExecutionPlan = terminalPlan.executionPlan;
     if (terminalPlan.executable.length === 0) {
       stopReason = schedulerStopReason(terminalPlan);
@@ -2751,16 +3139,11 @@ async function runSchedulerUntilStop(runId: string, maxTicks: number, maxNodesPe
       attention_items_created: attentionCount
     },
     created_events: [startedEvent.event_id, completedEvent.event_id],
-    next_suggested_actions:
-      stopReason === "paused_for_gate"
-        ? ["review_pending_gates"]
-        : stopReason === "waiting_for_retry"
-          ? ["wait_for_retry"]
-        : stopReason === "execution_failed"
-          ? ["inspect_attention", "retry_manually"]
-          : stopReason === "max_ticks_reached"
-            ? ["run_scheduler_again_or_increase_limit"]
-            : ["refresh_run"]
+    next_suggested_actions: stopReason === "max_ticks_reached"
+      ? ["run_scheduler_again_or_increase_limit"]
+      : lastProjectedPlan
+        ? schedulerNextActions(lastProjectedPlan)
+        : ["refresh_run"]
   };
 }
 
@@ -2801,6 +3184,7 @@ async function projectRetryDecision(input: {
     total_time_budget_ms: policy.total_time_budget_ms,
     cost_budget: policy.cost_budget
   };
+  if (durable?.phase === "completed") return undefined;
   const intent = await readJsonOptional<unknown>(nodeDispatchIntentRelativePath(input.runId, input.nodeRun.node_run_id));
   if (isNodeDispatchIntent(intent) && intent.state === "dispatched_unknown") {
     return {
@@ -2821,6 +3205,14 @@ async function projectRetryDecision(input: {
     };
   }
   if (!active && durable) {
+    if (durable.phase === "waiting_for_retry") {
+      return {
+        ...durable.decision,
+        phase: Date.parse(durable.decision.scheduled_for ?? "") <= Date.now()
+          ? "due" as const
+          : "waiting_for_retry" as const
+      };
+    }
     return {
       ...durable.decision,
       phase: durable.phase === "exhausted" ? "exhausted" as const : "blocked" as const
@@ -3476,13 +3868,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
           executable: plan.executable,
           paused: plan.paused,
           skipped: plan.skipped,
-          next_suggested_actions: plan.executable.length > 0
-            ? ["run_scheduler_tick"]
-            : plan.decisions.some((decision) => decision.retry_decision?.phase === "waiting_for_retry")
-              ? ["wait_for_retry"]
-              : plan.paused.length > 0
-                ? ["review_pending_gates"]
-                : ["wait_for_new_queued_nodes"]
+          next_suggested_actions: schedulerNextActions(plan)
         });
       }
 
@@ -3503,12 +3889,22 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       if (!node) return sendError(res, 404, "not_found", "NodeRun not found");
       const attempts = (await readJsonOptional<NodeAttempt[]>(`runs/${runId}/attempts.json`)) ?? [];
       if (parts.length === 6) {
-        const nodeSpec = bundle.workflow.nodes.find((item) => item.id === node.node_id);
         const nodeAttempts = attempts.filter((attempt) => attempt.node_run_id === nodeRunId);
-        const retryDecision = runSpec.run_mode === "executable" && nodeSpec
-          ? await projectRetryDecision({ runId, nodeRun: node, nodeSpec, attempts: nodeAttempts })
+        const projectedPlan = runSpec.run_mode === "executable"
+          ? await calculateRetryAwareSchedulerPlan(runId, bundle, Math.max(1, nodes.length))
           : undefined;
-        return sendJson(res, 200, { node, attempts: nodeAttempts, retry_decision: retryDecision });
+        const executionDecision = projectedPlan?.decisions.find((decision) => decision.node_run_id === nodeRunId);
+        return sendJson(res, 200, {
+          node,
+          attempts: nodeAttempts,
+          retry_decision: executionDecision?.retry_decision,
+          execution_decision: executionDecision,
+          next_suggested_actions: executionDecision ? nextActionsForNodeDecision({
+            decision: executionDecision.decision,
+            reasonCode: executionDecision.reason_code,
+            retryDecision: executionDecision.retry_decision
+          }) : []
+        });
       }
       if (req.method === "POST" && parts[6] === "execute") {
         const result = await executeNodeRunOnce(runId, nodeRunId);
