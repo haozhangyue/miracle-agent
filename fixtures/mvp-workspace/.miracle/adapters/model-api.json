@@ -45,7 +45,7 @@
       "credential_ref": "MOONSHOT_API_KEY",
       "verification_status": "configured_unverified",
       "verified_at": "2026-07-31T00:00:00.000Z",
-      "docs_url": "https://platform.kimi.com/docs/api/chat"
+      "docs_url": "https://platform.kimi.com/docs/api/overview"
     },
     {
       "id": "minimax-default",

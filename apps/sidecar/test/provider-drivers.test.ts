@@ -290,7 +290,7 @@ describe("provider driver loopback contracts", () => {
 describe("provider catalog fixtures", () => {
   it.each([
     ["deepseek", "DeepSeek", "deepseek", "deepseek-v4-flash", "https://api.deepseek.com", "/chat/completions", "DEEPSEEK_API_KEY", "https://api-docs.deepseek.com/api/create-chat-completion"],
-    ["kimi", "Kimi", "kimi", "kimi-k2.6", "https://api.moonshot.cn", "/v1/chat/completions", "MOONSHOT_API_KEY", "https://platform.kimi.com/docs/api/chat"],
+    ["kimi", "Kimi", "kimi", "kimi-k2.6", "https://api.moonshot.cn", "/v1/chat/completions", "MOONSHOT_API_KEY", "https://platform.kimi.com/docs/api/overview"],
     ["minimax", "MiniMax", "minimax", "MiniMax-M2.7", "https://api.minimaxi.com", "/v1/chat/completions", "MINIMAX_API_KEY", "https://platform.minimaxi.com/docs/api-reference/text-chat-openai"]
   ])("loads the %s catalog profile without a secret", async (file, displayName, driverId, model, baseUrl, apiPath, credentialRef, docsUrl) => {
     const filePath = path.join(repoRoot, "fixtures/mvp-workspace/.miracle/providers", `${file}.json`);
