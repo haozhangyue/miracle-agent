@@ -67,6 +67,7 @@ import { assertUniqueArtifactTargetPaths, resolveArtifactInputFiles } from "./ar
 import { NodeOutputContractError, buildNodeOutputContract } from "./node-output-contract";
 import { codexPreflightFailure, startCodexOperation } from "./codex-real-adapter";
 import { ModelApiAdapter } from "./model-api-adapter";
+import { authorizeProviderCredential } from "./model-api-authorization";
 import { openAiCompatibleDriver } from "./provider-drivers/openai-compatible";
 import {
   RetryScheduleStore,
@@ -1589,7 +1590,7 @@ function selectAdapterForNode(input: {
   provider: string;
   availableCredentials: string[];
 }) {
-  const selected = (
+  return (
     selectAdapterManifest({
       manifests: input.manifests,
       capabilityRequirements: input.node.capability_requirements,
@@ -1604,12 +1605,6 @@ function selectAdapterForNode(input: {
       availableCredentials: input.availableCredentials
     })
   );
-  if (selected) return selected;
-  return buildAdapterRegistry({ manifests: input.manifests, availableCredentials: input.availableCredentials }).find((adapter) =>
-    adapter.kind === "model-api"
-    && (adapter.supported_providers.includes(input.provider) || adapter.default_provider === input.provider)
-    && input.node.capability_requirements.every((capability) => adapter.capabilities.includes(capability))
-  );
 }
 
 async function executeSidecarAdapter(input: {
@@ -1620,7 +1615,7 @@ async function executeSidecarAdapter(input: {
   receivedAt?: string;
 }): Promise<AdapterResult> {
   const receivedAt = input.receivedAt ?? new Date().toISOString();
-  if (!input.adapter.executable && input.adapter.kind !== "model-api") {
+  if (!input.adapter.executable) {
     return {
       operation_id: input.invocation.operation_id,
       attempt_id: input.invocation.attempt_id,
@@ -1679,26 +1674,12 @@ async function executeSidecarAdapter(input: {
         receivedAt
       });
     }
-    const credentialRequirement = input.adapter.required_credentials.find((candidate) => candidate.key === profile.credential_ref);
-    if (
-      !credentialRequirement
-      || credentialRequirement.source !== "env"
-      || (credentialRequirement.providers !== undefined && !credentialRequirement.providers.includes(profile.provider))
-    ) {
+    if (!authorizeProviderCredential(input.adapter, profile).authorized) {
       return buildAdapterUnavailableResult({
         invocation: input.invocation,
         message: "Provider credential_ref is not authorized for this Model API Adapter.",
         errorCode: "credential_not_authorized",
         recoverable: false,
-        receivedAt
-      });
-    }
-    if (!input.adapter.executable) {
-      return buildAdapterUnavailableResult({
-        invocation: input.invocation,
-        message: `Adapter ${input.adapter.id} is unavailable: ${input.adapter.unavailable_reasons.join(", ")}`,
-        errorCode: "adapter_unavailable",
-        recoverable: true,
         receivedAt
       });
     }

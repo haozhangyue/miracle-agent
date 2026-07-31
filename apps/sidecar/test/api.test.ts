@@ -940,6 +940,52 @@ describe("sidecar api", () => {
     });
   });
 
+  it.each([
+    { name: "keychain credential", source: "keychain", status: "experimental", credential: "MODEL_API_FIXTURE_CREDENTIAL" },
+    { name: "missing env credential", source: "env", status: "experimental", credential: "MODEL_API_MISSING_CREDENTIAL" },
+    { name: "blocked adapter", source: "env", status: "blocked", credential: "MODEL_API_FIXTURE_CREDENTIAL" }
+  ])("does not route a non-executable Model API adapter in dry-run: $name", async ({ source, status, credential }) => {
+    const manifestPath = path.join(tempWorkspace, "adapters", "model-api.json");
+    const workflowPath = path.join(tempWorkspace, "workflows", "model-api-unavailable-v0.json");
+    const originalManifest = await readFile(manifestPath, "utf8");
+    const manifest = JSON.parse(originalManifest) as Record<string, unknown>;
+    const profiles = manifest.provider_profiles as Array<Record<string, unknown>>;
+    manifest.status = status;
+    manifest.required_credentials = [{ key: credential, label: "Fixture credential", source, required: true, providers: ["fixture-compatible"] }];
+    profiles[0]!.credential_ref = credential;
+    const workflow = {
+      id: "model-api-unavailable-v0",
+      name: "Unavailable model API dry-run",
+      version: "0.1.0",
+      domain: "test",
+      category: "test",
+      nodes: [{ id: "model_call", name: "Model call", type: "agent", capability_requirements: ["model.call"], recommended_libraries: [], agent_candidates: [], inputs: [], outputs: [], failure_policy: { retry: 0, on_missing_input: "blocked", on_provider_failure: "failed" } }],
+      edges: [],
+      gates: [],
+      artifacts: [],
+      provider_policy: { default_provider: "fixture-compatible", allowed_providers: ["fixture-compatible"], required_credentials: [credential], fallback_providers: [] },
+      layouts: { dag: { model_call: { x: 0, y: 0 } } },
+      registry_meta: { source: "test", status: "experimental" }
+    };
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    await writeFile(workflowPath, `${JSON.stringify(workflow, null, 2)}\n`, "utf8");
+    try {
+      const body = await fetchJson<{
+        adapter_routing: Array<{ node_id: string; selected_adapter_id?: string; executable: boolean; missing_capabilities: string[] }>;
+      }>("/api/v0/workflows/model-api-unavailable-v0/dry-run", { method: "POST", body: JSON.stringify({}) });
+
+      expect(body.adapter_routing).toEqual([{
+        node_id: "model_call",
+        selected_adapter_id: undefined,
+        executable: false,
+        missing_capabilities: ["model.call"]
+      }]);
+    } finally {
+      await writeFile(manifestPath, originalManifest);
+      await rm(workflowPath, { force: true });
+    }
+  });
+
   it("returns the project roadmap with git and evidence sync state", async () => {
     const body = await fetchJson<{
       current_node_id: string;

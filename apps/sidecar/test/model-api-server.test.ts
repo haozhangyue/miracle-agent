@@ -73,20 +73,6 @@ async function writeProviderScopeMismatchModelProfile() {
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
-async function writeUnsupportedCredentialSourceModelProfile() {
-  const manifestPath = path.join(workspace, "adapters", "model-api.json");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
-  const profiles = manifest.provider_profiles as Array<Record<string, unknown>>;
-  manifest.supported_providers = ["fixture-compatible"];
-  manifest.default_provider = "fixture-compatible";
-  manifest.required_credentials = [{ key: "MODEL_API_FIXTURE_CREDENTIAL", label: "Model API fixture credential", source: "keychain", required: true }];
-  profiles[0]!.base_url = providerBaseUrl;
-  profiles[0]!.api_path = "/v1/chat/completions?mode=record-authorization";
-  profiles[0]!.provider = "fixture-compatible";
-  profiles[0]!.credential_ref = "MODEL_API_FIXTURE_CREDENTIAL";
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-}
-
 async function createModelRun(provider = "fixture-compatible") {
   const workflow: WorkflowSpec = {
     id: "model-api-cancel-v0",
@@ -182,20 +168,6 @@ describe("Model API Sidecar integration", () => {
     expect(body).toMatchObject({ error: { code: "credential_not_authorized" } });
   });
 
-  it("refuses a schema-valid non-env credential source without sending a provider request", async () => {
-    await writeUnsupportedCredentialSourceModelProfile();
-    const outputBefore = providerOutput;
-    const { runId, nodeRunId } = await createModelRun();
-    const response = await fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" });
-    const body = await response.json();
-    const persisted = await readFile(path.join(workspace, "runs", runId, "attempts.json"), "utf8");
-    const events = await readFile(path.join(workspace, "runs", runId, "events.jsonl"), "utf8");
-
-    expect(body).toMatchObject({ adapter_result: { error: { code: "credential_not_authorized" } } });
-    expect(providerOutput).toBe(outputBefore);
-    expect(JSON.stringify([body, persisted, events, sidecarOutput, providerOutput])).not.toContain("fixture-secret");
-  });
-
   it("cancels a registered Model API operation through the existing operation endpoint", async () => {
     await writeModelProfile("slow");
     const { runId, nodeRunId } = await createModelRun();
@@ -271,6 +243,31 @@ describe("Model API Sidecar integration", () => {
     const cancellation = await fetch(`${baseUrl}/api/v0/operations/${operation.operation_id}/cancel`, { method: "POST" });
     expect(await cancellation.json()).toMatchObject({ operation_id: operation.operation_id, status: "already_finished" });
     expect((await execution).status).toBe(200);
+  });
+
+  it("does not write through a receipt root replaced during the delayed write window", async () => {
+    await writeModelProfile("slow");
+    const { runId, nodeRunId } = await createModelRun();
+    let executionSettled = false;
+    const execution = fetch(`${baseUrl}/api/v0/runs/${runId}/nodes/${nodeRunId}/execute`, { method: "POST" }).finally(() => { executionSettled = true; });
+    await waitForOperation(runId);
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const operations = await (await fetch(`${baseUrl}/api/v0/operations?run_id=${encodeURIComponent(runId)}`)).json() as { operations: unknown[] };
+      if (operations.operations.length === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(executionSettled).toBe(false);
+
+    const receiptRoot = path.join(workspace, "model-api-operations");
+    const outside = path.join(tempRoot, "outside-switched-receipts");
+    await mkdir(outside);
+    await rm(receiptRoot, { recursive: true, force: true });
+    await symlink(outside, receiptRoot, "dir");
+
+    const response = await execution;
+    expect(response.status).toBe(500);
+    expect(await readdir(outside)).toEqual([]);
   });
 
   it("never writes a Model API receipt through a pre-existing root symlink", async () => {
