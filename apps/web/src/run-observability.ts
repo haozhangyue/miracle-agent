@@ -65,17 +65,20 @@ export function buildAttemptTimeline(attempts: Attempt[], routingDecisions: Rout
       node_run_id: first?.node_run_id,
       attempts: sortedAttempts.map((attempt) => {
         const receipt = receiptFor(attempt);
+        const rawEstimatedCost = receipt.estimated_cost ?? attempt.estimated_cost;
         return {
           attempt_id: attempt.attempt_id,
           attempt_number: attempt.attempt_number ?? 1,
           status: attempt.status,
           status_label: `NodeAttempt · ${attempt.status}`,
+          adapter_kind: receipt.adapter_kind ?? attempt.adapter_kind,
+          adapter_id: receipt.adapter_id ?? attempt.adapter_id,
           provider: receipt.provider ?? attempt.provider ?? "-",
           provider_profile: receipt.provider_profile_id ?? attempt.provider_profile_id ?? "-",
           model: receipt.model ?? "-",
           runtime: runtimeBadge(attempt).runtime,
           usage: receipt.usage,
-          estimated_cost: receipt.estimated_cost ?? attempt.estimated_cost,
+          estimated_cost: rawEstimatedCost === undefined ? undefined : estimatedCost(rawEstimatedCost),
           actual_cost: receipt.cost ?? attempt.actual_cost,
           error_code: attempt.error?.code,
           created_at: attempt.created_at ?? attempt.dispatched_at

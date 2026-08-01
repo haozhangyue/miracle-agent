@@ -32,10 +32,11 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
 |---|---|
 | 当前产品版本 | `v0.8.0` |
 | 当前工程形态 | React Web + Node.js Local Sidecar + packages/core + fixture workspace |
-| 当前阶段 | P7-02 至 P7-09 已完成，已具备 Provider Driver、确定性路由、受控 fallback 和多运行时观测；真实连通尚未验证 |
-| 当前任务焦点 | `P7-10` 回归验收与版本收口 |
+| 当前阶段 | P7-02 至 P7-09 已完成；P7-10 工程和真实 Codex 验收通过，真实 Provider 发布门未满足，P7 保持 `current` |
+| 当前任务焦点 | `P7-10` 条件通过后的单 Provider 真实 smoke 恢复动作 |
 | 已完成 P5 任务 | `P5-01` 至 `P5-09`，P5 设计与接入边界验收通过 |
 | P6 验收基线 | `54_P6回归验收与版本收口报告.md` |
+| 当前发布门真相源 | `60_P7回归验收与版本收口报告.md` |
 | 本地 workspace 默认目录 | `fixtures/mvp-workspace/.miracle` |
 | 任务基线数据 | `plans/mvp-task-baseline/roadmap.json` |
 
@@ -54,8 +55,10 @@ Miracle 已经从规划、架构、原型进入可运行 MVP 和真实工作流�
   `execution_plan_calculated` 与 `node_inputs_resolved` 审计只记录 ID、数量和 reason code。
 - Model API Adapter 使用 Node.js 原生 `fetch` 处理兼容协议；用户只配置 ProviderProfile
   的 `credential_ref`，不会在 Adapter 回执、错误或运行界面看到凭证值。
-- DeepSeek、Kimi、MiniMax Driver 与 `GET /api/v0/providers` 已接入；本轮三家 Key 均未配置，
-  未执行真实 smoke，三家 Profile 均为 `configured_unverified`，不代表 healthy。
+- DeepSeek、Kimi、MiniMax Driver 与 `GET /api/v0/providers` 已接入；P7-10 预检确认
+  `DEEPSEEK_API_KEY`、`KIMI_API_KEY`、`MOONSHOT_API_KEY`、`MINIMAX_API_KEY` 均未设置。
+  当前 Kimi Profile 使用 `MOONSHOT_API_KEY`；本轮未执行真实 smoke，三家 Profile 均为
+  `configured_unverified`、不可执行且不代表 healthy。
 
 ```text
 GET  /api/v0/adapters/codex-cli/health
@@ -140,6 +143,7 @@ npm run dev:web
 | `MIRACLE_ENABLE_REAL_CODEX` | 未设置 | 设为 `1` 时允许已确认草案调用真实 Codex CLI |
 | `MIRACLE_CODEX_CLI_PATH` | `codex` | 可选，覆盖 Codex CLI 可执行文件 |
 | `DEEPSEEK_API_KEY` | 未设置 | DeepSeek 运行时凭证，仅用于显式 opt-in 的真实调用 |
+| `KIMI_API_KEY` | 未设置 | P7-10 环境预检项；当前 Kimi Profile 不读取它，仍使用 `MOONSHOT_API_KEY` |
 | `MOONSHOT_API_KEY` | 未设置 | Kimi 运行时凭证，仅用于显式 opt-in 的真实调用 |
 | `MINIMAX_API_KEY` | 未设置 | MiniMax 运行时凭证，仅用于显式 opt-in 的真实调用 |
 
@@ -452,6 +456,15 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 5. 凭证缺失时可在 Attention 打开配置说明：只在本地 Sidecar 进程环境中设置 Provider Profile 所引用
    的环境变量。API Key、prompt、Artifact 正文和绝对 runtime 路径不会出现在 Run/Attention 截图或 API 投影。
 
+### 5.17 核对 P7 发布门
+
+1. 先读取 `60_P7回归验收与版本收口报告.md`。当前工程回归、真实 Codex 三节点、Gate
+   暂停/恢复、Artifact 交接和 Web 验收均通过，但这不等于模型 Provider 可发布。
+2. `GET /api/v0/providers` 中三家 Profile 仍须保持 `configured_unverified` 且不可执行；fake
+   provider 的 retry/fallback 证据只能验证工程错误路径，不能标记为真实 Provider smoke。
+3. 发布门恢复只有一个动作：提供一个经明确授权的 Provider 凭证，并按 5.14 节重跑该单
+   Provider 脱敏 smoke。成功前保持 `v0.8.0`、P7/`p7-10` current，不创建下一阶段节点。
+
 ## 6. 当前版本新增能力
 
 | 范围 | 新增或优化 | 用户可感知变化 |
@@ -463,6 +476,7 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 | P7-07 Provider 接入 | DeepSeek/Kimi/MiniMax Driver、`GET /api/v0/providers`、显式 smoke 与安全路径 | 用户可检查凭证与验证状态；三家凭证均缺失、真实 smoke 未执行，均为 `configured_unverified`，不是 healthy |
 | P7-08 Provider 路由与 fallback | 确定性候选排序、同类 Model API fallback、跨 kind 人工确认、Run 级路由审计 | 用户可查询“为什么选它/为什么拒绝”，恢复型失败可换 Provider，Codex 降级必须显式确认；未验证三家仍不会自动执行 |
 | P7-09 多运行时 UI 与可观测性 | `/observability` 只读投影、完整 Attempt 时间线、Scheduler/Artifact 观测、停止 retry 和二次确认 | 用户在既有 Run/Attention/Artifact 入口可查看 runtime、Profile、成本与交接，并只执行经 API 支持的恢复动作 |
+| P7-10 条件验收 | 真实 Codex 三节点与 Gate 恢复通过，retry/fallback fake 回归和桌面 UI 截图完成；真实 Provider smoke 缺失 | 版本保持 `v0.8.0`，P7 和 `p7-10` 保持 current，发布门恢复前不得把三家 Profile 标记为 healthy |
 | Gate 审核 | approve/reject/request_changes、返工版本、决策投影 | 用户能处理审核、创建返工版本，并保留审计证据 |
 | Attention | 根因聚合和关联对象展开 | 用户能从异常直接定位 Agent、Node、Artifact、Gate |
 | Artifact Board | Artifact detail 和本地预览 | 用户能查看产物版本、审核状态和预览内容 |
@@ -524,6 +538,8 @@ Infinity 和无上限配置；默认和 legacy 节点的有限成本预算为 5�
 | P7-06 | 通用 Model API Adapter | `model-api` kind、兼容协议 transport、ProviderProfile、usage/receipt、稳定错误和 fake provider 测试契约 | 凭证仅通过运行时引用传递，不会进入 profile、回执或错误 | 暂无新增 UI；后续 Provider Driver 可复用此契约 | 启动命令不变；不使用 OpenAI SDK 或官方 API |
 | P7-07 | DeepSeek/Kimi/MiniMax Provider Driver | 三家 Driver、Profile、`GET /api/v0/providers`、错误合同和安全 smoke 路径 | MiniMax `base_resp` 最小兼容检查、未知 Driver 拒绝且无 fallback | 新增 Provider 配置、状态检查与显式 smoke 操作 | 需设置对应 Key 且显式 `MIRACLE_ENABLE_MODEL_API=1`；本轮三家凭证均缺失、真实 smoke 未执行，均非 healthy |
 | P7-08 | Provider 路由与 fallback | 确定性 Profile 路由、同类自动 fallback、跨 kind 人工确认和 Run 级审计 | 修复恢复 Invocation 丢失/陈旧 Profile、旧 Decision 无法确认、同 Provider 多 Profile 误排除 | 操作入口不变；prepared 恢复可跟随当前路由，unknown 不重派，旧开发数据可继续读取和确认 | 启动命令不变；未验证 Provider 仍不可执行 |
+| P7-09 | 多运行时 UI 与可观测性 | Run/Attention/Artifact 展示 runtime、Attempt、retry/fallback、成本和 Artifact 交接 | P7-10 修复 Codex receipt 身份在 Web timeline 投影中丢失、成本区间对象直接渲染崩溃 | 用户可在 NodeAttempt 面板核对 `Runtime: Codex`、operation、Attempt 和成本 | 否 |
+| P7-10 | 条件验收与发布门 | 真实 Codex 三节点和 Gate 恢复通过，fake 异常路径与桌面截图完成 | 修复长 Gate ID 跨栏溢出；Provider Profile/Model 对 Codex receipt 仍显示 `-`，因为该契约没有这两个字段 | 发布仍被至少一个真实 Provider smoke 阻塞；只执行一次经授权的单 Provider smoke 恢复动作 | 否；版本保持 `v0.8.0` |
 
 ### 8.3 提交前同步检查
 

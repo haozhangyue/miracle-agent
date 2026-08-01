@@ -27,7 +27,8 @@ Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与
 `P7-03` Codex 多节点 Artifact 真实交接、`P7-04` Scheduler 连续执行、`P7-05`
 Retry 与故障恢复、`P7-06` 通用 Model API Adapter 和 `P7-07` DeepSeek/Kimi/MiniMax
 Provider Driver 工程接入、`P7-08` Provider fallback 与灵活路由和 `P7-09` 多运行时 UI
-与可观测性已完成，当前主线推进到 `P7-10` 回归验收与版本收口：
+与可观测性已完成。`P7-10` 工程回归和真实 Codex 三节点闭环有条件通过，但至少一个真实
+Provider smoke 的发布门尚未满足，因此当前主线仍停留在 `P7-10`：
 Codex CLI 已可按 ExecutionPlan 连续执行、在 Gate 暂停后批准恢复，并对明确 failed 或
 已确认终止的 timed_out AdapterResult 按节点策略、fixed/exponential 退避和
 attempt/time/cost 预算创建新 NodeAttempt；
@@ -46,7 +47,11 @@ Provider 才可执行，内置三家仍不会被自动选中。P7-09 在既有 R
 展示 runtime、Profile、model、完整 Attempt 时间线、retry/fallback、usage、估算/实际成本、
 Scheduler 暂停原因和版本/hash 交接；跨 kind fallback 必须先核对精确 Decision/Operation/Profile
 再二次确认提交，停止自动 retry 也由 Orchestrator 留下 terminal state 与审计事件。P7 不接入
-OpenAI SDK 或官方 API。
+OpenAI SDK 或官方 API。真实 Codex CLI 已完成 B/C 连续执行、Gate 暂停、批准后 D 恢复、
+Artifact 版本/hash 交接和事件链核验；四个预检变量均未设置，未发起真实 Provider 请求，
+三家仍为 `configured_unverified` 且不可执行。当前产品版本保持 `v0.8.0`，P7 和 `p7-10`
+保持 `current`，不创建下一阶段节点。发布门恢复动作仅为：提供一个经明确授权的 Provider
+凭证并重跑单 Provider 脱敏 smoke。P7-10 当前结论以 60 号报告为准。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -88,6 +93,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - [57_P7-07模型Provider接入交付说明.md](docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md)：三家 Provider Driver、配置/检查、状态语义、安全边界与真实 smoke 未执行记录。
 - [58_P7-08Provider路由与Fallback交付说明.md](docs/05-delivery/p7-adapter-expansion/58_P7-08Provider路由与Fallback交付说明.md)：确定性 Provider Router、fallback 与跨 kind 人工确认。
 - [59_P7-09多运行时UI与可观测性交付说明.md](docs/05-delivery/p7-adapter-expansion/59_P7-09多运行时UI与可观测性交付说明.md)：Run/Attention/Artifact 观测投影、恢复动作和安全边界。
+- [60_P7回归验收与版本收口报告.md](docs/06-operations/release/60_P7回归验收与版本收口报告.md)：P7-10 工程与真实 Codex 验收证据、Provider 发布门和当前版本决策的唯一真相源。
 - [40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)：启动、菜单操作、版本变化和常见问题。
 
 目录约定：
@@ -96,7 +102,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - `90-reference`：外部研究和参考输入，不替代当前架构真相。
 - `99-archive`：历史评审和候选方案，默认可跳过。
 
-`00-57` 编号继续保留在文件名中，用于阶段追溯；目录只负责按内容领域组织，不替代文档状态。
+`00-60` 编号继续保留在文件名中，用于阶段追溯；目录只负责按内容领域组织，不替代文档状态。
 
 `prototypes/`、`assets/`、`fixtures/`、`apps/`、`packages/` 和 `plans/` 保持为工程或资产目录，不与设计说明 Markdown 混放。
 
@@ -111,6 +117,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - `assets/prototypes/fusion-clickable/`：融合版 Web 工作台原型桌面截图。
 - `assets/reviews/p2-prototype-audit/`：P2 Web 原型评审截图证据。
 - `assets/reviews/p4-mvp/`：P4 D10 MVP 回归验收截图证据。
+- `assets/reviews/p7-acceptance/`：P7-10 真实 Codex、Gate 和明确标注 fake 的异常路径截图证据。
 
 当前 Product Design A/B/C 固定映射：
 

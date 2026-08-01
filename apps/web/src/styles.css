@@ -212,17 +212,22 @@ td small { display: block; color: #718097; margin-top: 3px; }
 .linkButton { border: 1px solid #c7d8f4; color: #075fe8; background: #f8fbff; border-radius: 6px; min-height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 .artifactDetail { display: grid; gap: 12px; }
 .detailHeader { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; border-bottom: 1px solid #edf1f7; padding-bottom: 10px; }
+.detailHeader > div { min-width: 0; }
 .detailHeader strong, .detailHeader span { display: block; }
+.detailHeader strong { overflow-wrap: anywhere; }
 .detailHeader span { color: #718097; font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
 .manifestGrid { display: grid; grid-template-columns: .6fr .6fr 1.2fr; gap: 10px; }
 .previewBlock { margin: 0; min-height: 240px; max-height: 520px; overflow: auto; border: 1px solid #dfe7f3; border-radius: 8px; background: #0d1729; color: #dce8ff; padding: 14px; font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
 .markdownPreview { background: #fbfdff; color: #172033; }
 .previewEmpty { min-height: 240px; border: 1px dashed #cbd6e7; border-radius: 8px; display: grid; place-items: center; align-content: center; gap: 8px; color: #64748b; text-align: center; padding: 22px; }
 .reviewGrid { display: grid; grid-template-columns: minmax(360px, .75fr) minmax(0, 1.25fr); gap: 16px; align-items: start; }
+.reviewGrid > .panel { min-width: 0; }
 .gateList { display: grid; gap: 8px; }
 .gateSelector { width: 100%; border: 1px solid #dfe7f3; background: white; border-radius: 8px; padding: 11px; display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; text-align: left; cursor: pointer; }
 .gateSelector.active { border-color: #075fe8; box-shadow: inset 3px 0 0 #075fe8; background: #f7fbff; }
+.gateSelector > span { min-width: 0; }
 .gateSelector span, .gateSelector strong, .gateSelector small { display: block; }
+.gateSelector strong { overflow-wrap: anywhere; }
 .gateSelector small { color: #718097; margin-top: 3px; }
 .reviewBox { display: grid; gap: 12px; }
 .projectionPanel { border: 1px solid #dfe7f3; border-radius: 8px; padding: 12px; background: #fbfdff; display: grid; gap: 10px; }

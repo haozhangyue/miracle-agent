@@ -9,10 +9,10 @@
 |---|---|
 | 当前大版本 | `v0.8.0` |
 | 版本名称 | 真实工作流工程接入基线 |
-| 当前阶段 | P6-01 至 P6-08 已完成并通过验收；P7-01 至 P7-09 已完成，当前任务为 `P7-10` 回归验收与版本收口 |
+| 当前阶段 | P6-01 至 P6-08 已完成；P7-01 至 P7-09 已完成，`P7-10` 工程与真实 Codex 有条件通过但 Provider 发布门未满足 |
 | 基线提交 | P6-08 收口提交（见 Git HEAD） |
 | 基线日期 | 2026-07-16 |
-| 最终评审 | 通过 |
+| 最终评审 | `v0.8.0` 继续有效；P7 发布阻塞 |
 
 ## 2. 版本维护规则
 
@@ -185,6 +185,20 @@
   kind/Profile，再由第二次确认提交；服务端仍拒绝陈旧路由。
 - 同步 README、文档导航、路线图、操作手册和 task-baseline：`P7-09` 标记完成，
   `current_node_id` 推进到 `p7-10`；本次仍保持 `v0.8.0`，版本号留待 P7-10 评估。
+- P7-10 使用 Codex CLI `0.146.0` 和仓库外隔离 workspace 完成脱敏三节点真实验收：B/C
+  连续执行后按 Gate 暂停，批准后 D 恢复；三个 Artifact 均为 v1，并核对 manifest hash、
+  staging 文件 SHA-256 和 31 条事件链。真实 receipt 明确记录 `adapter_kind=codex`。
+- 完成 Provider Driver、429、timeout、不可恢复错误、retry 用尽、同类 fallback、跨 kind
+  确认、安全和 historical read-only 聚焦回归；错误路径仅使用明确标注的 fake fixture，
+  不作为真实 Provider smoke 证据。
+- P7-10 验收修复三项 Web 回归：Attempt timeline 保留 Codex adapter 身份；成本区间先归一为
+  可渲染标量；Gate 长 ID 的 grid child 可收缩并在栏内换行。新增聚焦测试并重新生成桌面截图。
+- 环境预检确认 `DEEPSEEK_API_KEY`、`KIMI_API_KEY`、`MOONSHOT_API_KEY`、
+  `MINIMAX_API_KEY` 均未设置，因此没有发起真实 Provider 调用。三家保持
+  `configured_unverified` 且不可执行；至少一个真实 Provider smoke 的硬发布门未满足。
+- P7-10 结论为“工程与真实 Codex 有条件通过、发布阻塞”：保持产品版本 `v0.8.0`、P7 phase
+  与 `p7-10` 为 `current`，不创建或激活下一节点。唯一恢复动作是提供一个经明确授权的
+  Provider 凭证并重跑单 Provider 脱敏 smoke；当前真相源为 `60_P7回归验收与版本收口报告.md`。
 
 ## 4. v0.8.0 发布记录
 

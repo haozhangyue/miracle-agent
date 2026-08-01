@@ -63,6 +63,22 @@ describe("run observability view model", () => {
     ]);
   });
 
+  it("preserves Codex runtime identity when a timeline Attempt feeds the summary", () => {
+    const timeline = buildAttemptTimeline([{
+      attempt_id: "attempt_codex",
+      node_run_id: "nr_codex",
+      operation_id: "op_codex",
+      status: "succeeded",
+      adapter_kind: "codex",
+      adapter_id: "codex-cli-real",
+      provider: "codex-local"
+    }]);
+    const timelineAttempt = timeline[0]?.attempts[0];
+
+    expect(timelineAttempt).toMatchObject({ adapter_kind: "codex", adapter_id: "codex-cli-real", provider: "codex-local" });
+    expect(runtimeBadge(timelineAttempt ?? {})).toMatchObject({ runtime: "Codex" });
+  });
+
   it("projects runtime, usage, and estimated versus actual cost", () => {
     expect(runtimeBadge(attempts[1])).toEqual({ runtime: "Model API", provider_profile: "kimi-default", model: "moonshot-v1-8k" });
     expect(costSummary(attempts)).toEqual({ estimated: 0.03, actual: 0.03, currency: "USD", usage: { prompt_tokens: 25, completion_tokens: 17, total_tokens: 42 } });
@@ -74,6 +90,18 @@ describe("run observability view model", () => {
         estimated_cost: { currency: "USD", min: 0.01, max: 0.02 }
       }
     }])).toMatchObject({ estimated: 0.02 });
+  });
+
+  it("normalizes an estimated cost range before exposing an Attempt to React", () => {
+    const timeline = buildAttemptTimeline([{
+      attempt_id: "attempt_range",
+      node_run_id: "nr_range",
+      operation_id: "op_range",
+      status: "succeeded",
+      estimated_cost: { currency: "USD", min: 0.01, max: 0.02 }
+    }]);
+
+    expect(timeline[0]?.attempts[0]?.estimated_cost).toBe(0.02);
   });
 
   it("counts a targeted routing estimate once across a fallback operation", () => {

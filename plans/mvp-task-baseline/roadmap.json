@@ -21,6 +21,7 @@
     "docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md",
     "docs/05-delivery/p7-adapter-expansion/58_P7-08Provider路由与Fallback交付说明.md",
     "docs/05-delivery/p7-adapter-expansion/59_P7-09多运行时UI与可观测性交付说明.md",
+    "docs/06-operations/release/60_P7回归验收与版本收口报告.md",
     "docs/06-operations/release/35_P4_MVP回归验收与版本收口报告.md",
     "docs/05-delivery/p5-real-workflow/36_P5真实工作流接入详细计划与任务拆解.md",
     "docs/05-delivery/p5-real-workflow/37_P5-01真实工作区盘点报告.md",
@@ -42,6 +43,7 @@
     "assets/reviews/p6-real-run-ui",
     "assets/reviews/p6-acceptance",
     "assets/reviews/p5-acceptance",
+    "assets/reviews/p7-acceptance",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -228,7 +230,7 @@
       "id": "p7",
       "label": "P7 Codex 多节点执行与模型 Adapter 扩展",
       "status": "current",
-      "summary": "先以 Codex CLI 完成多节点纵向闭环和 retry/fallback，再通过通用 Model API Adapter 接入 DeepSeek、Kimi 和 MiniMax；P7 不接 OpenAI 官方 API。",
+      "summary": "工程回归和真实 Codex 多节点闭环已通过；至少一个真实 Provider smoke 未完成，发布门未满足。保持 v0.8.0、P7 current，不创建下一阶段节点。",
       "evidence_paths": [
         "docs/06-operations/release/54_P6回归验收与版本收口报告.md",
         "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md",
@@ -236,6 +238,8 @@
         "docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md",
         "docs/05-delivery/p7-adapter-expansion/58_P7-08Provider路由与Fallback交付说明.md",
         "docs/05-delivery/p7-adapter-expansion/59_P7-09多运行时UI与可观测性交付说明.md",
+        "docs/06-operations/release/60_P7回归验收与版本收口报告.md",
+        "assets/reviews/p7-acceptance",
         "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
         "plans/mvp-task-baseline/roadmap.json"
       ]
@@ -844,7 +848,8 @@
       "depends_on": ["p7-09"],
       "can_parallelize": false,
       "recommended_agent": "Lead",
-      "deliverables": ["全量测试", "真实 Codex 多节点样本", "模型 API 真实小样本", "截图、手册、版本和 task-baseline"]
+      "summary": "工程回归、真实 Codex 三节点和 UI 验收有条件通过；模型 API 真实小样本缺失，发布阻塞。",
+      "deliverables": ["全量测试", "真实 Codex 多节点样本", "模型 API 真实小样本（发布门待满足）", "docs/06-operations/release/60_P7回归验收与版本收口报告.md", "assets/reviews/p7-acceptance", "截图、手册、版本和 task-baseline"]
     }
   ],
   "long_term_plan": [
@@ -867,7 +872,7 @@
       "stage": "L3",
       "title": "Codex 多节点执行与低成本模型 Adapter",
       "status": "current",
-      "summary": "Codex CLI 单节点已接入；P7 先完成 Codex 多节点纵向闭环和 retry/fallback，再接入 DeepSeek、Kimi 和 MiniMax。"
+      "summary": "Codex 多节点纵向闭环和 retry/fallback 已通过工程验收；DeepSeek、Kimi、MiniMax 真实 smoke 缺失，L3 与 P7 保持 current。"
     },
     {
       "id": "l4-stable-runtime",
