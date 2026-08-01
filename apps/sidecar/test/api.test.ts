@@ -989,7 +989,7 @@ describe("sidecar api", () => {
 
   it("returns the project roadmap with git and evidence sync state", async () => {
     const body = await fetchJson<{
-      current_node_id: string;
+      current_node_id: string | null;
       phase_timeline: Array<{ id: string; status: string }>;
       mvp_execution_plan: Array<{ id: string; day: string; status: string }>;
       sync_state: {
@@ -998,8 +998,12 @@ describe("sidecar api", () => {
       };
     }>("/api/v0/project/roadmap");
 
-    expect(body.mvp_execution_plan.find((task) => task.id === body.current_node_id)?.status).toBe("current");
-    expect(body.phase_timeline.some((phase) => phase.status === "current")).toBe(true);
+    if (body.current_node_id) {
+      expect(body.mvp_execution_plan.find((task) => task.id === body.current_node_id)?.status).toBe("current");
+    } else {
+      expect(body.mvp_execution_plan.some((task) => task.status === "current")).toBe(false);
+      expect(body.phase_timeline.some((phase) => phase.status === "current")).toBe(false);
+    }
     expect(body.mvp_execution_plan.some((task) => task.day === "D10")).toBe(true);
     expect(body.sync_state.git.available).toBe(true);
     expect(body.sync_state.git.head).toMatch(/[0-9a-f]{40}/);
@@ -1015,6 +1019,7 @@ describe("sidecar api", () => {
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(html).toContain("MVP 执行计划与长期系统路线");
     expect(html).toContain("不属于 Miracle 产品工作台页面");
+    expect(html).toContain("下一阶段待规划");
   });
 
   it("starts a run and executes the first queued node through the mock runner protocol", async () => {

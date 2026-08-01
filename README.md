@@ -26,9 +26,9 @@ Codex CLI Adapter。`P6-01` 工程实施计划、`P6-02` Historical Importer 与
 真实工作流工程接入基线。`P7-01` 总体设计、`P7-02` 多节点 ExecutionPlan 与输入解析和
 `P7-03` Codex 多节点 Artifact 真实交接、`P7-04` Scheduler 连续执行、`P7-05`
 Retry 与故障恢复、`P7-06` 通用 Model API Adapter 和 `P7-07` DeepSeek/Kimi/MiniMax
-Provider Driver 工程接入、`P7-08` Provider fallback 与灵活路由和 `P7-09` 多运行时 UI
-与可观测性已完成。`P7-10` 工程回归和真实 Codex 三节点闭环有条件通过，但至少一个真实
-Provider smoke 的发布门尚未满足，因此当前主线仍停留在 `P7-10`：
+Provider Driver 工程接入、`P7-08` Provider fallback 与灵活路由、`P7-09` 多运行时 UI
+与可观测性、`P7-10` 回归验收与版本收口均已完成，发布 `v0.9.0` 多运行时与模型 Adapter
+基线：
 Codex CLI 已可按 ExecutionPlan 连续执行、在 Gate 暂停后批准恢复，并对明确 failed 或
 已确认终止的 timed_out AdapterResult 按节点策略、fixed/exponential 退避和
 attempt/time/cost 预算创建新 NodeAttempt；
@@ -36,9 +36,10 @@ attempt/time/cost 预算创建新 NodeAttempt；
 凭证、权限、输入或 Artifact 缺失进入 blocked Attention；未知派发结果、取消、终止和
 无效回执不会自动重派。P7-06 已提供原生 `fetch` 的 compatible transport、统一超时、
 取消、响应大小、JSON、usage、receipt 与稳定错误映射；ProviderProfile 只保存
-`credential_ref`。三家 Driver 已接入，但 `DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`、
-`MINIMAX_API_KEY` 均未配置，本轮未执行真实 smoke，三家保持 `configured_unverified`，
-不得视为 healthy。Provider Catalog 仅接受 env 引用，smoke 与正式执行共用 manifest 的
+`credential_ref`。三家 Driver 已接入；2026-08-01 经明确授权，DeepSeek
+`deepseek-v4-flash` 已完成真实脱敏 smoke。Kimi、MiniMax 和默认 fixture 仍保持
+`configured_unverified`，不会继承开发机的一次性健康结论。Provider Catalog 仅接受 env 引用，
+smoke 与正式执行共用 manifest 的
 Provider scope 授权；显式选择只按 `profile.provider` 匹配，不接受 Catalog ID 别名。
 默认 smoke Artifact 写入仓库外的系统临时 workspace；若临时目录解析到仓库内，会在联网前
 清理并拒绝。显式设置 `MIRACLE_WORKSPACE_DIR` 时才写入用户指定目录。P7-08 已支持确定性
@@ -48,10 +49,9 @@ Provider 才可执行，内置三家仍不会被自动选中。P7-09 在既有 R
 Scheduler 暂停原因和版本/hash 交接；跨 kind fallback 必须先核对精确 Decision/Operation/Profile
 再二次确认提交，停止自动 retry 也由 Orchestrator 留下 terminal state 与审计事件。P7 不接入
 OpenAI SDK 或官方 API。真实 Codex CLI 已完成 B/C 连续执行、Gate 暂停、批准后 D 恢复、
-Artifact 版本/hash 交接和事件链核验；四个预检变量均未设置，未发起真实 Provider 请求，
-三家仍为 `configured_unverified` 且不可执行。当前产品版本保持 `v0.8.0`，P7 和 `p7-10`
-保持 `current`，不创建下一阶段节点。发布门恢复动作仅为：提供一个经明确授权的 Provider
-凭证并重跑单 Provider 脱敏 smoke。P7-10 当前结论以 60 号报告为准。
+Artifact 版本/hash 交接和事件链核验；DeepSeek 真实 smoke 使用 300 tokens、延迟 2884 ms，
+且未持久化 Key。P7、`p7-10` 与长期路线 L3 已完成。下一阶段尚未规划，因此任务基线显示
+“下一阶段待规划”，不创建 P8 占位任务。P7-10 最终结论以 60 号报告为准。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -90,10 +90,10 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - [54_P6回归验收与版本收口报告.md](docs/06-operations/release/54_P6回归验收与版本收口报告.md)：P6 工程、46 项 API、安全真实性、页面截图和 `v0.8.0` 发布结论。
 - [55_P7多节点真实执行与模型Adapter扩展总体设计.md](docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md)：P7 Codex 纵向闭环、retry/fallback 和低成本模型 API 扩展评审基线。
 - [56_P7工程实施计划与任务拆解.md](docs/05-delivery/p7-adapter-expansion/56_P7工程实施计划与任务拆解.md)：P7-02 至 P7-10 的逐文件 TDD 实施步骤、依赖、提交点和验收命令。
-- [57_P7-07模型Provider接入交付说明.md](docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md)：三家 Provider Driver、配置/检查、状态语义、安全边界与真实 smoke 未执行记录。
+- [57_P7-07模型Provider接入交付说明.md](docs/05-delivery/p7-adapter-expansion/57_P7-07模型Provider接入交付说明.md)：三家 Provider Driver、配置/检查、状态语义、安全边界与 DeepSeek 真实 smoke 结果。
 - [58_P7-08Provider路由与Fallback交付说明.md](docs/05-delivery/p7-adapter-expansion/58_P7-08Provider路由与Fallback交付说明.md)：确定性 Provider Router、fallback 与跨 kind 人工确认。
 - [59_P7-09多运行时UI与可观测性交付说明.md](docs/05-delivery/p7-adapter-expansion/59_P7-09多运行时UI与可观测性交付说明.md)：Run/Attention/Artifact 观测投影、恢复动作和安全边界。
-- [60_P7回归验收与版本收口报告.md](docs/06-operations/release/60_P7回归验收与版本收口报告.md)：P7-10 工程与真实 Codex 验收证据、Provider 发布门和当前版本决策的唯一真相源。
+- [60_P7回归验收与版本收口报告.md](docs/06-operations/release/60_P7回归验收与版本收口报告.md)：P7-10 全量验收、DeepSeek 真实 smoke 与 `v0.9.0` 发布决策的唯一真相源。
 - [40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)：启动、菜单操作、版本变化和常见问题。
 
 目录约定：
@@ -117,7 +117,7 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - `assets/prototypes/fusion-clickable/`：融合版 Web 工作台原型桌面截图。
 - `assets/reviews/p2-prototype-audit/`：P2 Web 原型评审截图证据。
 - `assets/reviews/p4-mvp/`：P4 D10 MVP 回归验收截图证据。
-- `assets/reviews/p7-acceptance/`：P7-10 真实 Codex、Gate 和明确标注 fake 的异常路径截图证据。
+- `assets/reviews/p7-acceptance/`：P7-10 真实 Codex、Gate、DeepSeek smoke 和明确标注 fake 的异常路径证据。
 
 当前 Product Design A/B/C 固定映射：
 

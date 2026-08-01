@@ -7,12 +7,12 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 当前大版本 | `v0.8.0` |
-| 版本名称 | 真实工作流工程接入基线 |
-| 当前阶段 | P6-01 至 P6-08 已完成；P7-01 至 P7-09 已完成，`P7-10` 工程与真实 Codex 有条件通过但 Provider 发布门未满足 |
-| 基线提交 | P6-08 收口提交（见 Git HEAD） |
-| 基线日期 | 2026-07-16 |
-| 最终评审 | `v0.8.0` 继续有效；P7 发布阻塞 |
+| 当前大版本 | `v0.9.0` |
+| 版本名称 | 多运行时与模型 Adapter 基线 |
+| 当前阶段 | P7-01 至 P7-10 全部完成；下一阶段待规划 |
+| 基线提交 | P7-10 收口提交（见 Git HEAD） |
+| 基线日期 | 2026-08-01 |
+| 最终评审 | P7 全部通过并发布 `v0.9.0` |
 
 ## 2. 版本维护规则
 
@@ -68,8 +68,9 @@
 | `v0.5.1` | 2026-06-18 | 版本演进记录机制 | 1 | 1 | 0 | - |
 | `v0.7.0` | 2026-07-02 | P4 MVP 本地闭环验收基线 | 待统计 | 待统计 | 0 | M6 本地 MVP 验收通过 |
 | `v0.8.0` | 2026-07-16 | 真实工作流工程接入基线 | 待统计 | 待统计 | 0 | M7 真实工作流接入通过 |
+| `v0.9.0` | 2026-08-01 | 多运行时与模型 Adapter 基线 | 1 | 15 | 0 | M8 多运行时与低成本模型 Adapter 通过 |
 
-### 3.1 未发布变更
+### 3.1 v0.9.0 版本变更
 
 - 新增 P7-01 总体设计基线，确立“Codex 多节点纵向闭环优先”的实施顺序。
 - P7 先完成 Artifact 真实交接、Gate 暂停/恢复和 retry/fallback，再扩展远程模型 API。
@@ -196,9 +197,40 @@
 - 环境预检确认 `DEEPSEEK_API_KEY`、`KIMI_API_KEY`、`MOONSHOT_API_KEY`、
   `MINIMAX_API_KEY` 均未设置，因此没有发起真实 Provider 调用。三家保持
   `configured_unverified` 且不可执行；至少一个真实 Provider smoke 的硬发布门未满足。
-- P7-10 结论为“工程与真实 Codex 有条件通过、发布阻塞”：保持产品版本 `v0.8.0`、P7 phase
-  与 `p7-10` 为 `current`，不创建或激活下一节点。唯一恢复动作是提供一个经明确授权的
-  Provider 凭证并重跑单 Provider 脱敏 smoke；当前真相源为 `60_P7回归验收与版本收口报告.md`。
+- P7-10 初次结论为“工程与真实 Codex 有条件通过、发布阻塞”，等待一个经明确授权的
+  Provider 脱敏 smoke；该中间结论已由最终收口结果取代。
+- 2026-08-01 完成 DeepSeek `deepseek-v4-flash` 真实脱敏 completion smoke：300 tokens、
+  2884 ms，Key 只进入一次性进程环境，脱敏证据写入 `assets/reviews/p7-acceptance/`。
+- P7 的全部硬发布门满足，P7、`p7-10` 与 L3 标记为 `completed`，发布 `v0.9.0`；
+  下一阶段尚未规划，任务基线进入无当前节点状态，不创建 P8 占位任务。
+
+### 3.2 v0.9.0 发布记录
+
+**版本：** `v0.9.0`
+
+**日期：** 2026-08-01
+
+**版本名称：** 多运行时与模型 Adapter 基线
+
+**相对基线：** `4176b52..P7-10 收口提交`
+
+**验收报告：** `docs/06-operations/release/60_P7回归验收与版本收口报告.md`
+
+**主要交付：**
+
+- Codex 按 ExecutionPlan 完成多节点连续执行、Artifact 版本/hash 交接和 Gate 暂停/恢复。
+- retry/fallback、次数/时间/成本预算、NodeAttempt 历史和 Attention 恢复动作形成闭环。
+- DeepSeek、Kimi、MiniMax Driver 与通用 Model API Adapter 落地；DeepSeek 真实 smoke 通过。
+- Run、Attention、Artifact 提供多运行时、Provider、Attempt、usage、成本和交接可观测性。
+- task-baseline 支持阶段全部完成且下一阶段尚未规划的空当前态。
+
+**兼容性与安全：**
+
+- 启动方式与既有 WorkflowSpec、RunSpec 保持兼容。
+- API Key 不进入 Profile、Git、Artifact、receipt、日志或截图；新环境和新 Key 必须重新验证。
+- Kimi 与 MiniMax 仍为 `configured_unverified`；一次本机 smoke 不会固化为全局健康状态。
+
+**验证：** Sidecar 377、Web 18、Core 164 项测试通过；typecheck、build、Git 与 JSON 检查通过。
 
 ## 4. v0.8.0 发布记录
 
@@ -751,10 +783,14 @@ P6 已完成并发布：
 v0.8.0 真实工作流工程接入基线（已发布）
 ```
 
-P7-01 至 P7-07 已完成：Codex 多节点执行、Artifact 交接、连续调度、retry、通用 Model API
-Adapter 与三家 Provider Driver 已落地。三家凭证均缺失、真实 smoke 未执行，全部保持
-`configured_unverified`。下一版本优先完成 P7-08 Provider Router 与 fallback；P7 不接 OpenAI
-官方 API。在 P7-10 验收与版本范围评审通过前不预设新版本号，也不升级 `v0.8.0`。
+P7-01 至 P7-10 已完成并发布：
+
+```text
+v0.9.0 多运行时与模型 Adapter 基线（已发布）
+```
+
+下一阶段尚未规划。继续保持 P7 不接 OpenAI 官方 API 的边界；Kimi 与 MiniMax 的真实验证、
+Hermes/OpenClaw Adapter、稳定运行系统或云端控制平面应在下一阶段规划评审后再进入任务基线。
 
 首个具备真实 Schema 校验器、Event Journal 和本地 runner 的可执行技术版本，建议发布：
 

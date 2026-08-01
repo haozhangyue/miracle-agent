@@ -100,15 +100,17 @@
       function render(data) {
         const git = data.sync_state?.git ?? {};
         const evidence = data.sync_state?.evidence ?? [];
-        const current = data.phase_timeline.find((item) => item.id === data.current_node_id);
+        const currentTask = data.mvp_execution_plan.find((item) => item.id === data.current_node_id);
+        const currentPhase = data.phase_timeline.find((item) => item.status === "current");
+        const current = currentTask ?? currentPhase;
         apiStatus.textContent = git.dirty ? `${git.uncommitted_count} uncommitted` : "git clean";
         apiStatus.className = `pill ${git.dirty ? "danger" : "ok"}`;
         app.innerHTML = `
           <section class="hero">
             <div class="panel">
               <div class="eyebrow">当前执行焦点</div>
-              <h2>${esc(current?.label ?? data.current_node_id)}</h2>
-              <p>${esc(current?.summary)}</p>
+              <h2>${esc(current?.title ?? current?.label ?? "下一阶段待规划")}</h2>
+              <p>${esc(current?.summary ?? "当前阶段已完成，尚未设置新的执行任务。")}</p>
             </div>
             <div class="panel git">
               <strong>Git 同步</strong>

@@ -4,7 +4,7 @@
 >
 > 前置基线：`55_P7多节点真实执行与模型Adapter扩展总体设计.md`、`56_P7工程实施计划与任务拆解.md`
 >
-> 任务状态：P7-07 工程接入完成；P7-08 已完成，当前结果见 `58_P7-08Provider路由与Fallback交付说明.md`。
+> 任务状态：P7-07 工程接入与 DeepSeek 真实 smoke 完成；P7 已发布 `v0.9.0`，最终结果见 60 号报告。
 
 ## 1. 交付结论与边界
 
@@ -13,10 +13,10 @@
 远程调用仍由 `ModelApiAdapter -> ProviderDriver -> ProviderProfile` 处理；Driver 不硬编码模型
 字符串，Profile 仅保存凭证引用。
 
-这是一项工程接入交付，不是三家服务的真实连通结论。当前环境中
-`DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`、`MINIMAX_API_KEY` 均未配置，本轮未运行真实外部调用。
-因此三家 Provider 均保持 `configured_unverified`，不得表述为 `healthy`。用户提供凭证后，
-需完成真实 health probe 和脱敏 completion，才可将对应 Provider 标记为 `healthy`。
+这是一项工程接入交付，不把凭证存在等同于长期健康。2026-08-01 经用户明确授权，DeepSeek
+`deepseek-v4-flash` 已完成单 Provider 脱敏 completion smoke；Kimi 与 MiniMax 尚未真实验证。
+本次健康结论属于受控验收环境，内置 fixture 不永久写成全局 `healthy`，新环境或新凭证仍需
+重新验证。
 
 P7 不接 OpenAI 官方 API 或 SDK；本文交付时尚未提供 Provider fallback，后续 P7-08 已补齐，
 但仍不会把凭证存在等同于真实健康状态。
@@ -25,7 +25,7 @@ P7 不接 OpenAI 官方 API 或 SDK；本文交付时尚未提供 Provider fallb
 
 | Provider | Driver ID | Base URL | Path | Credential ref | 默认模型 | 官方文档 | Verification status |
 |---|---|---|---|---|---|---|---|
-| DeepSeek | `deepseek` | `https://api.deepseek.com` | `/chat/completions` | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` | <https://api-docs.deepseek.com/api/create-chat-completion> | `configured_unverified` |
+| DeepSeek | `deepseek` | `https://api.deepseek.com` | `/chat/completions` | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` | <https://api-docs.deepseek.com/api/create-chat-completion> | 本次受控 smoke `healthy`；默认 fixture `configured_unverified` |
 | Kimi | `kimi` | `https://api.moonshot.cn` | `/v1/chat/completions` | `MOONSHOT_API_KEY` | `kimi-k2.6` | <https://platform.kimi.com/docs/api/overview> | `configured_unverified` |
 | MiniMax | `minimax` | `https://api.minimaxi.com` | `/v1/chat/completions` | `MINIMAX_API_KEY` | `MiniMax-M2.7` | <https://platform.minimaxi.com/docs/guides/text-generation>、<https://platform.minimaxi.com/docs/api-reference/text-chat-openai> | `configured_unverified` |
 
@@ -95,13 +95,13 @@ smoke 不在本轮验收范围内。
 | `configured_unverified` | 凭证可被运行时引用，但没有完成真实健康/脱敏 completion 验证 | 仅在显式 opt-in 下可尝试 |
 | `healthy` | 已完成真实 health probe 和脱敏 completion，并有脱敏证据 | 是 |
 
-本轮记录：
+最终记录：
 
-- `DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`、`MINIMAX_API_KEY` 均未配置。
-- 未运行任何真实外部 Provider 调用，也没有伪造 smoke Artifact 或 receipt。
-- 三家 Provider 保持 `configured_unverified` 作为 Profile 配置状态；运行时无凭证投影为
-  `missing_credential`。
-- P7-07 工程接入完成。真实连通验证将在用户提供凭证并明确 opt-in 后补做。
+- DeepSeek 真实 smoke 成功：`deepseek-v4-flash`、300 tokens、2884 ms。
+- Key 仅进入一次性进程环境；仓库只保留脱敏摘要，不保留凭证、绝对临时路径或原始 receipt ID。
+- Kimi 与 MiniMax 未运行真实外部调用，继续保持 `configured_unverified`。
+- 默认 fixture 不继承开发机的环境健康结论；运行时无凭证仍投影为 `missing_credential`。
+- 证据见 `assets/reviews/p7-acceptance/05-real-deepseek-smoke.md` 和 60 号报告。
 
 ## 6. 安全与后续边界
 

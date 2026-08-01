@@ -1,7 +1,7 @@
 {
   "roadmap_id": "miracle-system-roadmap-v0",
   "name": "Miracle MVP 执行计划与长期系统路线图",
-  "current_node_id": "p7-10",
+  "current_node_id": null,
   "generated_from": [
     "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
     "docs/04-engineering/p3-detailed-design/23_P3MVP任务拆解与验收计划.md",
@@ -44,6 +44,7 @@
     "assets/reviews/p6-acceptance",
     "assets/reviews/p5-acceptance",
     "assets/reviews/p7-acceptance",
+    "assets/reviews/p7-acceptance/05-real-deepseek-smoke.md",
     "VERSION_HISTORY.md"
   ],
   "sync_contract": {
@@ -229,8 +230,8 @@
     {
       "id": "p7",
       "label": "P7 Codex 多节点执行与模型 Adapter 扩展",
-      "status": "current",
-      "summary": "工程回归和真实 Codex 多节点闭环已通过；至少一个真实 Provider smoke 未完成，发布门未满足。保持 v0.8.0、P7 current，不创建下一阶段节点。",
+      "status": "completed",
+      "summary": "工程回归、真实 Codex 多节点闭环、DeepSeek 真实脱敏 smoke 与 Web 验收全部通过，发布 v0.9.0；下一阶段待规划。",
       "evidence_paths": [
         "docs/06-operations/release/54_P6回归验收与版本收口报告.md",
         "docs/05-delivery/p7-adapter-expansion/55_P7多节点真实执行与模型Adapter扩展总体设计.md",
@@ -812,7 +813,7 @@
       "depends_on": ["p7-06"],
       "can_parallelize": true,
       "recommended_agent": "Provider agents",
-      "deliverables": ["三个 Provider Driver", "fake server 契约测试", "真实凭证可用后补做脱敏 smoke", "configured_unverified 状态", "本轮三家凭证缺失/未实测记录", "官方文档核对记录"]
+      "deliverables": ["三个 Provider Driver", "fake server 契约测试", "DeepSeek 真实脱敏 smoke", "Kimi/MiniMax configured_unverified 状态", "assets/reviews/p7-acceptance/05-real-deepseek-smoke.md", "官方文档核对记录"]
     },
     {
       "id": "p7-08",
@@ -842,14 +843,14 @@
       "id": "p7-10",
       "day": "P7-10",
       "title": "P7 回归验收与版本收口",
-      "status": "current",
+      "status": "completed",
       "serial_group": "p7-vertical-closure",
       "parallel_group": "p7-mainline",
       "depends_on": ["p7-09"],
       "can_parallelize": false,
       "recommended_agent": "Lead",
-      "summary": "工程回归、真实 Codex 三节点和 UI 验收有条件通过；模型 API 真实小样本缺失，发布阻塞。",
-      "deliverables": ["全量测试", "真实 Codex 多节点样本", "模型 API 真实小样本（发布门待满足）", "docs/06-operations/release/60_P7回归验收与版本收口报告.md", "assets/reviews/p7-acceptance", "截图、手册、版本和 task-baseline"]
+      "summary": "工程回归、真实 Codex 三节点、UI 与 DeepSeek 真实小样本全部通过，P7 完成并发布 v0.9.0。",
+      "deliverables": ["全量测试", "真实 Codex 多节点样本", "DeepSeek 真实脱敏 smoke", "assets/reviews/p7-acceptance/05-real-deepseek-smoke.md", "docs/06-operations/release/60_P7回归验收与版本收口报告.md", "截图、手册、版本和 task-baseline"]
     }
   ],
   "long_term_plan": [
@@ -871,8 +872,8 @@
       "id": "l3-real-adapters",
       "stage": "L3",
       "title": "Codex 多节点执行与低成本模型 Adapter",
-      "status": "current",
-      "summary": "Codex 多节点纵向闭环和 retry/fallback 已通过工程验收；DeepSeek、Kimi、MiniMax 真实 smoke 缺失，L3 与 P7 保持 current。"
+      "status": "completed",
+      "summary": "Codex 多节点纵向闭环、retry/fallback、多运行时观测与 DeepSeek 真实 smoke 全部通过，形成 v0.9.0 Adapter 基线。"
     },
     {
       "id": "l4-stable-runtime",

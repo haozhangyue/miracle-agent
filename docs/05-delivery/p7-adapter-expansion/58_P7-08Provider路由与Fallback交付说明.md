@@ -95,9 +95,9 @@ Sidecar 会重新核对当前 NodeAttempt、当前 Decision revision、活动 Re
   若缺失 Profile ID，则拒绝该 Provider 的全部 Profile 自动 fallback，不猜测 catalog 首项。
 - 定向回归覆盖 Provider fallback、Model API 错误归一和 P7-05 retry recovery。
 
-## 6. 当前限制与下一步
+## 6. 当前限制与最终验收
 
-- 三家真实凭证均未提供，因此未执行真实 health probe 或 completion smoke。
-- P7-09 才在 Run、Node Detail、Attention 和 Attempt 历史中展示 runtime、Provider、成本、
+- DeepSeek 已在 P7-10 完成一次经授权的真实 completion smoke；Kimi、MiniMax 未验证。
+- P7-09 已在 Run、Node Detail、Attention 和 Attempt 历史中展示 runtime、Provider、成本、
   fallback 关系与确认动作。
-- P7-10 统一执行全量 API、页面、安全、文档和版本收口；在此之前保持 `v0.8.0`。
+- P7-10 已完成全量 API、页面、安全、文档和版本收口，发布 `v0.9.0`；最终结论见 60 号报告。
