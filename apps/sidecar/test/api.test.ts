@@ -244,6 +244,36 @@ describe("sidecar api", () => {
     await expect(readFile(path.join(tempWorkspace, "runs", "run_001", "attempts.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("serves allowlisted help articles and search without exposing source paths", async () => {
+    const help = await fetchJson<{
+      product_version: string;
+      verified_at: string;
+      articles: Array<{ id: string; role: string; source?: string }>;
+    }>("/api/v0/help");
+    expect(help).toMatchObject({ product_version: "0.9.0", verified_at: "2026-08-10" });
+    expect(help.articles.some((article) => article.id === "user-guide" && article.role === "user")).toBe(true);
+    expect(help.articles.every((article) => article.source === undefined)).toBe(true);
+
+    const article = await fetchJson<{
+      article: { id: string; source?: string };
+      markdown: string;
+      headings: Array<{ text: string }>;
+      asset_url_map: Record<string, string>;
+    }>("/api/v0/help/articles/user-guide");
+    expect(article.article).toMatchObject({ id: "user-guide" });
+    expect(article.article.source).toBeUndefined();
+    expect(article.markdown).toContain("创建新任务");
+    expect(article.headings.some((heading) => heading.text === "5. 新任务")).toBe(true);
+    expect(article.asset_url_map["assets/manual/v0.9.0/01-home.png"]).toBe("/api/v0/help/assets/v0.9.0-home");
+
+    const search = await fetchJson<{ results: Array<{ article: { id: string }; snippet: string }> }>("/api/v0/help/search?q=Gate&role=user");
+    expect(search.results.some((result) => result.article.id === "user-guide" && result.snippet.length > 0)).toBe(true);
+
+    const missing = await fetch(`${baseUrl}/api/v0/help/articles/..%2F..%2Fsecret`);
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({ error: { code: "help_article_not_found" } });
+  });
+
   it("returns a DAG projection with required and optional edges", async () => {
     const body = await fetchJson<{
       dag: { edges: Array<{ label: string; required: boolean }>; nodes: Array<{ id: string; status: string }> };

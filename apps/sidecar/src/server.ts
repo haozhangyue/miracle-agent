@@ -77,8 +77,19 @@ import {
   RetryStateStore,
   type RetryStateMigrationIssue
 } from "./retry-store";
+import {
+  HelpCenterError,
+  listHelp,
+  readHelpArticle,
+  readHelpAsset,
+  searchHelp
+} from "./help-center";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const helpCenterOptions = {
+  manuals_dir: path.join(rootDir, "docs/06-operations/manuals"),
+  assets_dir: path.join(rootDir, "assets/manual")
+};
 const workspaceDir = process.env.MIRACLE_WORKSPACE_DIR ?? path.join(rootDir, "fixtures/mvp-workspace/.miracle");
 const serverInstanceId = randomUUID();
 const eventWriteQueues = new Map<string, Promise<void>>();
@@ -293,6 +304,16 @@ function sendHtml(res: ServerResponse, status: number, body: string) {
   res.writeHead(status, {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store"
+  });
+  res.end(body);
+}
+
+function sendBinary(res: ServerResponse, status: number, body: Buffer, contentType: string) {
+  res.writeHead(status, {
+    "content-type": contentType,
+    "content-length": String(body.byteLength),
+    "access-control-allow-origin": "http://127.0.0.1:5174",
+    "cache-control": "public, max-age=3600"
   });
   res.end(body);
 }
@@ -4447,6 +4468,23 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return sendJson(res, 200, { status: "ok", mode: "local-sidecar", workspace: workspaceDir });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/v0/help") {
+    return sendJson(res, 200, await listHelp(helpCenterOptions));
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/v0/help/search") {
+    return sendJson(res, 200, await searchHelp(url.searchParams.get("q") ?? "", url.searchParams.get("role"), helpCenterOptions));
+  }
+
+  if (req.method === "GET" && parts[0] === "api" && parts[1] === "v0" && parts[2] === "help" && parts[3] === "articles" && parts.length === 5) {
+    return sendJson(res, 200, await readHelpArticle(getId(parts, 4), helpCenterOptions));
+  }
+
+  if (req.method === "GET" && parts[0] === "api" && parts[1] === "v0" && parts[2] === "help" && parts[3] === "assets" && parts.length === 5) {
+    const asset = await readHelpAsset(getId(parts, 4), helpCenterOptions);
+    return sendBinary(res, 200, asset.data, asset.media_type);
+  }
+
   if (req.method === "GET" && url.pathname === "/api/v0/adapters/codex-cli/health") {
     return sendJson(res, 200, await codexCliAdapter.getHealth());
   }
@@ -5405,6 +5443,16 @@ async function route(req: IncomingMessage, res: ServerResponse) {
 
 const server = createServer((req, res) => {
   route(req, res).catch((error: unknown) => {
+    if (error instanceof HelpCenterError) {
+      const status = error.code === "help_article_not_found" || error.code === "help_asset_not_allowed"
+        ? 404
+        : error.code === "help_query_invalid"
+          ? 400
+          : error.code === "help_manifest_invalid"
+            ? 503
+            : 500;
+      return sendError(res, status, error.code, error.message);
+    }
     if (error instanceof HistoricalImportError) {
       const status =
         error.code === "source_path_not_allowed"

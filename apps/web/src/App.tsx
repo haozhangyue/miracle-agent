@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   Archive,
+  BookOpen,
   Bot,
   Boxes,
   CheckCircle2,
@@ -31,8 +32,9 @@ import { artifactPreviewCapability, confidenceLabel, eventSortDescending, gapLab
 import { canConfirmRunDraft, runDraftModeLabel, summarizeBranchImpact } from "./run-drafts";
 import { canExecuteNode, retryBudgetLabel } from "./retry-ui";
 import { availableRecoveryActions, buildAttemptTimeline, costSummary, recoveryActionLabel, runtimeBadge } from "./run-observability";
+import { HelpCenter } from "./HelpCenter";
 
-type Page = "home" | "new" | "dryrun" | "run" | "attention" | "agents" | "artifacts" | "review" | "canvas" | "sync" | "evolution";
+type Page = "home" | "new" | "dryrun" | "run" | "attention" | "agents" | "artifacts" | "review" | "canvas" | "sync" | "evolution" | "help";
 type ApiState<T> = { loading: boolean; data?: T; error?: string; refreshing?: boolean; updatedAt?: number };
 
 const apiBase = "/api/v0";
@@ -183,7 +185,7 @@ function retryCountdown(scheduledFor?: string) {
 }
 
 export function App() {
-  const [page, setPage] = useState<Page>("home");
+  const [page, setPageState] = useState<Page>(() => new URLSearchParams(window.location.search).get("page") === "help" ? "help" : "home");
   const [workflowId, setWorkflowId] = useState("content-production-v0");
   const [draftId, setDraftId] = useState("");
   const [runId, setRunId] = useState("run-demo-001");
@@ -191,6 +193,23 @@ export function App() {
   const [selectedAttention, setSelectedAttention] = useState("att_tts_credential");
   const [selectedArtifact, setSelectedArtifact] = useState("art_md_master_v2");
   const [selectedGate, setSelectedGate] = useState("gate-md-master-001");
+
+  function setPage(nextPage: Page) {
+    setPageState(nextPage);
+    if (nextPage === "help") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("page", "help");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      return;
+    }
+    if (new URLSearchParams(window.location.search).get("page") === "help") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("page");
+      url.searchParams.delete("article");
+      url.hash = "";
+      window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+    }
+  }
 
   return (
     <div className="shell">
@@ -214,6 +233,7 @@ export function App() {
           <NavButton page="canvas" active={page} setPage={setPage} icon={<LayoutDashboard size={18} />} label="画布草稿" />
           <NavButton page="sync" active={page} setPage={setPage} icon={<GitBranch size={18} />} label="Spec Sync" />
           <NavButton page="evolution" active={page} setPage={setPage} icon={<Sparkles size={18} />} label="进化占位" />
+          <NavButton page="help" active={page} setPage={setPage} icon={<BookOpen size={18} />} label="帮助与手册" />
         </nav>
         <div className="localStatus">
           <span>Local Sidecar</span>
@@ -240,6 +260,7 @@ export function App() {
         {page === "canvas" && <CanvasPage workflowId={workflowId} />}
         {page === "sync" && <Placeholder title="Visual / Spec Sync" description="MVPS09 第一轮只保留入口和 spec diff 概念。文件 watcher 和冲突合并在后续实现。" />}
         {page === "evolution" && <Placeholder title="Evolution Board v0" description="MVPS10 第一轮只保留入口和 EvolutionCandidate 类型。进化建议算法在真实运行数据积累后实现。" />}
+        {page === "help" && <HelpCenter />}
       </main>
     </div>
   );

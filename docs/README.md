@@ -211,8 +211,15 @@ docs/
 
 | 原文件 | 目标目录（中文对照） | 状态 | 概念设计与原因 |
 |---|---|---|---|
-| `40_Miracle系统操作使用说明书.md` | `06-operations/user-guide/`（运维/用户手册） | CURRENT | 面向使用者说明启动、本地菜单、功能操作、版本变化和故障处理。 |
-| `00_Miracle角色化说明书与Web帮助中心设计.md` | `06-operations/manuals/`（运维/说明书体系设计） | ACTIVE | 定义使用者、管理员、开发维护者分册，故障与版本公共手册、Help Manifest、Sidecar Help API 和 Web 帮助中心；在 61-65 实施完成前，`40` 仍是当前操作真相源。 |
+| `40_Miracle系统操作使用说明书.md` | `06-operations/user-guide/`（运维/手册总入口） | CURRENT | 作为兼容入口，引导到角色化说明书和 Web 帮助中心，不再重复维护整套操作正文。 |
+| `00_Miracle角色化说明书与Web帮助中心设计.md` | `06-operations/manuals/`（运维/说明书体系设计） | ACTIVE | 说明角色分册、同源 Markdown、Help Manifest、API 和 Web 帮助中心的设计边界。 |
+| `61_Miracle使用者操作手册.md` | `06-operations/manuals/user/`（运维/使用者手册） | CURRENT | 说明任务创建、Dry-run、Run、Attention、Agent、Artifact、Gate、Canvas 和工作流扩展操作。 |
+| `62_Miracle管理员与运维手册.md` | `06-operations/manuals/administrator/`（运维/管理员手册） | CURRENT | 说明安装启动、凭证、Provider、运行目录、备份、安全和运行治理。 |
+| `63_Miracle开发维护手册.md` | `06-operations/manuals/developer/`（运维/开发手册） | CURRENT | 说明工程结构、核心协议、扩展点、测试、发布和说明书同步契约。 |
+| `64_Miracle故障排查手册.md` | `06-operations/manuals/shared/`（运维/故障手册） | CURRENT | 按现象和对象状态排查启动、Run、Gate、Artifact、Retry 与 Provider 问题。 |
+| `65_Miracle用户可感知版本变更.md` | `06-operations/manuals/shared/`（运维/用户版本变化） | CURRENT | 用用户语言记录新增能力、优化、修复、操作变化和兼容性。 |
+| `66_Miracle角色化说明书与Web帮助中心实施计划.md` | `05-delivery/help-center/`（交付/帮助中心实施） | ACTIVE | 记录 H1-H7 的工程任务、依赖、测试和截图验收范围。 |
+| `67_角色化说明书与Web帮助中心交付验收报告.md` | `06-operations/release/`（运维/帮助中心验收） | CURRENT | 记录五类手册、Help API、Web 页面、12 张截图和回归验收结论。 |
 | `VERSION_HISTORY.md` | 仓库根目录（版本历史） | REFERENCE | 作为仓库级版本入口，保持根目录便于 Git、发布和用户快速查看。 |
 
 ## 5. 迁移边界和链接策略

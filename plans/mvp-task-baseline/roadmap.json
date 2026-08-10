@@ -4,6 +4,15 @@
   "current_node_id": null,
   "generated_from": [
     "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
+    "docs/06-operations/manuals/00_Miracle角色化说明书与Web帮助中心设计.md",
+    "docs/05-delivery/help-center/66_Miracle角色化说明书与Web帮助中心实施计划.md",
+    "docs/06-operations/manuals/user/61_Miracle使用者操作手册.md",
+    "docs/06-operations/manuals/administrator/62_Miracle管理员与运维手册.md",
+    "docs/06-operations/manuals/developer/63_Miracle开发维护手册.md",
+    "docs/06-operations/manuals/shared/64_Miracle故障排查手册.md",
+    "docs/06-operations/manuals/shared/65_Miracle用户可感知版本变更.md",
+    "docs/06-operations/release/67_角色化说明书与Web帮助中心交付验收报告.md",
+    "assets/manual/v0.9.0",
     "docs/04-engineering/p3-detailed-design/23_P3MVP任务拆解与验收计划.md",
     "docs/05-delivery/p4-mvp/24_P4_MVP可运行主链路交付说明.md",
     "docs/05-delivery/p4-mvp/25_P4第二轮_DAG预览Gate投影与Canvas草稿交付说明.md",
@@ -242,6 +251,26 @@
         "docs/06-operations/release/60_P7回归验收与版本收口报告.md",
         "assets/reviews/p7-acceptance",
         "docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md",
+        "plans/mvp-task-baseline/roadmap.json"
+      ]
+    },
+    {
+      "id": "help-center",
+      "label": "角色化说明书与 Web 帮助中心",
+      "status": "completed",
+      "summary": "使用者、管理员、开发维护、故障和版本分册、同源 Help API、Web 帮助入口与 v0.9.0 截图已全部完成并通过回归验收。",
+      "evidence_paths": [
+        "docs/06-operations/manuals/00_Miracle角色化说明书与Web帮助中心设计.md",
+        "docs/05-delivery/help-center/66_Miracle角色化说明书与Web帮助中心实施计划.md",
+        "docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md",
+        "docs/06-operations/manuals/help-manifest.json",
+        "docs/06-operations/manuals/user/61_Miracle使用者操作手册.md",
+        "docs/06-operations/manuals/administrator/62_Miracle管理员与运维手册.md",
+        "docs/06-operations/manuals/developer/63_Miracle开发维护手册.md",
+        "docs/06-operations/manuals/shared/64_Miracle故障排查手册.md",
+        "docs/06-operations/manuals/shared/65_Miracle用户可感知版本变更.md",
+        "docs/06-operations/release/67_角色化说明书与Web帮助中心交付验收报告.md",
+        "assets/manual/v0.9.0",
         "plans/mvp-task-baseline/roadmap.json"
       ]
     }
@@ -851,6 +880,90 @@
       "recommended_agent": "Lead",
       "summary": "工程回归、真实 Codex 三节点、UI 与 DeepSeek 真实小样本全部通过，P7 完成并发布 v0.9.0。",
       "deliverables": ["全量测试", "真实 Codex 多节点样本", "DeepSeek 真实脱敏 smoke", "assets/reviews/p7-acceptance/05-real-deepseek-smoke.md", "docs/06-operations/release/60_P7回归验收与版本收口报告.md", "截图、手册、版本和 task-baseline"]
+    },
+    {
+      "id": "help-h1",
+      "day": "H1",
+      "title": "说明书目录、Help Manifest 与任务基线",
+      "status": "completed",
+      "serial_group": "help-foundation",
+      "parallel_group": "help-foundation",
+      "depends_on": ["p7-10"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["说明书目录", "Help Manifest", "实施计划", "task-baseline"]
+    },
+    {
+      "id": "help-h2",
+      "day": "H2",
+      "title": "使用者操作手册与帮助总入口",
+      "status": "completed",
+      "serial_group": "help-content",
+      "parallel_group": "help-content",
+      "depends_on": ["help-h1"],
+      "can_parallelize": true,
+      "recommended_agent": "Documentation Agent",
+      "deliverables": ["61 使用者操作手册", "40 帮助总入口", "菜单与主流程说明"]
+    },
+    {
+      "id": "help-h3",
+      "day": "H3",
+      "title": "管理员、开发维护和故障排查手册",
+      "status": "completed",
+      "serial_group": "help-content",
+      "parallel_group": "help-content",
+      "depends_on": ["help-h1"],
+      "can_parallelize": true,
+      "recommended_agent": "Documentation Agent",
+      "deliverables": ["62 管理员手册", "63 开发维护手册", "64 故障排查手册"]
+    },
+    {
+      "id": "help-h4",
+      "day": "H4",
+      "title": "用户可感知版本变化与维护规则",
+      "status": "completed",
+      "serial_group": "help-content",
+      "parallel_group": "help-content",
+      "depends_on": ["help-h2", "help-h3"],
+      "can_parallelize": false,
+      "recommended_agent": "Documentation Agent",
+      "deliverables": ["65 用户版本变化", "说明书维护规则", "版本影响矩阵"]
+    },
+    {
+      "id": "help-h5",
+      "day": "H5",
+      "title": "Sidecar Help API",
+      "status": "completed",
+      "serial_group": "help-api",
+      "parallel_group": "help-engineering",
+      "depends_on": ["help-h1"],
+      "can_parallelize": true,
+      "recommended_agent": "Sidecar Agent",
+      "deliverables": ["Help Manifest loader", "文章与搜索 API", "安全图片 API", "Sidecar tests"]
+    },
+    {
+      "id": "help-h6",
+      "day": "H6",
+      "title": "Web 帮助与手册中心",
+      "status": "completed",
+      "serial_group": "help-web",
+      "parallel_group": "help-engineering",
+      "depends_on": ["help-h2", "help-h3", "help-h5"],
+      "can_parallelize": false,
+      "recommended_agent": "Web Agent",
+      "deliverables": ["帮助菜单", "角色导航", "搜索与目录", "Markdown/Mermaid", "深链"]
+    },
+    {
+      "id": "help-h7",
+      "day": "H7",
+      "title": "帮助中心截图、回归与版本收口",
+      "status": "completed",
+      "serial_group": "help-release",
+      "parallel_group": "help-release",
+      "depends_on": ["help-h4", "help-h6"],
+      "can_parallelize": false,
+      "recommended_agent": "Lead",
+      "deliverables": ["v0.9.0 手册截图", "文档/API/Web 回归", "导航版本与 task-baseline 收口"]
     }
   ],
   "long_term_plan": [
@@ -990,6 +1103,24 @@
       "name": "P6 真实执行与验收",
       "parallelizable": false,
       "tasks": ["p6-07", "p6-08"]
+    },
+    {
+      "id": "track-help-content",
+      "name": "角色化说明书内容",
+      "parallelizable": true,
+      "tasks": ["help-h2", "help-h3", "help-h4"]
+    },
+    {
+      "id": "track-help-engineering",
+      "name": "Help API 与 Web",
+      "parallelizable": true,
+      "tasks": ["help-h5", "help-h6"]
+    },
+    {
+      "id": "track-help-release",
+      "name": "帮助中心验收与收口",
+      "parallelizable": false,
+      "tasks": ["help-h7"]
     }
   ]
 }

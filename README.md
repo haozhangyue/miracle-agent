@@ -52,6 +52,9 @@ OpenAI SDK 或官方 API。真实 Codex CLI 已完成 B/C 连续执行、Gate �
 Artifact 版本/hash 交接和事件链核验；DeepSeek 真实 smoke 使用 300 tokens、延迟 2884 ms，
 且未持久化 Key。P7、`p7-10` 与长期路线 L3 已完成。下一阶段尚未规划，因此任务基线显示
 “下一阶段待规划”，不创建 P8 占位任务。P7-10 最终结论以 60 号报告为准。
+角色化说明书与 Web 帮助中心现已完成：`40` 收敛为总入口，`61-65` 分别承接使用者、
+管理员、开发维护、故障排查和用户可感知版本变化；Web 左侧已新增“帮助与手册”，
+内容由 Sidecar Help API 从同一套 Markdown 安全读取，并以 `v0.9.0` 截图完成验证。
 当前工程入口为 `apps/web`、`apps/sidecar`、`packages/core` 和
 `fixtures/mvp-workspace/.miracle`。
 
@@ -94,7 +97,8 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 - [58_P7-08Provider路由与Fallback交付说明.md](docs/05-delivery/p7-adapter-expansion/58_P7-08Provider路由与Fallback交付说明.md)：确定性 Provider Router、fallback 与跨 kind 人工确认。
 - [59_P7-09多运行时UI与可观测性交付说明.md](docs/05-delivery/p7-adapter-expansion/59_P7-09多运行时UI与可观测性交付说明.md)：Run/Attention/Artifact 观测投影、恢复动作和安全边界。
 - [60_P7回归验收与版本收口报告.md](docs/06-operations/release/60_P7回归验收与版本收口报告.md)：P7-10 全量验收、DeepSeek 真实 smoke 与 `v0.9.0` 发布决策的唯一真相源。
-- [40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)：启动、菜单操作、版本变化和常见问题。
+- [帮助与手册中心](docs/06-operations/manuals/README.md)：按使用者、管理员、开发维护者进入当前操作资料。
+- [61_Miracle使用者操作手册.md](docs/06-operations/manuals/user/61_Miracle使用者操作手册.md)：创建任务、Dry-run、Run、Attention、审核和产物交付。
 
 目录约定：
 
@@ -145,8 +149,8 @@ P3 的核心原则：Miracle 是通用 Agent OS，不绑定资讯内容生产；
 
 ## P4 MVP 启动
 
-完整操作说明优先阅读
-[40_Miracle系统操作使用说明书.md](docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md)。README 只保留最短启动入口。
+完整操作说明优先阅读[帮助与手册中心](docs/06-operations/manuals/README.md)，或启动 Web 后点击
+左侧“帮助与手册”。README 只保留最短启动入口。
 
 ```bash
 npm_config_cache=.npm-cache npm install
@@ -181,8 +185,8 @@ API:     http://127.0.0.1:4317/api/v0/project/roadmap
 普通修订可归并到当前版本的修订记录，不单独制造大版本。
 
 用户可感知的菜单、启动方式、操作流程、功能变化和 bug 修复，必须同步更新
-`docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md`；如果本次更新没有用户操作影响，应在
-`VERSION_HISTORY.md` 中说明“无操作变化”。
+`docs/06-operations/manuals/help-manifest.json` 及对应角色手册；总入口变化时同步更新 `40`。
+如果本次更新没有用户操作影响，应在 `VERSION_HISTORY.md` 中说明“无操作变化”。
 
 ## 文档治理要求
 
@@ -192,7 +196,7 @@ API:     http://127.0.0.1:4317/api/v0/project/roadmap
 2. `docs/00-navigation/asset-index/17_文档资产关联与AI阅读导航.md`。
 3. 影响阶段时更新 `docs/01-strategy/roadmap/07_后续对接路线图与任务拆解.md`。
 4. 构成重要更新时更新 `VERSION_HISTORY.md`。
-5. 影响用户操作或版本感知时更新 `docs/06-operations/user-guide/40_Miracle系统操作使用说明书.md`。
+5. 影响用户操作或版本感知时更新 `docs/06-operations/manuals/` 对应分册、Manifest 和截图版本。
 
 评审或候选文档完成收口后，应标记为历史过程资产，并明确当前有效结果，避免 AI 重复
 读取旧文档。
